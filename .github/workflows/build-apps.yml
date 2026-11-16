@@ -32,7 +32,9 @@ jobs:
           - os: windows-latest
             label: Windows
             zip: Tom-ECG-Analysis-Windows.zip
-          - os: macos-14          # Apple Silicon (arm64)
+          # Apple Silicon (arm64). macos-14 is no longer offered by GitHub
+          # ("configuration 'macos-14-arm64' is not supported", Nov 2026).
+          - os: macos-15
             label: macOS arm64
             zip: Tom-ECG-Analysis-macOS-arm64.zip
           # Intel Macs. GitHub retired the macos-13 image (Dec 2025);
