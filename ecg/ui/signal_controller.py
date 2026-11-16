@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Callable, Optional
 from tkinter import messagebox
 
@@ -26,6 +27,7 @@ from ecg.core.detection import (
 from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel
 from ecg.io.loaders import load_mat_signal
 from ecg.io.db import _DB_AVAILABLE, get_notes, get_recording
+from ecg.ui.app_async import recording_changed
 from ecg.ui.session_controller import pending_template_info_text
 from ecg.ui.theme import BLUE, GREEN, LIGHT, MUTED, ORANGE, RED, nk
 from ecg.ui.tab_keys import TAB_DETECTION
@@ -58,6 +60,11 @@ class SignalController:
         bundle["filter_text"] = filter_description(params, fs)
         try:
             bundle["prepare_params"] = FilterParams.from_dict(params).to_dict()
+            # sg_window_ms is a Recording entry, not a FilterParams field: kept
+            # beside it so a session restore rebuilds the SG + Derivative
+            # candidates with the window they were detected with.
+            if params.get("sg_window_ms") is not None:
+                bundle["prepare_params"]["sg_window_ms"] = params["sg_window_ms"]
         except (TypeError, ValueError):
             bundle["prepare_params"] = None
         return bundle
@@ -373,10 +380,13 @@ class SignalController:
         if not self.app.signal.filepath:
             return
         params = self.app._snapshot_params()
+        # The recording this load is for: a result landing on another one
+        # is dropped (see recording_changed).
+        gen = getattr(self.app, "_generation", 0)
         self.app._start_async(
             self.app.btn_preview, "Loading…", "Loading raw signal…",
             lambda: self.load_raw_worker(params),
-            self.on_raw_load_done,
+            lambda bundle: self.on_raw_load_done(bundle, gen=gen),
             pass_result=True,
         )
 
@@ -434,7 +444,7 @@ class SignalController:
             "fs_from_file": detected_fs is not None,
         }
 
-    def on_raw_load_done(self, bundle: dict) -> None:
+    def on_raw_load_done(self, bundle: dict, gen: "int | None" = None) -> None:
         """Write raw-only state on the main thread and draw the raw trace.
 
         Mirrors the bookkeeping parts of _on_preview_done (channel/fs
@@ -443,7 +453,12 @@ class SignalController:
         rpeaks_ok, thresh_amp, etc. — so the rest of the app's existing
         "not previewed yet" guards (which already check for None) behave
         correctly until the user clicks Preview Detection.
+
+        *gen* is the recording generation the load started on (None: no
+        check): another file opened meanwhile owns the state now.
         """
+        if gen is not None and recording_changed(self.app, gen, "Load"):
+            return
         fs        = bundle["fs"]
         sig_raw   = bundle["signal_raw"]
         n_samples = len(sig_raw)
@@ -469,6 +484,11 @@ class SignalController:
         self.app.detection.rpeaks_manual_added  = np.array([], dtype=int)
         self.app.detection.manual_excluded.clear()
         self.app.detection.manual_added.clear()
+        # The undo/redo snapshots are edit sets of the peaks just dropped:
+        # Ctrl+Z must not bring them back onto this recording.
+        self.app.detection.edit_undo.clear()
+        self.app.detection.edit_redo.clear()
+        self.app.detection_ctrl.update_undo_btns()
         self.app.analysis.results       = None
         self.app.analysis.epoch_df      = None
         self.app.analysis.annotations   = []
@@ -560,12 +580,15 @@ class SignalController:
             return
         # Snapshot widget values on the main thread before spawning background work.
         params = self.app._snapshot_params()
+        # The recording this detection is for: a result landing on another
+        # one is dropped (see recording_changed).
+        gen = getattr(self.app, "_generation", 0)
         # pass_result=True: worker returns a bundle; _on_preview_done receives it.
         # This ensures ALL shared state writes happen on the main thread only.
         self.app._start_async(
             self.app.btn_preview, "Loading…", "Loading signal…",
             lambda: self.preview_worker(params),
-            lambda bundle: self.on_preview_done(bundle, then_analyze=then_analyze),
+            lambda bundle: self.on_preview_done(bundle, then_analyze=then_analyze, gen=gen),
             pass_result=True,
         )
 
@@ -672,14 +695,20 @@ class SignalController:
             text=f"✓ Auto-detected from file: {int(fs)} Hz",
             text_color=GREEN)
 
-    def on_preview_done(self, bundle: dict, then_analyze: bool = False) -> None:
+    def on_preview_done(self, bundle: dict, then_analyze: bool = False,
+                        gen: "int | None" = None) -> None:
         """Atomically write all signal state on the main thread, then draw.
 
         This is the ONLY place that should assign signal/peak instance variables
         after a preview.  Because it runs via after(0, …) (scheduled by
         _start_async after the background worker finishes), it is guaranteed to
         execute on the Tk main thread with no concurrent background writes.
+
+        *gen* is the recording generation the detection started on (None: no
+        check): another file opened meanwhile owns the state now.
         """
+        if gen is not None and recording_changed(self.app, gen, "Detect Peaks"):
+            return
         fs        = bundle["fs"]
         sig_raw   = bundle["signal_raw"]
         n_samples = len(sig_raw)
@@ -716,6 +745,12 @@ class SignalController:
                                  self.app.detection.manual_added)
         self.app.detection.manual_excluded.clear()
         self.app.detection.manual_added.clear()
+        # Their undo/redo snapshots go with them: they hold edit sets of the
+        # previous run, and Ctrl+Z would put those old exclusions/additions
+        # back onto the new detection (and drop its results again).
+        self.app.detection.edit_undo.clear()
+        self.app.detection.edit_redo.clear()
+        self.app.detection_ctrl.update_undo_btns()
         self.app.ui.peaks_edited_at = None     # those edits are gone (context strip)
         # Invalidate all previous analysis state — new file, clean slate
         self.app.analysis.results       = None
@@ -758,6 +793,9 @@ class SignalController:
 
         # ── UI feedback for auto-detected channel / fs ────────────────────────
         def _subject_from_channel(name: str) -> Optional[str]:
+            # A column of a multi-column variable ("data[1]", see
+            # loaders._split_channels): its index is not a subject number.
+            name = re.sub(r"\[\d+\]$", "", name)
             digits = "".join(ch for ch in name if ch.isdigit())
             return digits if digits else None
 
@@ -1050,6 +1088,16 @@ class SignalController:
             self.app._draw_detail()
 
     def load_path(self, path: str) -> None:
+        # A job is running on the current recording: refuse before resetting
+        # anything. Resetting now would put this file's name on the old
+        # file's data (the job's result lands afterwards), and this file's
+        # own load would be refused by the busy guard anyway -- it would
+        # never be read.
+        if getattr(self.app, "_async_busy", False):
+            self.app._set_status(
+                f"Another operation is running — open {os.path.basename(path)} "
+                "again once it finishes", ORANGE)
+            return
         if not os.path.exists(path):
             messagebox.showerror("Not found", f"File not found:\n{path}")
             return

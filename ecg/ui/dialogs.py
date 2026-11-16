@@ -313,6 +313,11 @@ class ThemeDialog(ctk.CTkToplevel):
 
     def _save_default(self) -> None:
         """Apply + persist to disk."""
+        # Copy the working config into THEME *before* saving: _apply() does
+        # this copy too, but only after save() would already have written
+        # the previously active theme to disk.
+        THEME.apply_preset(self._working.preset_name)
+        THEME.font_scale = self._working.font_scale
         THEME.save()
         self._saved = True
         self._apply()   # destroys self; no widget access after this line
@@ -1978,9 +1983,12 @@ class CalibrationDialog(ctk.CTkToplevel):
             if counts else "",
             text_color=ORANGE if (label is None and len(counts) > 1) else MUTED)
         opts = config_options(self._frame)
+        # Read the chosen config tuple from the *old* name map: the names
+        # embed the event count, which changes with the filters, so looking
+        # the old name up in the new map would lose the user's choice.
+        current = self._configs.get(self._cb_config.get())
         self._configs = {f"{config_label(cfg)}   ({n} events)": cfg for cfg, n in opts}
         names = list(self._configs) or ["—"]
-        current = self._configs.get(self._cb_config.get())
         pick = next((n for n, c in self._configs.items() if c == current), None)
         if pick is None and self._want_config is not None:
             pick = next((n for n, c in self._configs.items() if c == self._want_config), None)

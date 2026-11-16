@@ -50,6 +50,12 @@ _STATUS_LINES = (("lbl_freq_status", "frequency"), ("lbl_nonlin_status", "nonlin
                  ("lbl_epoch_count", "epochs"), ("lbl_auto_status", "autonomic"),
                  ("lbl_evt_status", "event_locked"), ("lbl_arrhythmia_status", "events"))
 
+# What a shell tick refreshes, in order (see ContextStripMixin._refresh_shell).
+_SHELL_REFRESHES = ("_refresh_tab_states", "_refresh_context_strip", "_refresh_quality_live",
+                    "_refresh_time_banner", "_refresh_morphology", "_refresh_events_readout",
+                    "_refresh_status_lines", "_update_topbar_filename", "_refresh_report",
+                    "_refresh_compare_if_open")
+
 TONE_HEAD = "head"
 TONE_NORMAL = "normal"
 TONE_WARN = "warn"
@@ -382,23 +388,24 @@ class ContextStripMixin:
 
     def _refresh_shell(self: ECGApp) -> None:
         """Strip, tab states and the quality panel's live fields. Never raises:
-        it runs on a timer, possibly while a job is landing."""
-        try:
-            self._refresh_tab_states()
-            self._refresh_context_strip()
-            self._refresh_quality_live()
-            self._refresh_time_banner()
-            self._refresh_morphology()
-            self._refresh_events_readout()
-            self._refresh_status_lines()
-            self._update_topbar_filename()
-            self._refresh_rhythm_stale()
-            self._refresh_report()
-            if self.tabs.get() == TAB_COMPARE:
-                # A new file or new peaks while the tab is open: rebuilt for them.
-                self._refresh_compare_tab()
-        except Exception as exc:
-            log.debug("shell refresh skipped: %s", exc, exc_info=True)
+        it runs on a timer, possibly while a job is landing.
+
+        Each refresh runs on its own: one that fails (a widget not built yet, a
+        job half landed) is logged and skipped, and the ones after it still run.
+        A single shared try once let one failing step silence the Report and
+        Compare refreshes on every tick. The Rhythm & HRV page has no banner of
+        its own to refresh: its out-of-date state is on the tab and its status
+        lines, both refreshed here."""
+        for name in _SHELL_REFRESHES:
+            try:
+                getattr(self, name)()
+            except Exception as exc:
+                log.debug("shell refresh %s skipped: %s", name, exc, exc_info=True)
+
+    def _refresh_compare_if_open(self: ECGApp) -> None:
+        if self.tabs.get() == TAB_COMPARE:
+            # A new file or new peaks while the tab is open: rebuilt for them.
+            self._refresh_compare_tab()
 
     def _refresh_tab_states(self: ECGApp) -> None:
         fresh = self.freshness

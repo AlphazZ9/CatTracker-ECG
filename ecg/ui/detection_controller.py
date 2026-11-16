@@ -21,6 +21,7 @@ import customtkinter as ctk  # type: ignore[import-untyped]
 from ecg.core.models import MouseECG
 from ecg.core.detection import (
     apply_threshold, peak_agreement_counts,
+    active_removed_samples, drop_removed_peaks,
     detect_peaks_wavelet, detect_peaks_sg_derivative, detect_peaks_envelope_max,
 )
 from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel
@@ -101,6 +102,28 @@ class DetectionController:
             self.app.detection.rpeaks_manual_added = np.array([], dtype=int)
 
         prev_ok = self.app.detection.rpeaks_ok
+
+        # ── Re-apply artifact removals still in effect ───────────
+        # Artifact Review and Analyze's auto-correction write the corrected
+        # peaks straight into rpeaks_ok, not into the manual sets, so the
+        # rebuild above (full candidate set) brings every removed beat back
+        # on the next click / undo / threshold nudge while the "removed"
+        # markers stay drawn. Drop again the removals whose beat was still
+        # absent from the peaks before this rebuild: a beat that is already
+        # back (a fresh Detect Peaks, or re-added by hand) stays back, and
+        # hand-added peaks are never dropped.
+        arep = self.app.analysis.artifact_report
+        removed = arep.get("removed_samples") if isinstance(arep, dict) else None
+        if removed and prev_ok is not None and len(prev_ok) and len(accepted):
+            actrl_tol = getattr(self.app, "analysis_ctrl", None)
+            tol = (actrl_tol.break_tol_samples() if actrl_tol is not None
+                   else max(1, int(round(0.005 * float(self.app.signal.fs or 1.0)))))
+            still = active_removed_samples(removed, prev_ok, tol)
+            if len(still):
+                kept = drop_removed_peaks(accepted, still, tol,
+                                          protected=self.app.detection.manual_added)
+                if len(kept) != len(accepted):
+                    accepted = kept.astype(np.asarray(accepted).dtype, copy=False)
         self.app.detection.rpeaks_ok  = accepted
         self.app.detection.rpeaks_rej = rejected
         self.app.detection.thresh_amp = thresh_amp

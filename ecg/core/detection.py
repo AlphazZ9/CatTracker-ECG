@@ -490,12 +490,20 @@ def resolve_r_vs_j_peaks(
     for _pass in range(MAX_DOUBLET_PASSES):
         new_discard_this_pass = False
         active = [i for i in range(len(peaks)) if i not in discard]
+        if not active:
+            break
 
-        for k in range(len(active) - 1):
-            i0, i1 = active[k], active[k + 1]
+        # Pointeur « dernier conservé » : chaque pic est comparé au dernier
+        # pic NON écarté, pas à son voisin dans la liste `active` figée en
+        # début de passe. Sinon, après l'écart de active[k+1], la paire
+        # suivante comparait ce pic déjà écarté à active[k+2] et pouvait
+        # supprimer un vrai battement situé à un RR normal du pic conservé.
+        i0 = active[0]
+        for i1 in active[1:]:
             p0, p1 = peaks[i0], peaks[i1]
 
             if p1 - p0 >= min_dist_samp:
+                i0 = i1
                 continue  # gap OK, pas un doublet
 
             # Calcul de l'upstroke instantané max (3 ms, cohérent avec pipeline)
@@ -527,6 +535,8 @@ def resolve_r_vs_j_peaks(
                     _pass, p0, p1, p1 - p0, sl0, sl1, slope_ratio,
                     loser, peaks[loser],
                 )
+            # Le survivant de la paire devient la référence de la suivante.
+            i0 = i1 if loser == i0 else i0
 
         if not new_discard_this_pass:
             break  # convergence
@@ -1401,7 +1411,11 @@ def _composite_qrs_score(
     z_prom   = _zscore_mad(prominences)
 
     morph = _extended_morphology_descriptors(peaks, signal, fs, prominences)
-    z_width   = _zscore_mad(morph["width50"])
+    # Négatif : un QRS est nettement plus ÉTROIT qu'une onde T/J ou qu'un
+    # burst EMG (cf. docstring de _extended_morphology_descriptors) -- plus
+    # étroit = meilleur. Avec le signe positif, le terme largeur (poids 1.5)
+    # avantageait systématiquement les ondes T larges sur les vrais R.
+    z_width   = -_zscore_mad(morph["width50"])
     z_ratio   = _zscore_mad(morph["width_height_ratio"])
     z_curv    = _zscore_mad(-morph["curvature"])   # courbure plus négative = pic plus net = meilleur
     z_slope   = _zscore_mad(morph["slope_up"])
@@ -2357,26 +2371,35 @@ def detect_rr_artifacts(
         )
 
     # Pré-passe 0 : doublets
-    for k in range(n - 1):
-        if k in flagged:
+    # Walk with a "last kept" pointer: each peak is compared with the last
+    # peak that survived, not with rpeaks[k]. Skipping every pair that starts
+    # at a flagged peak left triplets (beat + two extra detections) with a
+    # sub-rr_min interval between the beat and the second extra detection,
+    # which Pass 2 then "fixed" by deleting the following real beat.
+    last_kept = 0
+    for k1 in range(1, n):
+        gap_ms = float(rpeaks[k1] - rpeaks[last_kept]) / fs * 1000
+        if gap_ms >= rr_min_ms:
+            last_kept = k1
             continue
-        if rr_ms[k] < rr_min_ms:
-            dev = round(abs(rr_ms[k] - rr_min_ms) / max(rr_min_ms, 1), 3)
-            if signal is not None:
-                # Keep the higher-amplitude peak — it's the more likely true
-                # R-peak. Without this, the second peak of every close pair
-                # was discarded unconditionally, which could throw away the
-                # real R-peak and keep a spurious artifact if the artifact
-                # happened to come first.
-                amp_k, amp_k1 = float(signal[rpeaks[k]]), float(signal[rpeaks[k + 1]])
-                loser = k if amp_k < amp_k1 else k + 1
-            else:
-                loser = k + 1
-            _add(loser, "duplicate", dev, float("nan"))
-            log.debug(
-                "detect_rr_artifacts pre-pass: doublet gap=%.1f ms → discard peak[%d]",
-                rr_ms[k], loser,
-            )
+        dev = round(abs(gap_ms - rr_min_ms) / max(rr_min_ms, 1), 3)
+        if signal is not None:
+            # Keep the higher-amplitude peak — it's the more likely true
+            # R-peak. Without this, the second peak of every close pair
+            # was discarded unconditionally, which could throw away the
+            # real R-peak and keep a spurious artifact if the artifact
+            # happened to come first.
+            amp_k, amp_k1 = float(signal[rpeaks[last_kept]]), float(signal[rpeaks[k1]])
+            loser = last_kept if amp_k < amp_k1 else k1
+        else:
+            loser = k1
+        _add(loser, "duplicate", dev, float("nan"))
+        log.debug(
+            "detect_rr_artifacts pre-pass: doublet gap=%.1f ms → discard peak[%d]",
+            gap_ms, loser,
+        )
+        if loser == last_kept:
+            last_kept = k1
 
     # Pass 1 : bornes physio
     for k in range(n - 1):

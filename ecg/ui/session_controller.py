@@ -29,7 +29,8 @@ from ecg.io.session import load_session, save_session, delete_session
 from ecg.io.db import _DB_AVAILABLE, upsert_recording, set_verified
 from ecg.core.ml_detector import save_training_sample, delete_training_sample
 from ecg.core.wave_template import WaveTemplate
-from ecg.ui.theme import GREEN, MUTED, ORANGE, RED
+from ecg.ui.app_async import recording_changed
+from ecg.ui.theme import GREEN, MUTED, ORANGE, RED, toggle_style
 from ecg.ui.tab_keys import (
     TAB_DETECTION, TAB_HRV, TAB_MORPHOLOGY, TAB_EVENTS, TAB_REPORT,
     time_course_mode,
@@ -111,6 +112,10 @@ class SessionController:
         # Analysis window is independent from FilterParams (not a detection param)
         params["analysis_t_start"] = self.app.analysis.t_start
         params["analysis_t_end"]   = self.app.analysis.t_end
+        # SG window is a Recording setting, not a FilterParams field, but the
+        # SG + Derivative detector reads it from this dict (default 20 ms).
+        params["sg_window_ms"] = self.app._safe_float(
+            getattr(self.app, "ent_sg_window_ms", None), 20.0)
         return params
 
     def add_recent(self, path: str) -> None:
@@ -139,10 +144,25 @@ class SessionController:
         inline based on a return value that's no longer available
         synchronously.
         """
+        # The recording this check / restore is for: another file opened
+        # meanwhile owns the state, and must not get this file's session
+        # (results, annotations, peak edits) -- nor its prompt.
+        gen = getattr(self.app, "_generation", 0)
+
+        def _stale() -> bool:
+            if recording_changed(self.app, gen, "Session restore"):
+                return True
+            if self.app.signal.filepath != path:
+                log.info("Session restore: stale result discarded (file changed)")
+                return True
+            return False
+
         def _check_worker():
             return load_session(path)
 
         def _check_done(state):
+            if _stale():
+                return
             if state is None:
                 self.update_session_ui(has_session=False)
                 self.app._load_raw_only()
@@ -158,6 +178,8 @@ class SessionController:
                 f"Restore it?  (No = load raw signal — click Detect Peaks to re-run)",
                 parent=self.app,
             )
+            if _stale():
+                return
             if not answer:
                 self.update_session_ui(has_session=True)
                 self.app._load_raw_only()
@@ -174,8 +196,9 @@ class SessionController:
             #       Tourne sur le thread principal via after(0, …).
             self.app._start_async(
                 self.app.btn_preview, "Restoring…", "Restoring session…",
-                lambda: self.restore_session_worker(state),
-                lambda bundle: self.on_restore_session_done(bundle, saved_at),
+                lambda: self.restore_session_worker(state, path),
+                lambda bundle: self.on_restore_session_done(
+                    bundle, saved_at, gen=gen, path=path),
                 pass_result=True,
             )
 
@@ -185,7 +208,7 @@ class SessionController:
             pass_result=True,
         )
 
-    def restore_session_worker(self, state: dict) -> dict:
+    def restore_session_worker(self, state: dict, path: "str | None" = None) -> dict:
         """Background worker — MUST NOT write to self or touch any Tkinter widget.
 
         Reloads the raw signal from the original .mat file and re-runs the
@@ -198,8 +221,14 @@ class SessionController:
         _draw_detail()), which is unsafe — Tkinter/Tcl objects must only be
         touched from the main thread. This mirrors the _preview_worker /
         _on_preview_done split used elsewhere in the app.
+
+        *path* is the file the session belongs to, captured on the main
+        thread (None: the current file) -- signal.filepath read here would
+        be another file's if one were opened while this runs.
         """
-        if self.app.signal.filepath is None:
+        if path is None:
+            path = self.app.signal.filepath
+        if path is None:
             raise RuntimeError("No file loaded — cannot restore session.")
 
         fs = int(state["fs"])
@@ -219,10 +248,9 @@ class SessionController:
         prep = FilterParams.from_dict(prep_raw) if isinstance(prep_raw, dict) else fp
 
         try:
-            sig_raw, detected_ch, _, detected_fs = load_mat_signal(
-                self.app.signal.filepath, prep.channel)
+            sig_raw, detected_ch, _, detected_fs = load_mat_signal(path, prep.channel)
         except Exception as exc:
-            raise RuntimeError(f"Could not reload signal from {self.app.signal.filepath}: {exc}") from exc
+            raise RuntimeError(f"Could not reload signal from {path}: {exc}") from exc
 
         if detected_fs is not None:
             fs = int(detected_fs)
@@ -238,6 +266,10 @@ class SessionController:
         # prep.to_dict() produces the "notch" key (not "notch_filter") that
         # _compute_preview_bundle expects.
         prepare_params = prep.to_dict()
+        # Not a FilterParams field (see compute_preview_bundle): carried over
+        # so the SG + Derivative candidates use the saved window.
+        if isinstance(prep_raw, dict) and prep_raw.get("sg_window_ms") is not None:
+            prepare_params["sg_window_ms"] = prep_raw["sg_window_ms"]
         signal_bundle = self.app._compute_preview_bundle(sig_raw, fs, prepare_params)
         # The analysis window the saved results were computed on -- not the
         # window entries, which may have been applied since without
@@ -350,13 +382,23 @@ class SessionController:
             ent.delete(0, "end")
             ent.insert(0, str(n))
 
-    def on_restore_session_done(self, bundle: dict, saved_at: str) -> None:
+    def on_restore_session_done(self, bundle: dict, saved_at: str,
+                                gen: "int | None" = None,
+                                path: "str | None" = None) -> None:
         """Write all restored state to self and to widgets — main thread only.
 
         Counterpart to ``_restore_session_worker``. This is the ONLY place
         that writes session-restore state to ``self``/widgets, exactly as
         ``_on_preview_done`` is the sole writer after ``_preview_worker``.
+
+        *gen* / *path*: the recording the restore started on (None: no
+        check). Another file opened meanwhile: the bundle is dropped.
         """
+        if gen is not None and recording_changed(self.app, gen, "Session restore"):
+            return
+        if path is not None and self.app.signal.filepath != path:
+            log.info("Session restore: stale result discarded (file changed)")
+            return
         # Clear figure cache on session restore
         self.app.ui.figure_cache.clear()
 
@@ -906,11 +948,12 @@ class SessionController:
         filtered  = self.app.signal.filtered
         fs        = self.app.signal.fs
         rpeaks_ok = self.app.detection.rpeaks_ok
+        gen = getattr(self.app, "_generation", 0)
 
         self.app._start_async(
             self.app.btn_save_for_training, "Saving…", "Saving training data…",
             lambda: self.save_for_training_worker(filepath, filtered, fs, rpeaks_ok),
-            self.on_save_for_training_done,
+            lambda result: self.on_save_for_training_done(result, gen=gen),
             pass_result=True,
         )
 
@@ -929,8 +972,17 @@ class SessionController:
             set_verified(filepath, True)
         return {"n_cand": n_cand}
 
-    def on_save_for_training_done(self, result: dict) -> None:
-        """Main thread: sync state/widgets after save_for_training_worker."""
+    def on_save_for_training_done(self, result: dict, gen: "int | None" = None) -> None:
+        """Main thread: sync state/widgets after save_for_training_worker.
+
+        *gen*: the recording it was saved for (None: no check). Another file
+        opened meanwhile must not get that file's verified flag."""
+        if gen is not None and recording_changed(
+                self.app, gen, "Training data",
+                msg=f"Training data saved — {result['n_cand']} candidates cached, "
+                    "for the recording open before this one."):
+            self.app.refresh_ml_status()
+            return
         self.app.session.verified_for_training = True
         self.sync_verified_switch()
         self.app.refresh_ml_status()
@@ -969,17 +1021,45 @@ class SessionController:
         filtered = self.app.signal.filtered
         project_name = (self.app.ent_project_name.get().strip()
                          if self.app.ent_project_name is not None else "")
+        # Everything else the worker reads (registry stats, notes, verified
+        # flag, the peaks of the training sample), for the same reason: read
+        # live, a file opened mid-save gave this file's registry row the new
+        # file's notes / flag / no stats, and deleted its training sample.
+        snap = self.save_snapshot()
+        gen = getattr(self.app, "_generation", 0)
 
         self.app._start_async(
             self.app.btn_save_session, "Saving…", "Saving session…",
-            lambda: self.save_session_worker(state, filepath, filtered, project_name),
-            self.on_save_session_done,
+            lambda: self.save_session_worker(state, filepath, filtered, project_name, snap),
+            lambda result: self.on_save_session_done(result, gen=gen),
             pass_result=True,
         )
 
+    def save_snapshot(self) -> dict:
+        """Main thread: the app state save_session_worker needs besides the
+        session dict -- references only (each is reassigned, never mutated in
+        place, when the recording changes)."""
+        sig = self.app.signal
+        results = self.app.analysis.results
+        return {
+            "results":   dict(results) if results else None,
+            "n_time":    len(sig.time) if sig.time is not None else None,
+            "fs":        sig.fs,
+            "rpeaks_ok": self.app.detection.rpeaks_ok,
+            "notes":     self.app.session.recording_notes,
+            "verified":  self.app.session.verified_for_training,
+        }
+
     def save_session_worker(self, state: dict, filepath: str, filtered: np.ndarray,
-                             project_name: str = "") -> dict:
-        """Background worker for save_session -- MUST NOT touch Tkinter widgets."""
+                             project_name: str = "", snap: "dict | None" = None) -> dict:
+        """Background worker for save_session -- MUST NOT touch Tkinter widgets.
+
+        *snap* is save_snapshot() taken on the main thread when the save
+        started (None: taken now, for a caller already on the main thread)."""
+        if snap is None:
+            snap = self.save_snapshot()
+        results, rpeaks_ok, fs = snap["results"], snap["rpeaks_ok"], snap["fs"]
+
         def _prog(pct: int, msg: str) -> None:
             self.app.after(0, lambda p=pct, m=msg: self.app._set_progress(p, m))
 
@@ -994,13 +1074,13 @@ class SessionController:
             _prog(20, "Updating registry…")
             _stats: dict = {}
             _rr_sparkline = None
-            if self.app.analysis.results:
-                _rdf = self.app.analysis.results.get("rr_df")
+            if results:
+                _rdf = results.get("rr_df")
                 # "hrv_time" is the results key used everywhere else in the
                 # app (plot_controller.py, export_controller.py) -- this
                 # site read the nonexistent "hrv_td" instead, so sdnn/rmssd
                 # were silently never written to the registry.
-                _hrv = self.app.analysis.results.get("hrv_time")
+                _hrv = results.get("hrv_time")
                 if _rdf is not None and len(_rdf):
                     # 60000 / mean NN -- the app-wide mean-HR definition
                     _stats["hr_mean"] = mean_hr_bpm(_rdf["RR_ms"].to_numpy(dtype=float))
@@ -1023,17 +1103,17 @@ class SessionController:
                     _stats["sdnn"]  = float(_hrv["HRV_SDNN"].values[0])
                 if _hrv is not None and "HRV_RMSSD" in _hrv.columns:
                     _stats["rmssd"] = float(_hrv["HRV_RMSSD"].values[0])
-                if self.app.signal.time is not None and self.app.signal.fs:
-                    _stats["duration_s"] = float(len(self.app.signal.time)) / self.app.signal.fs
-                if self.app.detection.rpeaks_ok is not None:
-                    _stats["n_peaks"] = int(len(self.app.detection.rpeaks_ok))
+                if snap["n_time"] is not None and fs:
+                    _stats["duration_s"] = float(snap["n_time"]) / fs
+                if rpeaks_ok is not None:
+                    _stats["n_peaks"] = int(len(rpeaks_ok))
             upsert_recording(
                 filepath=filepath,
                 fingerprint=fp,
                 session_path=str(out_path),
                 stats=_stats,
-                notes=self.app.session.recording_notes,
-                verified_for_training=self.app.session.verified_for_training,
+                notes=snap["notes"],
+                verified_for_training=snap["verified"],
                 project_name=project_name,
                 rr_sparkline=_rr_sparkline,
             )
@@ -1044,10 +1124,9 @@ class SessionController:
         # here even when _DB_AVAILABLE is False.
         n_cand = None
         try:
-            if self.app.session.verified_for_training and self.app.detection.rpeaks_ok is not None:
+            if snap["verified"] and rpeaks_ok is not None:
                 n_cand = save_training_sample(
-                    fp, filtered, self.app.signal.fs,
-                    self.app.detection.rpeaks_ok, progress_cb=_prog)
+                    fp, filtered, fs, rpeaks_ok, progress_cb=_prog)
                 log.info("ML training sample cached for %s (%d candidates)",
                           filepath, n_cand)
             else:
@@ -1058,8 +1137,18 @@ class SessionController:
         _prog(100, "Done")
         return {"out_path": out_path, "saved_at": state["saved_at"]}
 
-    def on_save_session_done(self, result: dict) -> None:
-        """Main thread: write UI state after save_session_worker completes."""
+    def on_save_session_done(self, result: dict, gen: "int | None" = None) -> None:
+        """Main thread: write UI state after save_session_worker completes.
+
+        *gen*: the recording the save started on (None: no check). The save
+        is done either way; another file opened meanwhile keeps its own
+        dirty flag and session label."""
+        if gen is not None and recording_changed(
+                self.app, gen, "Save Session",
+                msg=f"Session saved — {Path(result['out_path']).name} "
+                    "(the recording open before this one)"):
+            self.app.refresh_ml_status()
+            return
         self.app.session.dirty = False
         self.update_session_ui(has_session=True, saved_at=result["saved_at"])
         self.app.refresh_ml_status()
@@ -1104,6 +1193,57 @@ class SessionController:
         except Exception as exc:
             log.debug("sync_verified_switch failed: %s", exc)
 
+    def sync_edit_mode_widgets(self) -> None:
+        """Reflect detection.edit_mode / edit_free_placement on the Edit Peaks
+        and Free Placement buttons and the click hint (same looks as
+        DetectionController.toggle_edit_mode / toggle_free_placement).
+
+        Called after a UI rebuild: the buttons are recreated OFF and the
+        hint unpacked, whatever the live modes are.
+        """
+        det = self.app.detection
+        btn = getattr(self.app, "btn_edit_mode", None)
+        hint = getattr(self.app, "lbl_edit_hint", None)
+        try:
+            if btn is not None:
+                if det.edit_mode:
+                    btn.configure(text="Edit Mode ON", **toggle_style(True, warn=True))
+                else:
+                    btn.configure(text="Edit Peaks", **toggle_style(False))
+            if hint is not None:
+                if det.edit_mode:
+                    hint.pack(side="left", padx=(4, 0))
+                else:
+                    hint.pack_forget()
+        except Exception as exc:
+            log.debug("sync edit-mode widgets failed: %s", exc, exc_info=True)
+        btn_fp = getattr(self.app, "btn_free_placement", None)
+        if btn_fp is None:
+            return
+        try:
+            if det.edit_free_placement:
+                btn_fp.configure(text="Free Placement ON",
+                                 **toggle_style(True, warn=True))
+            else:
+                btn_fp.configure(text="Free Placement", **toggle_style(False))
+        except Exception as exc:
+            log.debug("sync free-placement button failed: %s", exc, exc_info=True)
+
+    def sync_filter_preview_switch(self) -> None:
+        """Reflect ui.filter_preview_on on the Preview filtering switch: the
+        overlay is drawn from that flag, so a switch rebuilt OFF over a live
+        overlay took two clicks to remove it."""
+        sw = getattr(self.app, "sw_filter_preview", None)
+        if sw is None:
+            return
+        try:
+            if self.app.ui.filter_preview_on:
+                sw.select()
+            else:
+                sw.deselect()
+        except Exception as exc:
+            log.debug("sync_filter_preview_switch failed: %s", exc)
+
     def update_session_ui(self, has_session: bool,
                            saved_at: str = "") -> None:
         """Update the session info label and button states."""
@@ -1141,8 +1281,12 @@ class SessionController:
         "ent_epoch", "ent_overlap", "ent_roll_win", "ent_roll_step",
         "ent_thr", "ent_window", "ent_analysis_t0", "ent_analysis_t1",
         "ent_sg_target_fs", "ent_sg_window_ms", "ent_entropy_cap")
+    # sw_permissive lives only in its widget (read at Measure intervals), so
+    # it must be carried over or a rebuild silently returns to strict bounds.
+    # sw_verified_training / sw_filter_preview are not listed: they mirror
+    # state (session / ui) and are re-synced from it by restore_ui_state.
     _SNAPSHOT_SWITCHES = ("sw_show_raw", "sw_filtering", "sw_notch", "sw_invert_signal",
-                          "sw_artifact", "sw_epoch")
+                          "sw_artifact", "sw_epoch", "sw_permissive")
 
     def snapshot_ui_state(self) -> dict:
         """Capture all editable widget values before a UI rebuild."""
@@ -1273,6 +1417,14 @@ class SessionController:
         saved_edit = s.get("edit_mode", False)
         if bool(saved_edit) != self.app.detection.edit_mode:
             self.app._toggle_edit_mode()
+        # The rebuilt widgets start in their OFF look while the state they
+        # mirror survives the rebuild: redraw them from that state. Comparing
+        # the snapshot with the live flag (above) can't do it -- both are the
+        # same value, so the toggle never ran and the button read "Edit Peaks"
+        # while clicks still edited peaks.
+        self.sync_edit_mode_widgets()
+        self.sync_verified_switch()
+        self.sync_filter_preview_switch()
         if "autonomic_params" in s:
             try:
                 self.app.analysis_ctrl.apply_autonomic_params(s["autonomic_params"])
