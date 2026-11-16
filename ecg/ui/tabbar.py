@@ -9,6 +9,7 @@ drawn as a glyph next to the name, so a state never rests on colour alone.
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
 from typing import Callable, Optional
 
 import customtkinter as ctk  # type: ignore[import-untyped]
@@ -22,10 +23,35 @@ from ecg.ui.theme import (
 STATE_GLYPHS = {UP_TO_DATE: "●", OUT_OF_DATE: "◆", NOT_COMPUTED: "○", COMPUTING: "◐"}
 LEGEND_ORDER = (UP_TO_DATE, OUT_OF_DATE, NOT_COMPUTED)
 
+# The mockup's tab head: 16 px each side, 4 px between heads, the first one
+# 16 px from the window edge. The 4 px gap is drawn inside the next head, so
+# every pixel from the first head's left edge to the last head's right edge
+# belongs to a head and selects its tab.
+HEAD_PAD = 16
+HEAD_GAP = 4
+
 
 def state_color(state: str) -> str:
     # Looked up at draw time: GREEN / ORANGE / MUTED follow the theme.
     return {UP_TO_DATE: GREEN, OUT_OF_DATE: ORANGE, COMPUTING: BLUE}.get(state, MUTED)
+
+
+def _text_width(widget: tk.Misc, font: tuple, text: str) -> int:
+    """Width of `text` in `font` as a CTkLabel at scaling 1 draws it (CTk turns
+    the size into pixels: -abs(size)). CTk scales the width= it is given."""
+    spec = (font[0], -abs(int(font[1]))) + tuple(font[2:])
+    return tkfont.Font(root=widget, font=spec).measure(text)
+
+
+def _walk(widget: tk.Misc) -> "list[tk.Misc]":
+    """The widget and every Tk window under it, CTk internals included (the
+    canvas behind each CTkFrame/CTkLabel and the tk.Label inside a CTkLabel),
+    which CTk's own .bind never reaches as a whole."""
+    out = [widget]
+    # tk.Misc's, not CTkFrame's: CTkFrame.winfo_children hides its canvas.
+    for child in tk.Misc.winfo_children(widget):
+        out.extend(_walk(child))
+    return out
 
 
 class TabBar(ctk.CTkFrame):
@@ -40,6 +66,11 @@ class TabBar(ctk.CTkFrame):
         self._heads: "dict[str, dict]" = {}
         self._current: "Optional[str]" = None
         self._hint: "Optional[tk.Label]" = None
+        # The head a press landed on, until its release: a release with no
+        # press before it means Tk dropped the press (macOS does, e.g. after a
+        # live resize or when its pointer state is stale), and selects instead.
+        self._pressed: "Optional[str]" = None
+        self._glyph_w = max(_text_width(self, FONT_HINT, g) for g in STATE_GLYPHS.values()) + 2
 
         self._bar = ctk.CTkFrame(self, fg_color=PANEL, corner_radius=0,
                                  height=int(round(TAB_H * THEME.font_scale)))
@@ -67,25 +98,31 @@ class TabBar(ctk.CTkFrame):
             raise ValueError(f"tab {name!r} already exists")
         self._frames[name] = ctk.CTkFrame(self._body, fg_color=BG, corner_radius=0)
 
-        # The mockup's tab head: 16 px each side, 4 px between heads, the
-        # first one 16 px from the window edge.
+        gap = 0 if not self._heads else HEAD_GAP
         head = ctk.CTkFrame(self._bar, fg_color="transparent", corner_radius=0)
-        head.pack(side="left", fill="y", padx=(16 if not self._heads else 4, 0))
+        head.pack(side="left", fill="y", padx=(HEAD_PAD if not self._heads else 0, 0))
         row = ctk.CTkFrame(head, fg_color="transparent", corner_radius=0)
-        row.pack(side="top", fill="both", expand=True, padx=16)
-        # width=0: a CTkLabel otherwise reserves 140 px, whatever its text.
-        glyph = ctk.CTkLabel(row, text=STATE_GLYPHS[NOT_COMPUTED], font=FONT_HINT, width=0,
+        row.pack(side="top", fill="both", expand=True, padx=(gap + HEAD_PAD, HEAD_PAD))
+        # Fixed widths: neither a state glyph nor the selected tab's bold name
+        # may change a head's width, or every head to its right would move
+        # under the pointer. (width=0 would size to the text; without width
+        # a CTkLabel reserves 140 px.)
+        glyph = ctk.CTkLabel(row, text=STATE_GLYPHS[NOT_COMPUTED], font=FONT_HINT,
+                             width=self._glyph_w, anchor="center",
                              text_color=state_color(NOT_COMPUTED))
         glyph.pack(side="left", padx=(0, SPACE_M))
-        label = ctk.CTkLabel(row, text=name, font=FONT_BODY, text_color=TEXT, width=0)
+        name_w = max(_text_width(self, FONT_CARD_TITLE, name),
+                     _text_width(self, FONT_BODY, name)) + 2
+        label = ctk.CTkLabel(row, text=name, font=FONT_BODY, text_color=TEXT,
+                             width=name_w, anchor="w")
         label.pack(side="left")
-        # width=1: a CTkFrame otherwise holds its parent at 200 px.
+        # width=1: a CTkFrame otherwise holds its parent at 200 px. The
+        # underline starts after the gap, as when the gap sat between heads.
         line = ctk.CTkFrame(head, width=1, height=3, fg_color=PANEL, corner_radius=0)
-        line.pack(side="bottom", fill="x")
-        for w in (head, row, glyph, label):
-            w.bind("<Button-1>", lambda _e, n=name: self.set(n))
+        line.pack(side="bottom", fill="x", padx=(gap, 0))
         self._heads[name] = {"head": head, "glyph": glyph, "label": label, "line": line,
                              "state": NOT_COMPUTED, "reasons": ()}
+        self._bind_head(name)
         if self._current is None:
             self.set(name)
         return self._frames[name]
@@ -102,6 +139,51 @@ class TabBar(ctk.CTkFrame):
         return list(self._frames)
 
     def set(self, name: str) -> None:
+        self._select(name, feedback=False)
+
+    # ── clicks ───────────────────────────────────────────────────────────
+
+    def _bind_head(self, name: str) -> None:
+        """One click target per head: a bindtag on every Tk window under it
+        (outer frames, CTk canvases, the labels' inner tk.Labels, the
+        underline), so no pixel of a head is dead."""
+        tag = f"TabBarHead{self._heads[name]['head']._w}"
+        self._heads[name]["tag"] = tag
+        for w in _walk(self._heads[name]["head"]):
+            tags = w.bindtags()
+            if tag not in tags:
+                # After the widget's own tag, before its class / toplevel /
+                # all: the root's popover-closing <Button-1> still runs.
+                w.bindtags(tags[:1] + (tag,) + tags[1:])
+        self.bind_class(tag, "<ButtonPress-1>", lambda _e, n=name: self._on_press(n))
+        self.bind_class(tag, "<ButtonRelease-1>", lambda e, n=name: self._on_release(n, e))
+
+    def _on_press(self, name: str) -> None:
+        self._pressed = name
+        self._select(name, feedback=True)
+
+    def _on_release(self, name: str, event: tk.Event) -> None:
+        pressed, self._pressed = self._pressed, None
+        if pressed is not None:
+            return  # the press already did it (or was a drag off another head)
+        # Tk never saw the press. Without it there is no implicit grab, so
+        # the release came to the window under the pointer: check anyway.
+        if self._head_at(event.x_root, event.y_root) == name:
+            self._select(name, feedback=True)
+
+    def _head_at(self, x_root: int, y_root: int) -> "Optional[str]":
+        try:
+            w = self.winfo_containing(x_root, y_root)
+        except (tk.TclError, KeyError):
+            return None
+        while w is not None:
+            for n, head in self._heads.items():
+                if w is head["head"]:
+                    return n
+            w = getattr(w, "master", None)
+        return None
+
+    def _select(self, name: str, feedback: bool) -> None:
         frame = self.tab(name)
         if name == self._current:
             return
@@ -111,6 +193,16 @@ class TabBar(ctk.CTkFrame):
         self._current = name
         frame.grid(row=0, column=0, sticky="nsew")
         self._draw_head(name, True)
+        if feedback:
+            # Show the new head and page before the app's tab-change work,
+            # which can take a while (Compare / Report rebuilds): on Aqua
+            # nothing is drawn until the handler returns, and a click with no
+            # visible effect reads as a missed one. update idletasks also
+            # flushes the drawing on macOS.
+            try:
+                self.update_idletasks()
+            except tk.TclError:
+                pass
         if self._command is not None:
             self._command()
 
