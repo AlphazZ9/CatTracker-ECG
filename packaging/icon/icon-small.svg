@@ -1,0 +1,3 @@
+<!-- Tom ECG Analysis app icon ("chat narquois"). Small-size (16-48 px) variant, thicker strokes. Source of every icon
+     file: run python tools/build_icons.py after editing. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect x="61" y="61" width="902" height="902" rx="200" fill="#D7263D"/><g fill="none" stroke="#FFF6F0" stroke-width="70" stroke-linecap="round" stroke-linejoin="round"><path d="M290 230 L375 395 Q512 360 649 395 L734 230 L770 470 C800 660 665 805 512 805 C359 805 224 660 254 470 Z"/><path d="M372 512 L448 532 M652 512 L576 532"/><path d="M430 640 Q476 690 512 650 Q556 694 612 628" stroke-width="56"/><path d="M450 668 L470 728 L490 674 Z M550 674 L570 732 L590 664 Z" fill="#FFF6F0" stroke-width="30"/></g></svg>

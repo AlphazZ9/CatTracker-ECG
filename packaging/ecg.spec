@@ -10,10 +10,10 @@ Result:
     Windows : dist/Tom ECG Analysis/Tom ECG Analysis.exe   (one-folder build)
     macOS   : dist/Tom ECG Analysis.app                    (app bundle)
 
-Icon: the app has no icon file yet (ecg.ui.theme.APP_ICON_PATH is None and
-the repository holds no .ico / .icns). The default PyInstaller icon is used.
-To add one later, put packaging/icon.ico (Windows) and/or packaging/icon.icns
-(macOS) next to this file: they are picked up automatically.
+Icon: packaging/icon.ico (Windows) and packaging/icon.icns (macOS), next to
+this file, are picked up automatically; ecg/ui/assets (window / taskbar icon
+at run time) is bundled as data. All are generated from packaging/icon/*.svg
+by tools/build_icons.py.
 
 The app version shown in the macOS bundle comes from the APP_VERSION
 environment variable (the CI sets it from the git tag), else setup.py's.
@@ -43,6 +43,7 @@ def _have(mod: str) -> bool:
 # ── Data files ────────────────────────────────────────────────
 datas = []
 datas += collect_data_files("customtkinter")      # themes (.json) + fonts
+datas += [(str(ROOT / "ecg" / "ui" / "assets"), "ecg/ui/assets")]  # app icon (window/taskbar)
 datas += collect_data_files("neurokit2")          # bundled datasets / templates
 datas += collect_data_files("matplotlib")         # mpl-data (also done by its hook)
 datas += collect_data_files("skops")
