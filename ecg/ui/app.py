@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 
 import customtkinter as ctk  # type: ignore[import-untyped]
 import tkinter as tk
@@ -46,7 +47,7 @@ if not hasattr(np, "trapz"):
 from PIL import Image, ImageTk
 from ecg.io.session import session_exists
 from ecg.ui.theme import (
-    THEME, apply_theme_config, NK_AVAILABLE, APP_ICON_PATH, PANEL, BLUE, GREEN,
+    THEME, apply_theme_config, NK_AVAILABLE, APP_ICON_PATH, APP_ICON_DIR, APP_ICON_ICO, PANEL, BLUE, GREEN,
 )
 from ecg.ui.dialogs import ThemeDialog
 
@@ -123,15 +124,31 @@ class ECGApp(
     # ─── Startup helpers ──────────────────────────────────────
 
     def _load_icon(self) -> None:
+        """The app's icon on this window, its dialogs and the taskbar.
+
+        Every size is passed to iconphoto so each place picks the drawing
+        made for it (the 16-48 px ones have thicker strokes). On Windows the
+        .ico is set too: CustomTkinter otherwise replaces the title-bar icon
+        of the window -- and of every CTkToplevel dialog -- with its own
+        200 ms after creation, unless iconbitmap() was called."""
         if not APP_ICON_PATH:
             return
         try:
-            # Pillow 9+ uses Image.Resampling.LANCZOS; older versions use Image.LANCZOS
-            _resample = (getattr(getattr(Image, "Resampling", None), "LANCZOS", None)
-                         or getattr(Image, "LANCZOS", Image.BICUBIC))  # type: ignore[attr-defined]
-            img = Image.open(APP_ICON_PATH).resize((256, 256), _resample)
-            # PhotoImage is accepted at runtime; Tkinter stubs are incomplete
-            self.iconphoto(True, ImageTk.PhotoImage(img))  # type: ignore[arg-type]
+            photos = []
+            for size in (256, 48, 32, 16):
+                png = APP_ICON_DIR / f"icon_{size}.png"
+                if png.exists():
+                    photos.append(ImageTk.PhotoImage(Image.open(png)))
+            if photos:
+                # Kept on self: Tk shows nothing once a PhotoImage is collected.
+                self._icon_photos = photos
+                self.iconphoto(True, *photos)  # type: ignore[arg-type]
+            if sys.platform.startswith("win") and APP_ICON_ICO:
+                self.iconbitmap(default=APP_ICON_ICO)
+                self.iconbitmap(APP_ICON_ICO)
+                ico = APP_ICON_ICO
+                ctk.CTkToplevel._windows_set_titlebar_icon = (  # type: ignore[method-assign]
+                    lambda top: top.iconbitmap(ico))
         except Exception as exc:
             log.debug("App icon not loaded: %s", exc)
 

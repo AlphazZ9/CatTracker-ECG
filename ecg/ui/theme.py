@@ -52,8 +52,14 @@ ctk.set_default_color_theme("blue")
 THEME_PATH:        Path = Path.home() / ".ecg_theme.json"
 _THEME_PATH_LEGACY: Path = Path.home() / ".ecg_theme.pkl"   # migrated on first load
 
-# App icon path
-APP_ICON_PATH: str | None = None
+# App icon (the red "chat narquois"): PNGs for the window and taskbar, and the
+# .ico Windows uses for title bars. Generated from packaging/icon/*.svg by
+# tools/build_icons.py; bundled into the standalone apps by packaging/ecg.spec.
+APP_ICON_DIR: Path = Path(__file__).resolve().parent / "assets"
+APP_ICON_PATH: str | None = (str(APP_ICON_DIR / "icon_256.png")
+                             if (APP_ICON_DIR / "icon_256.png").exists() else None)
+APP_ICON_ICO: str | None = (str(APP_ICON_DIR / "icon.ico")
+                            if (APP_ICON_DIR / "icon.ico").exists() else None)
 
 
 class ThemeConfig:

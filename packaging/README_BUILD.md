@@ -136,7 +136,10 @@ Résultat dans `dist/` (`dist/Tom ECG Analysis/` sous Windows,
 `dist/Tom ECG Analysis.app` sous macOS). `build/` et `dist/` sont ignorés
 par git.
 
-Icône : il n'y a pas encore d'icône d'application (l'icône PyInstaller par
-défaut est utilisée). Pour en ajouter une, déposer `packaging/icon.ico`
-(Windows) et/ou `packaging/icon.icns` (macOS) : le spec les prend
-automatiquement.
+Icône : le chat rouge « narquois ». Les sources sont
+`packaging/icon/icon.svg` (dessin complet, à partir de 64 px) et
+`packaging/icon/icon-small.svg` (traits épais, 16 à 48 px). Après une
+modification, régénérer tous les fichiers avec `python tools/build_icons.py`
+(nécessite `pip install resvg-py pillow`) : `packaging/icon.ico`,
+`packaging/icon.icns` (pris automatiquement par le spec) et
+`ecg/ui/assets/` (icône de la fenêtre et de la barre des tâches).

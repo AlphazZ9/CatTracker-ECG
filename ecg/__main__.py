@@ -16,12 +16,27 @@ def _ensure_std_streams() -> None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
 
 
+def _set_windows_app_id() -> None:
+    """Group the app's windows under its own taskbar entry and icon on
+    Windows, instead of python.exe's / pythonw.exe's (run from source or the
+    one-click launcher). No-op elsewhere."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "TomECG.Analysis")
+    except Exception:
+        pass
+
+
 def main() -> None:
     # Before anything else: in a frozen build a 'spawn' worker process of
     # ecg.core.delineation_pool re-runs the executable, and this turns that
     # run into the worker rather than a second app. No-op under plain Python.
     multiprocessing.freeze_support()
     _ensure_std_streams()
+    _set_windows_app_id()
     from ecg.ui.theme import NK_AVAILABLE
     if not NK_AVAILABLE:
         root = tk.Tk()
