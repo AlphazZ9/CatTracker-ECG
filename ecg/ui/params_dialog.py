@@ -171,6 +171,20 @@ class ParamsDialogMixin:
                 getattr(self, attr).insert(0, val)
             ) if getattr(self, attr, None) is not None else None
 
+            # With Filtering OFF the main window greys out its FILTER SETTINGS
+            # group (state="disabled"), and a disabled entry, combobox or
+            # switch silently ignores delete/insert/set/select -- so the
+            # cutoffs, cleaning method and notch set here were dropped.
+            # Enable them for the write-back; _on_filtering_toggle() below
+            # restores their availability from the new Filtering state.
+            for attr in ("ent_lp", "ent_hp", "cb_clean", "sw_notch"):
+                w = getattr(self, attr, None)
+                if w is not None:
+                    try:
+                        w.configure(state="normal")
+                    except Exception:
+                        pass
+
             _write("ent_channel",  dlg_channel.get())
             _write("ent_subject",  dlg_subject.get())
             _write("ent_fs",       dlg_fs.get())

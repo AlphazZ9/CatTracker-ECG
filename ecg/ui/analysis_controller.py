@@ -44,6 +44,7 @@ from ecg.core.metric_table import MISSING, format_metric
 from ecg.core.spwvd import spwvd_lf_hf
 from ecg.core.wave_template import WaveTemplate
 from ecg.io.session import session_exists
+from ecg.ui.app_async import recording_changed
 from ecg.ui.autonomic_view import (
     _ann_spans, analysis_window_text, autonomic_status, draw_autonomic, format_param,
     method_key, normalise_autonomic_params, params_differ,
@@ -1965,11 +1966,16 @@ class AnalysisController:
         params["hrv_rr_bounds"] = self.hrv_rr_bounds()
         params["break_tol_samples"] = self.break_tol_samples()
         prev_report = self.app.analysis.artifact_report
+        # What the result must still match when it lands: the recording
+        # (generation) and the peak set the worker starts from -- a peak
+        # edit while it runs reassigns rpeaks_ok (see on_analysis_done).
+        gen = getattr(self.app, "_generation", 0)
+        start_peaks = self.app.detection.rpeaks_ok
         self._mark_running("core", "frequency", "nonlinear")
         self.app._start_async(
             self.app.btn_run, "Analysing\u2026", "Running HRV analysis\u2026",
             lambda: self.analysis_worker(params, prev_report),
-            self.on_analysis_done,
+            lambda bundle: self.on_analysis_done(bundle, gen=gen, start_peaks=start_peaks),
             pass_result=True,
         )
 
@@ -2071,7 +2077,23 @@ class AnalysisController:
             "analysis_window": (float(ana_t0), float(ana_t1)),
         }
 
-    def on_analysis_done(self, bundle: dict) -> None:
+    def on_analysis_done(self, bundle: dict, gen: "int | None" = None,
+                         start_peaks: "np.ndarray | None" = None) -> None:
+        """*gen* / *start_peaks*: the recording generation and the rpeaks_ok
+        Analyze started from (None: no check). Another file opened, or the
+        peaks edited, while it ran: the bundle is dropped -- writing it would
+        put the old file's results on the new one, or bring an excluded
+        peak back and stamp core as current on peaks it never saw."""
+        if gen is not None and recording_changed(self.app, gen, "Analyze"):
+            self._drop_analysis_landing()
+            return
+        if (start_peaks is not None
+                and not self._same_peaks(self.app.detection.rpeaks_ok, start_peaks)):
+            log.info("Analyze: stale result discarded (peaks changed)")
+            self._drop_analysis_landing()
+            self.app._set_status(
+                "Analyze discarded — peaks changed while it ran: click Analyze", ORANGE)
+            return
         # ── Atomic state update (main thread) ────────────────────────────────
         self.app.analysis.results         = bundle["results"]
         # Analyze's artifact correction can change the peaks: the Autonomic
@@ -2198,6 +2220,14 @@ class AnalysisController:
         self.app._update_session_ui(
             has_session=bool(self.app.signal.filepath and session_exists(self.app.signal.filepath)))
         # Exports: the Report tab (and the header's Export…), always in view.
+
+    def _drop_analysis_landing(self) -> None:
+        """A discarded Analyze: its chain (frequency, non-linear) will not
+        run, so none of them stays "Computing", and the per-tab buttons its
+        end re-enabled are disabled again when there are no results."""
+        for module in ("core", "frequency", "nonlinear"):
+            self._mark_landed(module)
+        self._disable_result_btns_without_results()
 
     def run_freq(self, then: "Any" = None) -> None:
         """Compute frequency-domain HRV in background, then render.

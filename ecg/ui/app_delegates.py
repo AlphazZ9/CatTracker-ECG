@@ -578,6 +578,9 @@ class DelegatesMixin:
             if removed > 0:
                 removed_samples = {c["sample"] for c in result if c["decision"] == "remove"}
                 self._manual_excluded -= removed_samples
+                # A hand-added beat the review removed must stay removed too:
+                # run_detection merges manual_added back in on every rebuild.
+                self._manual_added -= removed_samples
 
             art_str = (f"Artifact review: −{removed} beats "
                        f"(non-physio={report['n_nonphysio']}  "

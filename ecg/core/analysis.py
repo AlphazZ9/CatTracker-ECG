@@ -3105,13 +3105,17 @@ def analyse_intervals(
         "accepted":    np.ones(n, dtype=bool),
     })
 
-    # NaN-out wave positions for out-of-bounds intervals
-    df.loc[np.isnan(pr_raw)  | (pr_raw  < MouseECG.PR_ABS_MIN)  | (pr_raw  > MouseECG.PR_ABS_MAX),
+    # NaN-out wave positions for out-of-bounds intervals. Tested on the
+    # clipped columns so the landmarks follow the SAME (strict or
+    # permissive) bounds as the intervals: re-testing the raw values
+    # against the strict limits blanked the P / Q-S / T landmarks of
+    # permissive-mode beats whose interval was kept.
+    df.loc[np.isnan(pr_clean),
            ["P_onset_s","P_peak_s","P_onset_ms","P_peak_ms"]] = np.nan
-    df.loc[np.isnan(qrs_raw) | (qrs_raw < MouseECG.QRS_ABS_MIN) | (qrs_raw > MouseECG.QRS_ABS_MAX),
+    df.loc[np.isnan(qrs_clean),
            ["Q_peak_s","S_peak_s","Q_peak_ms","S_peak_ms",
             "QRS_offset_s","QRS_offset_ms"]] = np.nan
-    df.loc[np.isnan(qt_raw)  | (qt_raw  < MouseECG.QT_ABS_MIN)  | (qt_raw  > MouseECG.QT_ABS_MAX),
+    df.loc[np.isnan(qt_clean),
            ["T_peak_s","T_offset_s","T_peak_ms","T_offset_ms"]] = np.nan
     # QRS onset starts PR's end, QRS and QT: kept while any of them is
     # plausible, NaN once none is (it is then not a usable landmark).

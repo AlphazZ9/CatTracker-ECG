@@ -98,12 +98,45 @@ def _deserialise_results(raw: dict) -> dict:
 #  MAT / HDF5 LOADER
 # ════════════════════════════════════════════════════════════
 
+def _split_channels(
+    key: str, arr: np.ndarray, time_axis_on_tie: int,
+) -> dict[str, np.ndarray]:
+    """{name: 1-D array} for one variable, one entry per channel.
+
+    A 2-D matrix with more than one row *and* more than one column holds
+    several channels side by side: flattening it would interleave them
+    sample by sample (ecg0, other0, ecg1, other1, ...) into a sawtooth
+    trace of twice the real duration.  It is instead split along its
+    shorter axis into ``key[0]``, ``key[1]``, ... with the longer axis
+    taken as time.  A square matrix is ambiguous; *time_axis_on_tie* is
+    the axis the caller's file format stores samples along (0 for v5
+    column-major loadmat arrays, 1 for v7.3 HDF5 where h5py exposes the
+    MATLAB matrix transposed).  1-D and (n,1)/(1,n) inputs are flattened
+    unchanged under *key*.
+    """
+    if arr.ndim == 2 and min(arr.shape) > 1:
+        if arr.shape[0] != arr.shape[1]:
+            time_axis = 0 if arr.shape[0] > arr.shape[1] else 1
+        else:
+            time_axis = time_axis_on_tie
+        cols = arr if time_axis == 1 else arr.T
+        return {f"{key}[{i}]": np.ascontiguousarray(c) for i, c in enumerate(cols)}
+    return {key: arr.flatten()}
+
+
+def _base_key(channel: str) -> str:
+    """Variable name a ``key[i]`` split channel came from (MATLAB names
+    cannot contain '['), so fs metadata stored on that variable is found."""
+    return channel.split("[", 1)[0]
+
+
 def _flatten_mat_dict(raw: dict) -> dict[str, np.ndarray]:
     """Convert a raw scipy.io.loadmat dict into {name: 1-D array} pairs.
 
     Handles Spike2 structs that store data under a `.values` or `.data`
     attribute, falling back to direct array conversion. Non-array keys
-    (metadata starting with '_') are skipped silently.
+    (metadata starting with '_') are skipped silently.  Multi-column
+    matrices are split into one channel per column (see _split_channels).
     """
     flat: dict[str, np.ndarray] = {}
     for key, value in raw.items():
@@ -111,11 +144,12 @@ def _flatten_mat_dict(raw: dict) -> dict[str, np.ndarray]:
             continue
         try:
             if hasattr(value, "values"):
-                flat[key] = np.array(value.values).flatten()
+                arr = np.array(value.values)
             elif hasattr(value, "data"):
-                flat[key] = np.array(value.data).flatten()
+                arr = np.array(value.data)
             else:
-                flat[key] = np.array(value).flatten()
+                arr = np.array(value)
+            flat.update(_split_channels(key, arr, time_axis_on_tie=0))
         except Exception as exc:
             log.debug("Skipping mat key '%s': %s", key, exc)
     return flat
@@ -230,18 +264,20 @@ def _flatten_hdf5_file_obj(f: "Any") -> dict[str, np.ndarray]:
         for sub in ("values", "data"):
             if isinstance(group, h5py.Group) and sub in group:
                 try:
-                    arr = np.array(group[sub]).flatten()
-                    if len(arr) > 100:
-                        flat[key] = arr
+                    for name, arr in _split_channels(
+                            key, np.array(group[sub]), time_axis_on_tie=1).items():
+                        if len(arr) > 100:
+                            flat[name] = arr
                 except Exception as exc:
                     log.debug("HDF5 '%s/%s': %s", key, sub, exc)
                 found = True
                 break
         if not found and isinstance(group, h5py.Dataset):
             try:
-                arr = np.array(group).flatten()
-                if len(arr) > 100:
-                    flat[key] = arr
+                for name, arr in _split_channels(
+                        key, np.array(group), time_axis_on_tie=1).items():
+                    if len(arr) > 100:
+                        flat[name] = arr
             except Exception as exc:
                 log.debug("HDF5 dataset '%s': %s", key, exc)
     return flat
@@ -336,7 +372,7 @@ def load_mat_signal(
         raw = scipy.io.loadmat(filepath, squeeze_me=True, struct_as_record=False)
         flat = _flatten_mat_dict(raw)
         sig, ch, keys = _pick_best_channel(flat, channel)
-        detected_fs = _detect_fs_from_mat(raw, ch)
+        detected_fs = _detect_fs_from_mat(raw, _base_key(ch))
         return sig, ch, keys, detected_fs
     except NotImplementedError:
         pass  # v7.3 HDF5 — fall through
@@ -352,7 +388,7 @@ def load_mat_signal(
     with h5py.File(filepath, "r") as f:
         flat = _flatten_hdf5_file_obj(f)
         sig, ch, keys = _pick_best_channel(flat, channel)
-        detected_fs = _detect_fs_from_hdf5_obj(f, ch)
+        detected_fs = _detect_fs_from_hdf5_obj(f, _base_key(ch))
     return sig, ch, keys, detected_fs
 
 

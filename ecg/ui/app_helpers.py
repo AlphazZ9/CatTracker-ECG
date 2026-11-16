@@ -228,7 +228,21 @@ class HelpersMixin:
             del self._tsv_store[wid]
 
     def _bind_copy_menu(self: ECGApp, widget) -> None:
-        """Attach a right-click context menu with copy options to *widget*."""
+        """Attach a right-click context menu with copy options to *widget*.
+
+        Bound once per widget: _set_textbox calls this on every refresh,
+        and since the bindings use add=True, re-binding stacked one more
+        handler each time (N refreshes -> N modal menus in a row on one
+        right-click). The handler reads the latest TSV from _tsv_store at
+        click time via _copy_tsv, so a single binding is always current.
+        """
+        if getattr(widget, "_ecg_copy_menu_bound", False):
+            return
+        try:
+            widget._ecg_copy_menu_bound = True
+        except Exception:
+            pass
+
         def _show_menu(event):
             menu = tk.Menu(self, tearoff=0)
             menu.add_command(
