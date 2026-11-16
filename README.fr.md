@@ -831,6 +831,50 @@ signalé en orange dans la vue.
   "kneedle" in a haystack: detecting knee points in system behavior.
   *ICDCS Workshops* (l'approximation du coude).
 
+## Lancer l'application sans installer Python
+
+Pour les utilisateurs qui veulent simplement utiliser l'application (aucune
+connaissance de Python nécessaire). Récupérez le dossier du dépôt
+(`git clone`, ou sur GitHub **Code > Download ZIP**, puis décompressez le
+ZIP en entier), et double-cliquez sur le lanceur dans ce dossier :
+
+| Système | Lanceur |
+| --- | --- |
+| Windows | `Lancer ECG.bat` |
+| macOS (Apple Silicon ou Intel) | `Lancer ECG.command` |
+
+- **Premier lancement : une connexion Internet est nécessaire.** Le lanceur
+  installe [uv](https://docs.astral.sh/uv/) s'il est absent, un Python 3.12
+  privé (jamais le Python du système, ni celui d'Apple avec son ancien
+  Tk 8.5) et les bibliothèques de `requirements.txt` — quelques minutes et
+  environ 400 Mo. Une fenêtre affiche la progression.
+- **Lancements suivants** : l'application démarre directement, en quelques
+  secondes, y compris hors ligne. Les bibliothèques ne sont réinstallées
+  automatiquement que si `requirements.txt` change (par exemple après une
+  mise à jour du dossier).
+- **Dossier utilisé** (supprimez-le pour tout réinstaller ; vos réglages
+  dans `~/.ecg_*` ne sont pas touchés) :
+  - Windows : `%LOCALAPPDATA%\TomECG` (le cache de téléchargement de uv est
+    dans `%LOCALAPPDATA%\uv\cache`).
+  - macOS : `~/Library/Application Support/TomECG` (cache : `~/.cache/uv`).
+- **Windows :** l'application s'ouvre sans fenêtre console ; les éventuelles
+  erreurs Python sont écrites dans `dernier_lancement.log` du dossier
+  ci-dessus. Lancer `"Lancer ECG.bat" debug` depuis une invite de commandes
+  garde la console ouverte pour afficher les erreurs. Si SmartScreen
+  avertit au sujet du fichier, cliquez sur *Informations complémentaires >
+  Exécuter quand même*.
+- **macOS, premier lancement (Gatekeeper) :** sous macOS 15 (Sequoia) ou
+  plus récent, double-cliquez une fois, cliquez sur **OK**, puis ouvrez
+  *Réglages Système > Confidentialité et sécurité*, descendez et cliquez sur
+  **Ouvrir quand même** à côté de `Lancer ECG.command`, puis confirmez avec
+  votre mot de passe. Sous macOS 14 ou plus ancien : clic droit (ou
+  Ctrl+clic) sur `Lancer ECG.command` > **Ouvrir**, puis confirmez. Une
+  seule fois. Si cela ne suffit pas, dans le Terminal : `xattr -d com.apple.quarantine
+  "/chemin/vers/Lancer ECG.command"` (glissez le fichier dans la fenêtre du
+  Terminal pour écrire son chemin), et `chmod +x` sur le même chemin si
+  macOS indique que le fichier n'est pas exécutable. Le lanceur macOS n'a
+  pas encore été testé sur un vrai Mac.
+
 ## Prérequis
 
 - Python ≥ 3.10

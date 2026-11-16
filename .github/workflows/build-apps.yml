@@ -1,0 +1,135 @@
+# Builds the standalone "Tom ECG Analysis" apps with PyInstaller
+# (packaging/ecg.spec) for Windows and macOS (Apple Silicon + Intel).
+#
+#   - push a tag vX.Y.Z  -> build + GitHub Release with the three zips
+#   - Actions tab > "Build apps" > Run workflow -> build only (zips under
+#     the run's "Artifacts")
+#
+# See packaging/README_BUILD.md (French) for the full procedure.
+name: Build apps
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-apps-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+            zip: Tom-ECG-Analysis-Windows.zip
+          - os: macos-14          # Apple Silicon (arm64)
+            label: macOS arm64
+            zip: Tom-ECG-Analysis-macOS-arm64.zip
+          # Intel Macs. GitHub retired the macos-13 image (Dec 2025);
+          # macos-15-intel is its x86_64 replacement.
+          - os: macos-15-intel
+            label: macOS x86_64
+            zip: Tom-ECG-Analysis-macOS-x86_64.zip
+    env:
+      APP_NAME: Tom ECG Analysis
+      # Version shown in the macOS bundle: the tag name, else the spec's default.
+      APP_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            packaging/constraints.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # The versions the app is tested against, not the newest on PyPI.
+          python -m pip install -r requirements.txt -c packaging/constraints.txt pyinstaller==6.22.3
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm --clean packaging/ecg.spec
+
+      # ---- Windows -------------------------------------------------------
+      - name: Smoke check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = "dist/$env:APP_NAME/$env:APP_NAME.exe"
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          if (-not (Test-Path "dist/$env:APP_NAME/_internal/customtkinter")) { throw "customtkinter assets missing" }
+          $mb = [math]::Round(((Get-ChildItem "dist/$env:APP_NAME" -Recurse | Measure-Object Length -Sum).Sum) / 1MB)
+          Write-Host "OK: $exe ($mb MB)"
+
+      - name: Zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: dist
+        run: |
+          7z a -tzip -mx=7 "../${{ matrix.zip }}" "$env:APP_NAME"
+          if ($LASTEXITCODE -ne 0) { throw "7z failed" }
+
+      # ---- macOS ---------------------------------------------------------
+      - name: Smoke check (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          app="dist/${APP_NAME}.app"
+          bin="${app}/Contents/MacOS/${APP_NAME}"
+          test -x "$bin" || { echo "Missing $bin"; exit 1; }
+          file "$bin"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "${app}/Contents/Info.plist"
+          codesign --verify --deep --verbose=1 "$app" || echo "::warning::codesign verify failed (app is ad-hoc signed only)"
+          du -sh "$app"
+
+      - name: Zip (macOS)
+        if: runner.os == 'macOS'
+        working-directory: dist
+        run: ditto -c -k --sequesterRsrc --keepParent "${APP_NAME}.app" "../${{ matrix.zip }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.zip }}
+          path: ${{ matrix.zip }}
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0     # already zipped
+
+  release:
+    name: Attach to GitHub Release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: zips
+          merge-multiple: true
+
+      - run: ls -la zips
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Tom ECG Analysis ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            zips/Tom-ECG-Analysis-Windows.zip
+            zips/Tom-ECG-Analysis-macOS-arm64.zip
+            zips/Tom-ECG-Analysis-macOS-x86_64.zip

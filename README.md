@@ -743,6 +743,45 @@ than the current one is flagged in orange in the view.
   "kneedle" in a haystack: detecting knee points in system behavior.
   *ICDCS Workshops* (the knee proxy).
 
+## Run the app without installing Python
+
+For users who just want to run the app (no Python knowledge needed). Get
+the repository folder (`git clone`, or on GitHub **Code > Download ZIP**,
+then extract the whole ZIP), and double-click the launcher in that folder:
+
+| System | Launcher |
+| --- | --- |
+| Windows | `Lancer ECG.bat` |
+| macOS (Apple Silicon or Intel) | `Lancer ECG.command` |
+
+- **First launch: an Internet connection is required.** The launcher
+  installs [uv](https://docs.astral.sh/uv/) if it is missing, a private
+  Python 3.12 (never your system Python, nor Apple's Python with its old
+  Tk 8.5) and the libraries from `requirements.txt` — a few minutes and
+  roughly 400 MB. A window shows the progress (messages in French).
+- **Later launches** start the app directly, in a few seconds, and work
+  offline. Libraries are reinstalled automatically only when
+  `requirements.txt` changes (e.g. after updating the folder).
+- **Folder used** (delete it to reinstall from scratch; your settings in
+  `~/.ecg_*` are not touched):
+  - Windows: `%LOCALAPPDATA%\TomECG` (uv's download cache is in
+    `%LOCALAPPDATA%\uv\cache`).
+  - macOS: `~/Library/Application Support/TomECG` (cache: `~/.cache/uv`).
+- **Windows:** the app opens without a console window; Python errors, if
+  any, are written to `dernier_lancement.log` in the folder above. Running
+  `"Lancer ECG.bat" debug` from a command prompt keeps the console open to
+  show errors. If SmartScreen warns about the file, click *More info >
+  Run anyway*.
+- **macOS, first launch (Gatekeeper):** on macOS 15 (Sequoia) or later,
+  double-click once, click **Done**, then open *System Settings > Privacy &
+  Security*, scroll down, click **Open Anyway** next to `Lancer ECG.command`
+  and confirm with your password. On macOS 14 or earlier, right-click (or
+  Ctrl-click) `Lancer ECG.command` > **Open**, then confirm. Only needed
+  once. If that is not enough, run in Terminal: `xattr -d com.apple.quarantine "/path/to/Lancer
+  ECG.command"` (drag the file into the Terminal window to type its path),
+  and `chmod +x` on the same path if macOS says the file is not executable.
+  The macOS launcher has not yet been tested on a real Mac.
+
 ## Requirements
 
 - Python ≥ 3.10
