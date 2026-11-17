@@ -1,8 +1,8 @@
-"""Compare segments tab, built for real on a stand-in app: the event Start is
-not pre-filled from the Detection view (typed windows got phantom "overlaps
-the event" flags), and the "Δ % against:" selector re-points the table, the
-comparison text and the kept ComparisonResult without recomputing the
-segment statistics."""
+"""Compare segments tab, built for real on a stand-in app: no "Windows
+around an event" card (the windows are typed, the comparison runs with no
+event), the "Δ % against:" selector re-points the table, the comparison
+text and the kept ComparisonResult without recomputing the segment
+statistics, and the RR tachograms draw one panel per pair in Pairs mode."""
 from __future__ import annotations
 
 import time
@@ -14,7 +14,6 @@ import pytest
 
 import customtkinter as ctk  # type: ignore[import-untyped]
 
-from ecg.core import segment_plan as sp
 from ecg.ui import compare_segments as cs
 from ecg.ui.compare_segments import CompareSegmentsMixin
 
@@ -51,9 +50,6 @@ def _app(nav_pos: float = 450.0) -> SimpleNamespace:
 
 @pytest.fixture
 def tab(monkeypatch):
-    # Never the user's own ~/.ecg_segment_templates.json.
-    monkeypatch.setattr(cs, "load_templates", lambda: list(sp.BUILTIN_TEMPLATES))
-
     # The worker hands its result back with win.after(), which Tk refuses
     # from another thread without a running mainloop: run it inline here.
     class _Inline:
@@ -122,15 +118,28 @@ def _table_text(frame) -> str:
     return tbl.get("1.0", "end")
 
 
-def test_event_start_is_not_prefilled(tab):
+def test_no_event_or_template_card(tab):
     app, frame = tab
-    start = next(e for e in _entries(frame) if e.cget("placeholder_text") == "optional")
-    assert start.get() == ""            # nav_pos = 450 is not copied in
-    # Typed windows over that position get no phantom event flag.
+    texts = [str(w.cget("text")) for w in _walk(frame) if isinstance(w, ctk.CTkLabel)]
+    assert not any("event" in t.lower() for t in texts)
+    assert not any(t.strip() in ("Template:", "Artefact margin (s):", "Window (s):")
+                   for t in texts)
+    buttons = [str(w.cget("text")) for w in _walk(frame) if isinstance(w, ctk.CTkButton)]
+    assert not any(b in ("Apply", "Save as template…", "Delete") for b in buttons)
+    # Only the segment rows' entries and the block length are left.
+    assert all(e.cget("placeholder_text") in ("Label", None, "") for e in _entries(frame))
+    # Typed windows over the Detection view's position: no event, no template.
+    # This drives the real _run_compare / _on_done path, real quality_flags
+    # included (a wrong keyword there used to break every run).
     _run(app, frame, [("S1", 300, 600), ("S2", 600, 900)])
     res = app.analysis.last_comparison
-    assert res.event is None
+    assert len(res.flags) == 2
+    assert res.event is None and res.template == "" and res.artefact_margin_s is None
     assert not any("overlaps the event" in f for fl in res.flags for f in fl)
+    from ecg.io.segment_export import summary_rows
+    items = [k for k, _v in summary_rows(res)]
+    assert "Template" not in items and "Event (s)" not in items
+    assert "Artefact margin (s)" not in items
 
 
 def test_reference_selector_repoints_without_recomputing(tab):
@@ -214,3 +223,32 @@ def test_reference_changed_while_running_is_followed(tab):
     assert cb.get() == "S3 (reference)"
     assert "S3 (ref.)" in _table_text(frame).split("\n")[0]
     assert len(res.cmps) == 2
+
+
+def test_pairs_mode_draws_one_tachogram_panel_per_pair(tab, monkeypatch):
+    app, frame = tab
+    drawn = []
+    real = cs.draw_rr_tachograms
+
+    def _spy(fig, segs, colors, comparators=None, names=None):
+        axes = real(fig, segs, colors, comparators, names)
+        drawn.append(axes)
+        return axes
+    monkeypatch.setattr(cs, "draw_rr_tachograms", _spy)
+    # Inside the ~919 s recording (7500 beats of ~122 ms).
+    wins = [("Pre 1", 0, 150), ("Post 1", 150, 300), ("Pre 2", 300, 450),
+            ("Post 2", 450, 600), ("Pre 3", 600, 750)]
+    _run(app, frame, wins)
+    assert len(drawn[-1]) == 1                      # against the first: one plot
+    cb = _ref_combo(frame)
+    cb._dropdown_callback("Pairs (2 vs 1, 4 vs 3, 6 vs 5)")
+    frame.update()
+    axes = drawn[-1]                                # the view followed the selector
+    assert [a.get_title(loc="left") for a in axes] == [
+        "Post 1 vs Pre 1", "Post 2 vs Pre 2", "Pre 3"]
+    # The card grew to give each panel its row.
+    heights = {int(w.cget("height")) for w in _walk(frame) if isinstance(w, ctk.CTkFrame)}
+    assert cs._YBAR_H + 3 * cs._TACHO_ROW_H in heights
+    cb._dropdown_callback("Pre 1 (reference)")
+    frame.update()
+    assert len(drawn[-1]) == 1

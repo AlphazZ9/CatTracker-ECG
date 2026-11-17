@@ -334,15 +334,16 @@ Le premier segment sert de **référence**.
 |---|---|
 | Valid RR (% of window) | Les RR valides couvrent **< 80 %** de la fenêtre. |
 | Poincaré pairs | **< 200** paires successives valides. |
-| Durée | Diffère de plus de **2 %** de celle du premier segment. |
-| Artefact | Le segment chevauche l'événement ou la **marge d'artefact** qui suit (30 s par défaut). |
+| Durée | Diffère de plus de **2 %** de celle du segment auquel il est comparé. |
+| Artefact | Anciens résultats seulement : le segment chevauchait l'événement ou la **marge d'artefact** qui suit (l'onglet ne place plus de fenêtres autour d'un événement). |
 | Abrupt RR jumps | Plus de **0,5 %** des paires ont `|RRₙ₊₁ − RRₙ| > 20 %` du RR médian (battements manqués / en trop). |
 | **SD1 trimmed 2 %** | SD1 est **> 1,5×** sa valeur recalculée sans les 2 % de paires les plus extrêmes. SD1 est alors dominé par quelques paires aberrantes : vérifier les pics. Sur des données propres le rapport vaut ≈ 1,05. |
 
-### Modèles de fenêtres
-Chaque fenêtre d'un modèle est placée depuis le **début** de l'événement (fenêtres avant)
-ou depuis sa **fin** (fenêtres après), avec un décalage en secondes. *Before/after 5 min* :
-Before = début −300 à 0 s ; After = fin +30 à +330 s.
+### Fenêtres
+Les fenêtres sont saisies à la main (étiquette, début, fin) : la carte « Windows around an
+event » (événement, modèles, marge d'artefact) a été retirée de l'onglet. En mode *Pairs*
+(2 vs 1, 4 vs 3, 6 vs 5), les tachogrammes RR sont tracés paire par paire (un panneau par
+paire, même échelle RR), jamais toutes les fenêtres ensemble.
 
 ---
 
@@ -385,7 +386,7 @@ Une ligne par enregistrement : `subject`, `file`, `template`, puis pour chaque s
 - `QC` (« ok » ou la liste des alertes) ;
 - toutes les métriques du § 9.
 
-Utilisez le **même modèle** pour tous les animaux afin que les colonnes s'alignent. Pour
+Utilisez les **mêmes fenêtres et étiquettes** pour tous les animaux afin que les colonnes s'alignent. Pour
 deux segments, faites un test apparié (Wilcoxon ou t apparié) ; pour plus de deux, un
 test à mesures répétées (Friedman ou ANOVA à mesures répétées). Dans tous les cas, l'unité
 statistique est l'animal.

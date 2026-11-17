@@ -477,7 +477,8 @@ est devenu Sliding, *Beat Template* et *Intervals* sont Morphology & Intervals,
 
 ### Comparaison & export
 
-- Comparaison de segments A/B avec tachogrammes RR superposés et un tableau
+- Comparaison de segments (fenêtres saisies) avec tachogrammes RR superposés
+  (un panneau par paire en mode Pairs) et un tableau
   complet des métriques (puissance et n.u. LF / HF, SD1/SD2 — mêmes
   définitions que les panneaux principaux). Chaque segment est aussi résumé
   par les **moyennes de blocs non chevauchants** (10 s par défaut, champ

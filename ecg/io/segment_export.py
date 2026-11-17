@@ -147,18 +147,22 @@ def blocks_frame(res: ComparisonResult) -> "pd.DataFrame":
 
 def summary_rows(res: ComparisonResult, exported_at: str = "") -> "list[tuple[str, str]]":
     """What the comparison rests on and its block-mean summary, as (item,
-    value) rows: subject, file, template, event, windows, bands, block
+    value) rows: subject, file, template / event (old results only), windows, bands, block
     length, what the Δ % are against, each compared pair's block-mean
     summary, and the descriptive caveat."""
     from ecg.core.analysis import segment_comparison_text
     tags = res.tags
     rows = [("Subject", res.subject or "—"),
-            ("File", os.path.basename(res.filepath or "") or "—"),
-            ("Template", res.template or "— (windows typed)")]
+            ("File", os.path.basename(res.filepath or "") or "—")]
+    # Template, event and artefact margin: only results made when the tab
+    # still placed windows around an event carry them (the windows are now
+    # always typed), so their rows appear only when set.
+    if res.template:
+        rows.append(("Template", res.template))
     if res.event is not None:
         rows.append(("Event (s)", f"{res.event[0]:g}–{res.event[1]:g}"))
-    if res.artefact_margin_s is not None:
-        rows.append(("Artefact margin (s)", f"{res.artefact_margin_s:g}"))
+        if res.artefact_margin_s is not None:
+            rows.append(("Artefact margin (s)", f"{res.artefact_margin_s:g}"))
     for tag, s in zip(tags, res.segs):
         rows.append((f"Segment {tag} (s)", f"{_num(s.get('t_lo')):g}–{_num(s.get('t_hi')):g}"))
     ref = comparators_reference(res.comps)

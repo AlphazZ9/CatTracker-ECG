@@ -2,10 +2,11 @@
 """
 ecg.ui.compare_segments
 -----------------------
-ECGApp Compare segments tab: 1 to 6 windows of the recording, typed or
-placed by a saved template around an event, their metric table, quality
-checks, RR tachograms or Poincaré plots, the export and the group table. Built in the tab when it opens, rebuilt when the recording or its
-peaks have changed since. Mixin of ECGApp (see ecg/ui/app.py).
+ECGApp Compare segments tab: 1 to 6 windows of the recording, typed in,
+their metric table, quality checks, RR tachograms (one panel per pair in
+Pairs mode) or Poincaré plots, the export and the group table. Built in the
+tab when it opens, rebuilt when the recording or its peaks have changed
+since. Mixin of ECGApp (see ecg/ui/app.py).
 """
 from __future__ import annotations
 
@@ -46,10 +47,8 @@ from ecg.io.segment_export import (
     ComparisonResult, comparison_tsv, write_csv, write_pzfx, write_xlsx,
 )
 from ecg.core.segment_plan import (
-    DEFAULT_ARTEFACT_MARGIN_S, MAX_SEGMENTS, PAIRS, PAIRWISE, SegmentTemplate,
-    comparators_caption, comparators_reference, comparison_pairs, delete_template,
-    load_templates, quality_flags, reference_comparators, resolve, save_template,
-    segment_quality, template_from_windows, unique_tags,
+    MAX_SEGMENTS, PAIRS, PAIRWISE, comparators_caption, comparators_reference,
+    comparison_pairs, quality_flags, reference_comparators, unique_tags,
 )
 from ecg.ui.plots import CanvasSlot, style_axes
 from ecg.ui.tab_keys import TAB_COMPARE
@@ -73,6 +72,62 @@ _POINCARE_ROW_GAP = 48              # between two rows of Poincaré panels
 # Narrowest column that still gives a panel its full row-height size
 # (the square plot plus its Y label and ticks).
 _POINCARE_COL_W = 480
+# One panel of the per-pair tachograms (Pairs mode), CTk units.
+_TACHO_ROW_H = 260
+
+
+def tachogram_groups(n: int, comparators: "Optional[list[Optional[int]]]" = None
+                     ) -> "list[tuple[int, ...]]":
+    """The segments each RR tachogram panel shows: in Pairs mode
+    (comparators_reference == PAIRS) one panel per pair, (comparator,
+    segment), and an odd segment left alone in its own; otherwise one panel
+    with every segment superimposed."""
+    if n <= 0:
+        return []
+    if comparators is not None and len(comparators) == n \
+            and comparators_reference(comparators) == PAIRS:
+        groups: "list[tuple[int, ...]]" = [(j, k) for j, k in comparison_pairs(comparators)]
+        paired = {i for g in groups for i in g}
+        groups += [(i,) for i in range(n) if i not in paired]
+        return sorted(groups, key=lambda g: g[0])
+    return [tuple(range(n))]
+
+
+def draw_rr_tachograms(fig, segs: "list[dict]", colors: "list[str]",
+                       comparators: "Optional[list[Optional[int]]]" = None,
+                       names: "Optional[list[str]]" = None) -> list:
+    """The RR tachograms of *segs* on *fig*: all superimposed on one axes,
+    or, in Pairs mode, one axes per pair (the two superimposed, titled
+    "B vs A") stacked vertically, sharing the RR scale so the pairs compare
+    at a glance (the Y-scale bar and the wheel zoom then act on every
+    panel). Time is within each segment. Returns the axes."""
+    names = list(names) if names is not None else [str(s.get("label", "")) for s in segs]
+    groups = tachogram_groups(len(segs), comparators)
+    if not groups:
+        return []
+    axes = list(np.atleast_1d(fig.subplots(len(groups), 1, sharey=True, squeeze=False)).ravel())
+    for ax, grp in zip(axes, groups):
+        style_axes(ax)
+        drawn = False
+        for i in grp:
+            s, c = segs[i], colors[i % len(colors)]
+            t, r = s["t_rr"], s["rr_ms"]
+            if len(t) and len(r):
+                ax.plot(t - t[0], r, color=c, lw=1.0, alpha=0.85, label=names[i])
+                ax.axhline(float(np.mean(r)), color=c, lw=1.0, ls="--", alpha=0.5)
+                drawn = True
+        ax.set_ylabel("RR (ms)", fontsize=9)
+        if len(groups) == 1:
+            ax.set_title("RR intervals — segments superimposed", loc="left", fontsize=9)
+        elif len(grp) == 2:
+            ax.set_title(f"{names[grp[1]]} vs {names[grp[0]]}", loc="left", fontsize=9)
+        else:
+            ax.set_title(names[grp[0]], loc="left", fontsize=9)
+        if drawn:
+            ax.legend(framealpha=0, fontsize=8)
+    for ax in axes:
+        ax.set_xlabel("Time within segment (s)", fontsize=9)
+    return axes
 
 
 class CompareSegmentsMixin:
@@ -129,20 +184,18 @@ class CompareSegmentsMixin:
         self._refresh_compare_tab()
 
     def _compare_signature(self: ECGApp) -> "Optional[tuple]":
-        """What the tab was built from: the recording, its peaks and the
-        events it offers. None without peaks."""
+        """What the tab was built from: the recording and its peaks (the
+        annotations / events no longer place anything in it). None without
+        peaks."""
         if self._signal_flt is None or self._rpeaks_ok is None or self._fs is None:
             return None
         rp = self._rpeaks_ok
         return (id(self._signal_flt), len(self._signal_flt), float(self._fs),
-                len(rp), int(np.sum(rp)) if len(rp) else 0,
-                tuple((a.get("label"), a.get("t_start"), a.get("t_end"))
-                      for a in self.analysis.annotations),
-                len(self.analysis.arrhythmia_events))
+                len(rp), int(np.sum(rp)) if len(rp) else 0)
 
     def _current_comparison(self: ECGApp) -> "Optional[ComparisonResult]":
         """The last Compare segments result, None when there is none or the
-        recording, its peaks or its events changed since (the main exports
+        recording or its peaks changed since (the main exports
         never write a comparison of other peaks)."""
         res = getattr(self.analysis, "last_comparison", None)
         if res is None:
@@ -172,8 +225,7 @@ class CompareSegmentsMixin:
 
     def _build_compare_segments(self: ECGApp, win) -> None:
         """The comparison inside *win* (the tab's frame): 1 to MAX_SEGMENTS
-        windows, typed or placed by a template around an optional event, their
-        metric table (Δ % against a chosen reference segment, or each against
+        windows typed in, their metric table (Δ % against a chosen reference segment, or each against
         the previous one; the first by default), RR tachograms or Poincaré plots, the
         quality of each, the export and the group table. The stats run on a
         background thread."""
@@ -190,23 +242,14 @@ class CompareSegmentsMixin:
             """The Subject ID as it is now (it may be typed after the tab was built)."""
             return self.ent_subject.get().strip() if self.ent_subject else ""
 
-        top = ctk.CTkFrame(win, fg_color="transparent")
-        top.pack(fill="x", padx=PAGE_PAD_X, pady=(PAGE_PAD_Y, PAGE_GAP))
-        top.grid_columnconfigure((0, 1), weight=1, uniform="setup")
-
-        def _section(title: str, note: str = "", column: "Optional[int]" = None
+        def _section(title: str, note: str = "", first: bool = False
                      ) -> "tuple[ctk.CTkFrame, ctk.CTkFrame]":
             """A white card titled *title* (the pages' card: 1 px border,
-            16 px inside), in column *column* of the top row, or across the
-            page when None; returns its header, for what sits by the title,
-            and its body."""
-            if column is None:
-                card = ctk.CTkFrame(win, **card_style())
-                card.pack(fill="x", padx=PAGE_PAD_X, pady=(0, PAGE_GAP))
-            else:
-                card = ctk.CTkFrame(top, **card_style())
-                card.grid(row=0, column=column, sticky="nsew",
-                          padx=(0, PAGE_GAP // 2) if column == 0 else (PAGE_GAP // 2, 0))
+            16 px inside), across the page (*first*: the top one, under the
+            page's top padding); returns its header, for what sits by the
+            title, and its body."""
+            card = ctk.CTkFrame(win, **card_style())
+            card.pack(fill="x", padx=PAGE_PAD_X, pady=(PAGE_PAD_Y if first else 0, PAGE_GAP))
             body = ctk.CTkFrame(card, fg_color="transparent")
             body.pack(fill="both", expand=True, padx=CARD_PAD, pady=(CARD_PAD - 4, CARD_PAD))
             hdr_ = ctk.CTkFrame(body, fg_color="transparent")
@@ -218,185 +261,16 @@ class CompareSegmentsMixin:
                              text_color=MUTED).pack(side="left", padx=(SPACE_M, 0))
             return hdr_, body
 
-        # ── Event and template ────────────────────────────────────────────
-        # The event is optional: typed windows (0-300 vs 300-600 s) need
-        # none. It places a template's windows and drives the artefact check
-        # (a window overlapping it or the margin after it is flagged).
-        _h, tcard = _section("Windows around an event (optional)",
-                             "only for templates and the artefact check", column=0)
-        qrow = ctk.CTkFrame(tcard, fg_color="transparent")
-        qrow.pack(fill="x", pady=(0, SPACE_S))
-
-        qrow2 = ctk.CTkFrame(tcard, fg_color="transparent")
-        qrow2.pack(fill="x", pady=(0, SPACE_S))
-        _event_opts: "dict[str, tuple[float, float]]" = {}
-        for _ann in self.analysis.annotations:
-            _lbl = _ann.get("label") or "Annotation"
-            _event_opts[f"📍 {_lbl}  [{_ann['t_start']:.0f}–{_ann['t_end']:.0f}s]"] = (
-                float(_ann["t_start"]), float(_ann["t_end"]))
-        for _ev in self.analysis.arrhythmia_events:
-            _event_opts[f"⚠ {_ev.label}  [{_ev.t_start:.0f}–{_ev.t_end:.0f}s]"] = (
-                float(_ev.t_start), float(_ev.t_end))
-
-        def _on_event_pick(choice: str) -> None:
-            times = _event_opts.get(choice)
-            if times is None:
-                return
-            for e, v in ((q_evt_start, times[0]), (q_evt_end, times[1])):
-                e.delete(0, "end"); e.insert(0, f"{v:.1f}")
-
-        if _event_opts:
-            ctk.CTkLabel(qrow, text="Event:", font=FONT_SMALL, text_color=MUTED).pack(side="left")
-            cb_event = ctk.CTkComboBox(qrow, width=210, values=list(_event_opts.keys()),
-                                       command=_on_event_pick, **combo_style())
-            cb_event.set("Pick…")
-            cb_event.pack(side="left", padx=(4, SPACE_M))
-
-        ctk.CTkLabel(qrow, text="Start (s):", font=FONT_SMALL, text_color=MUTED).pack(side="left")
-        # Empty by default: it used to be pre-filled from the Detection view's
-        # position, which put a phantom event under typed windows and flagged
-        # them "overlaps the event" for nothing.
-        q_evt_start = ctk.CTkEntry(qrow, width=70, placeholder_text="optional", **input_style())
-        q_evt_start.pack(side="left", padx=(4, SPACE_M))
-        tip(q_evt_start, "Optional. The event (stimulus, injection...) a template places its "
-                         "windows around, and that the artefact check looks for. Leave it "
-                         "empty when you type the windows yourself.")
-        ctk.CTkLabel(qrow, text="End (s):", font=FONT_SMALL, text_color=MUTED).pack(side="left")
-        q_evt_end = ctk.CTkEntry(qrow, width=70, placeholder_text="= start", **input_style())
-        q_evt_end.pack(side="left", padx=(4, SPACE_M))
-        ctk.CTkLabel(qrow2, text="Artefact margin (s):", font=FONT_SMALL,
-                     text_color=MUTED).pack(side="left")
-        ent_margin = ctk.CTkEntry(qrow2, width=48, **input_style())
-        ent_margin.insert(0, f"{DEFAULT_ARTEFACT_MARGIN_S:g}")
-        ent_margin.pack(side="left", padx=(4, SPACE_M))
-        tip(ent_margin, "Quality check only (it does not move the windows), and only when an "
-                        "event is set: a window overlapping the event or this many seconds "
-                        "after it is flagged (shock / movement artefact).")
-
-        trow = ctk.CTkFrame(tcard, fg_color="transparent")
-        trow.pack(fill="x", pady=(0, SPACE_XS))
-        ctk.CTkLabel(trow, text="Template:", font=FONT_SMALL, text_color=MUTED).pack(side="left")
-        _templates: "dict[str, SegmentTemplate]" = {}
-        cb_tpl = ctk.CTkComboBox(trow, width=300, values=[""], state="readonly", **combo_style())
-        cb_tpl.pack(side="left", padx=(4, SPACE_S))
-        ctk.CTkLabel(trow, text="Window (s):", font=FONT_SMALL, text_color=MUTED).pack(side="left")
-        ent_win = ctk.CTkEntry(trow, width=56, placeholder_text="tpl", **input_style())
-        ent_win.pack(side="left", padx=(4, SPACE_S))
-        tip(ent_win, "Length of every window, in seconds (e.g. 60 for 1 min). Empty: the "
-                     "template's own. A window before the event keeps its end, one after it "
-                     "keeps its start (so the gap left after the event stays).")
-
-        def _reload_templates(select: "Optional[str]" = None) -> None:
-            _templates.clear()
-            for t in load_templates():
-                _templates[t.name + ("" if t.builtin else "  (mine)")] = t
-            names = list(_templates)
-            cb_tpl.configure(values=names)
-            pick = next((k for k, t in _templates.items() if t.name == select), None)
-            cb_tpl.set(pick or (cb_tpl.get() if cb_tpl.get() in _templates else names[0]))
-
-        lbl_tpl_status = ctk.CTkLabel(tcard, text="", font=FONT_MICRO, text_color=MUTED,
-                                      anchor="w", justify="left")
-
-        def _event_times() -> "Optional[tuple[float, float]]":
-            """(start, end) of the event typed, None when none is."""
-            if not q_evt_start.get().strip():
-                return None
-            t0 = float(q_evt_start.get())
-            t1 = float(q_evt_end.get()) if q_evt_end.get().strip() else t0
-            if t1 < t0:
-                raise ValueError("the event's end is before its start")
-            return t0, t1
-
-        def _apply_template() -> None:
-            t = _templates.get(cb_tpl.get())
-            try:
-                ev = _event_times()
-            except ValueError as exc:
-                lbl_tpl_status.configure(text=f"⚠  {exc}", text_color=RED); return
-            if t is None or ev is None:
-                lbl_tpl_status.configure(text="⚠  pick an event (or type its start) and a template",
-                                         text_color=RED); return
-            win_txt = ent_win.get().strip()
-            try:
-                win_s = float(win_txt) if win_txt else None
-                if win_s is not None and not (np.isfinite(win_s) and win_s > 0):
-                    raise ValueError
-            except ValueError:
-                lbl_tpl_status.configure(text="⚠  Window (s) must be a positive number of seconds",
-                                         text_color=RED); return
-            wins = resolve(t, ev[0], ev[1], dur, window_s=win_s)
-            _set_rows([(w.label, w.lo, w.hi) for w in wins])
-            _state["template"] = t.name
-            clamped = [w.label for w in wins if w.clamped]
-            lbl_tpl_status.configure(
-                text=("⚠  cut at the recording's edge: " + ", ".join(clamped)) if clamped else
-                     "✓  " + "  ·  ".join(f"{w.label} [{w.lo:.0f}–{w.hi:.0f} s]" for w in wins),
-                text_color=ORANGE if clamped else GREEN)
-
-        def _save_template() -> None:
-            try:
-                ev = _event_times()
-                rows = _read_rows()
-            except ValueError as exc:
-                lbl_tpl_status.configure(text=f"⚠  {exc}", text_color=RED); return
-            if ev is None:
-                lbl_tpl_status.configure(
-                    text="⚠  a template is placed from an event: type or pick its start first",
-                    text_color=RED); return
-            dlg = ctk.CTkInputDialog(text="Template name (e.g. Footshock 5 min):",
-                                     title="Save the windows as a template")
-            name = (dlg.get_input() or "").strip()
-            if not name:
-                return
-            try:
-                save_template(template_from_windows(name, rows, ev[0], ev[1]))
-            except (OSError, ValueError) as exc:
-                messagebox.showerror("Template", str(exc), parent=win); return
-            _reload_templates(select=name)
-            _state["template"] = name
-            lbl_tpl_status.configure(text=f"✓  template '{name}' saved", text_color=GREEN)
-
-        def _delete_template() -> None:
-            t = _templates.get(cb_tpl.get())
-            if t is None or t.builtin:
-                lbl_tpl_status.configure(text="⚠  built-in templates cannot be deleted",
-                                         text_color=ORANGE); return
-            if not messagebox.askyesno("Template", f"Delete the template '{t.name}'?",
-                                       parent=win):
-                return
-            try:
-                delete_template(t.name)
-            except OSError as exc:
-                messagebox.showerror("Template", str(exc), parent=win); return
-            _reload_templates()
-            lbl_tpl_status.configure(text=f"✓  template '{t.name}' deleted", text_color=GREEN)
-
-        for text, cmd, style, tiptext in (
-                ("Apply", _apply_template, "primary",
-                 "Place the template's windows around the event"),
-                ("Save as template…", _save_template, "secondary",
-                 "Save the windows below, relative to the event, under a name: "
-                 "apply it to the next animals"),
-                ("Delete", _delete_template, "secondary", "Delete the selected template (yours only)")):
-            b = ctk.CTkButton(trow, text=text, width=0, command=cmd, **button_style(style))
-            b.pack(side="left", padx=(0, SPACE_S))
-            tip(b, tiptext)
-        lbl_tpl_status.pack(anchor="w", fill="x")
-
         # ── Segments: 1 to MAX_SEGMENTS rows ──────────────────────────────
         _h, seg_card = _section("Segments", f"Δ % against the first unless chosen in Results"
                                             f"  ·  {sub}  ·  "
-                                            f"{dur:.1f} s  ·  {len(rp)} peaks", column=1)
+                                            f"{dur:.1f} s  ·  {len(rp)} peaks", first=True)
         rows_frame = ctk.CTkFrame(seg_card, fg_color="transparent")
         rows_frame.pack(fill="x")
         seg_rows: "list[dict]" = []
-        # "ref": what the Δ % are against, kept across runs -- a segment index
-        # or PAIRWISE (segment_plan.reference_comparators); "ev" / "margin":
-        # the run's event and artefact margin, for the quality flags when
-        # the reference changes after it.
-        _state: "dict[str, Any]" = {"template": "", "segs": None, "cmps": None, "flags": None,
-                                    "ref": 0, "ev": None, "margin": DEFAULT_ARTEFACT_MARGIN_S}
+        # "ref": what the Δ % are against, kept across runs -- a segment index,
+        # PAIRWISE or PAIRS (segment_plan.reference_comparators).
+        _state: "dict[str, Any]" = {"segs": None, "cmps": None, "flags": None, "ref": 0}
 
         def _color(i: int) -> str:
             # Segment colours in order, the first the reference; read at call
@@ -625,15 +499,27 @@ class CompareSegmentsMixin:
             ncols = max(1, min(n, 4, fit))
             return ncols, -(-n // ncols)
 
+        def _cur_comps(segs: "list[dict]") -> "list[Optional[int]]":
+            """The comparators shown: those of the kept result for *segs*,
+            else the selector's."""
+            res_ = self.analysis.last_comparison
+            if res_ is not None and res_.segs is segs:
+                return res_.comps
+            return reference_comparators(len(segs), _state["ref"])
+
         def _fit_plot_card(_event: "Any" = None) -> None:
             """The card's height for the view shown: one row for the
-            tachograms, one fixed-size row per row of Poincaré panels."""
+            tachograms (one fixed-size row per pair in Pairs mode), one
+            fixed-size row per row of Poincaré panels."""
             segs = _state["segs"]
             if _view["mode"] == "poincare" and segs:
                 rows = _poincare_grid(len(segs))[1]
                 # + the gap the layout puts between two rows of panels.
                 height = (_YBAR_H + rows * _POINCARE_ROW_H
                           + (rows - 1) * _POINCARE_ROW_GAP)
+            elif segs:
+                panels = len(tachogram_groups(len(segs), _cur_comps(segs)))
+                height = max(_PLOT_CARD_H, _YBAR_H + panels * _TACHO_ROW_H)
             else:
                 height = _PLOT_CARD_H
             if int(plot_card.cget("height")) != height:
@@ -748,21 +634,12 @@ class CompareSegmentsMixin:
                     tbl.insert("end", "\t" + txt, ("delta",) + line)
             tbl.configure(height=len(_METRICS) + 1, state="disabled")
 
-        def _rr_drawer(segs: "list[dict]", colors: "list[str]"):
-            """The superimposed RR tachograms of *segs*, as a draw function."""
-            def _draw(fig):
-                ax = fig.add_subplot(111)
-                style_axes(ax)
-                for s, c in zip(segs, colors):
-                    t, r = s["t_rr"], s["rr_ms"]
-                    if len(t) and len(r):
-                        ax.plot(t - t[0], r, color=c, lw=1.0, alpha=0.85, label=s["label"])
-                        ax.axhline(float(np.mean(r)), color=c, lw=1.0, ls="--", alpha=0.5)
-                ax.set_xlabel("Time within segment (s)", fontsize=9)
-                ax.set_ylabel("RR (ms)", fontsize=9)
-                ax.set_title("RR intervals — segments superimposed", loc="left", fontsize=9)
-                ax.legend(framealpha=0, fontsize=8)
-            return _draw
+        def _rr_drawer(segs: "list[dict]", colors: "list[str]",
+                       comps: "Optional[list[Optional[int]]]" = None):
+            """The RR tachograms of *segs*, as a draw function: superimposed,
+            or one panel per pair when *comps* are Pairs (draw_rr_tachograms)."""
+            names = _seg_names(segs)
+            return lambda fig: draw_rr_tachograms(fig, segs, colors, comps, names)
 
         def _redraw_plot() -> None:
             segs = _state["segs"]
@@ -773,7 +650,7 @@ class CompareSegmentsMixin:
                     fig, segs, colors, jitter=self._compare_jitter,
                     ncols=_poincare_grid(len(segs))[0]))
             else:
-                plot_slot.update(_rr_drawer(segs, colors))
+                plot_slot.update(_rr_drawer(segs, colors, _cur_comps(segs)))
 
         def _show_flags(flags: "list[list[str]]") -> None:
             for r, fl in zip(seg_rows, flags):
@@ -846,18 +723,19 @@ class CompareSegmentsMixin:
                 return
             comps = reference_comparators(len(segs), _state["ref"])
             cmps = _pair_cmps(segs, comps)
-            flags = quality_flags(segs, _state["ev"], _state["margin"], comps)
+            flags = quality_flags(segs, None, comparators=comps)
             _state.update(cmps=cmps, flags=flags)
             res_.comparators, res_.cmps, res_.flags = list(comps), cmps, flags
             _render_comparison()
+            # Pairs draws one tachogram panel per pair, the other modes one.
+            if _view["mode"] == "rr":
+                _redraw_plot()
 
         cb_ref.configure(command=_on_ref_pick)
 
         def _run_compare() -> None:
             try:
                 windows = _read_rows()
-                ev = _event_times()
-                margin = float(ent_margin.get() or 0)
             except ValueError as exc:
                 lbl_status.configure(text=f"⚠  {exc}", text_color=RED); return
             try:
@@ -918,19 +796,19 @@ class CompareSegmentsMixin:
                 comps = reference_comparators(len(segs), _state["ref"])
                 try:
                     cmps = _pair_cmps(segs, comps)
-                    flags = quality_flags(segs, ev, margin, comps)
+                    flags = quality_flags(segs, None, comparators=comps)
                 except Exception as exc:
                     log.exception("Segment comparison failed")
                     _on_worker_error(exc)
                     return
-                _state.update(segs=segs, cmps=cmps, flags=flags, ev=ev, margin=margin)
+                _state.update(segs=segs, cmps=cmps, flags=flags)
                 # Kept for the exports here and the main ones (Report tab),
                 # with the recording state it rests on (_current_comparison).
                 self.analysis.last_comparison = ComparisonResult(
                     segs=segs, metrics=list(_METRICS), cmps=cmps, flags=flags,
-                    template=_state["template"], subject=_subject(),
-                    filepath=self.signal.filepath or "", event=ev,
-                    artefact_margin_s=margin, block_s=block_s,
+                    template="", subject=_subject(),
+                    filepath=self.signal.filepath or "", event=None,
+                    artefact_margin_s=None, block_s=block_s,
                     lf_band=tuple(lf), hf_band=tuple(hf), comparators=list(comps))
                 # The state the tab -- hence rp / sig of this run -- was
                 # built for, not the app's now (peaks may have been edited
@@ -1046,9 +924,11 @@ class CompareSegmentsMixin:
             segs_ = res_.segs
             colors = [_color(k) for k in range(len(segs_))]
             n_rows = 1 + (len(segs_) > 4)
+            n_tacho = len(tachogram_groups(len(segs_), res_.comps))
             written = []
             for suffix, figsize, draw in (
-                    ("_tachograms", (10, 4), _rr_drawer(segs_, colors)),
+                    ("_tachograms", (10, 4 if n_tacho == 1 else 3 * n_tacho),
+                     _rr_drawer(segs_, colors, res_.comps)),
                     ("_poincare", (min(4 * len(segs_), 16), 4.6 * n_rows),
                      lambda fig: draw_poincare_set(fig, segs_, colors, title=_subject(),
                                                    jitter=self._compare_jitter))):
@@ -1100,13 +980,13 @@ class CompareSegmentsMixin:
         # Right to left: the header packs them from its right edge.
         for text, cmd, tiptext in (
                 ("➕  Add to group table…", _add_to_group,
-                 "One row per recording (subject, file, template, every metric and the "
+                 "One row per recording (subject, file, every metric and the "
                  "quality of each segment): the table for a paired / repeated-measures "
                  "test across animals. Every segment is stored, whatever the Δ % "
                  "reference; the pair tested is chosen in the Group card below (the "
                  "reference vs the first segment compared with it, until you change it). "
                  "Columns are named after the segment labels: use "
-                 "the same template for every animal. A recording already in it is replaced."),
+                 "the same labels and windows for every animal. A recording already in it is replaced."),
                 ("Figures…", _export_figures,
                  "The tachograms and the Poincaré plots, 300 dpi PNG or vector PDF / SVG"),
                 ("📋  Copy table", _copy_table,
@@ -1114,7 +994,7 @@ class CompareSegmentsMixin:
                 ("Prism…", _export_prism,
                  "GraphPad Prism file: the metric table (one column per segment), the "
                  "HR block means, the RR series and the Poincaré pairs of each segment; "
-                 "the windows, template and quality in the project notes"),
+                 "the windows and quality in the project notes"),
                 ("📊  Excel…", _export_excel,
                  "Workbook: Comparison (Δ % against the reference chosen above the table), "
                  "Quality, Summary, "
@@ -1128,7 +1008,6 @@ class CompareSegmentsMixin:
         ctk.CTkLabel(res_hdr, text="Export:", font=FONT_SMALL,
                      text_color=MUTED).pack(side="right", padx=(0, SPACE_XS))
 
-        _reload_templates()
         ctk.CTkLabel(res,
                      text=f"Equal durations give a fair comparison  ·  LF {lf[0]:.2f}–{lf[1]:.2f} Hz  "
                           f"HF {hf[0]:.2f}–{hf[1]:.2f} Hz  ·  wheel: zoom Y  ·  middle-click: reset Y",
@@ -1409,7 +1288,7 @@ class CompareSegmentsMixin:
         tip(btn_xlsx, "Excel: the paired tests (Wilcoxon, paired t, Holm), the rows checked "
                       "and the paired values of every metric, one row per animal")
         ctk.CTkLabel(body, text=(
-            "One row per animal: the test unit is the animal. Use the same template and labels for "
+            "One row per animal: the test unit is the animal. Use the same windows and labels for "
             "every animal. Holm corrects the Wilcoxon p over the metrics listed; pick your primary "
             "metric in advance."), font=FONT_HINT, text_color=MUTED, anchor="w",
             justify="left").pack(fill="x", side="bottom", pady=(SPACE_S, 0))

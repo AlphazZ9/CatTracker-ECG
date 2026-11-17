@@ -425,7 +425,8 @@ and *Intervals* are Morphology & Intervals, *Abnormal Events* is Events.
 
 ### Comparison & export
 
-- A/B segment comparison with superimposed RR tachograms and a full metric
+- Segment comparison (windows typed in) with superimposed RR tachograms (one
+  panel per pair in Pairs mode) and a full metric
   table (LF / HF power and n.u., SD1/SD2 — the same definitions as the main
   panels). Each segment is also summarised by the **means of
   non-overlapping blocks** (default 10 s, **Block (s)** in the dialog; a
