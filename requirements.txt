@@ -13,4 +13,5 @@ skops>=0.10         # safer persistence for the ML R-peak detector
 
 # Optional — only needed for specific features:
 h5py>=3.10       # MATLAB v7.3 / HDF5 file loading
+neo>=0.14         # Spike2 (.smr) file loading
 pzfx>=0.3         # GraphPad Prism (.pzfx) export

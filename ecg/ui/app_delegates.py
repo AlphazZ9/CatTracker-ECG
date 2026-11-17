@@ -413,7 +413,8 @@ class DelegatesMixin:
     def _open_file(self: ECGApp) -> None:
         path = filedialog.askopenfilename(
             title="Open Spike2 .mat",
-            filetypes=[("MATLAB files", "*.mat"), ("All", "*.*")],
+            filetypes=[("ECG recordings", "*.mat *.smr"), ("MATLAB files", "*.mat"),
+                       ("Spike2 files", "*.smr"), ("All", "*.*")],
         )
         if path:
             self._load_path(path)
