@@ -97,9 +97,11 @@ def draw_poincare_panel(ax, seg: dict, color: str, lim: "tuple[float, float]",
 
 
 def draw_poincare_set(fig, segs: "Sequence[dict]", colors: "Sequence[str]",
-                      title: str = "", jitter: bool = True) -> bool:
+                      title: str = "", jitter: bool = True,
+                      ncols: "Optional[int]" = None) -> bool:
     """Every segment side by side on *fig* (same square axes; up to 4 a
-    row). False when no segment has a pair (nothing drawn but a note)."""
+    row, or *ncols* a row when given). False when no segment has a pair
+    (nothing drawn but a note)."""
     lim = shared_limits(segs)
     if lim is None:
         ax = fig.add_subplot(111)
@@ -109,7 +111,7 @@ def draw_poincare_set(fig, segs: "Sequence[dict]", colors: "Sequence[str]",
         ax.set_axis_off()
         return False
     n = len(segs)
-    ncols = min(n, 4)
+    ncols = max(1, min(n, ncols or 4))
     nrows = -(-n // ncols)
     axes = np.atleast_1d(fig.subplots(nrows, ncols)).ravel()
     for k, ax in enumerate(axes):

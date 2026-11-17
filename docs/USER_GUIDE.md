@@ -300,30 +300,30 @@ The first is the reference: the table gives each metric of every segment with
 its Δ % against the first, and the HR block comparison is each segment against
 the first.
 
-**Templates: the same windows for every animal.** Pick the event (an annotation
-or an abnormal event, or type its start / end), choose a template and click
-**Apply**. A template window is placed from the event's start (before it) or
-from its end (after it), so a stimulus of another length keeps the post windows
-after it. Built in: *Before / after, 5 min* and *10 min* (After starts 30 s
-after the event, leaving out the shock / movement artefact) and *Recovery:
-baseline, 0–5, 10–15, 25–30 min*. **Save as template…** stores the windows on
-screen, relative to the event, under a name (in `~/.ecg_segment_templates.json`);
-**Delete** removes one of yours.
+The windows are always typed: the tab no longer has a "Windows around an
+event" card (event, templates, artefact margin). Type the same windows and
+labels for every animal so the group table lines up.
 
 **Quality of each segment**, shown on its row after ▶ Compare and in the
 export's *Quality* sheet: valid RR covering < 80 % of the window, < 200
-Poincaré pairs, a duration other than the first segment's (> 2 %), an overlap
-with the event or the **Artefact margin** after it, abrupt RR jumps (> 20 % of
+Poincaré pairs, a duration other than that of the segment it is compared with
+(> 2 %), abrupt RR jumps (> 20 % of
 the median RR in more than 0.5 % of the pairs), and an SD1 more than 1.5× its
 value without the 2 % most extreme pairs — a few missed or extra beats drive
 it: check the peaks before using that segment.
 
-**RR tachograms / Poincaré** switches the plot: the Poincaré view draws the
+**RR tachograms / Poincaré** switches the plot. The tachograms are
+superimposed on one plot (time within each segment), except when **Δ %
+against:** is *Pairs (2 vs 1, 4 vs 3, 6 vs 5)*: each pair then gets its own
+panel ("Post Stim 1min vs Pre Stim 1min"; an odd last segment alone), so
+windows of different pairs and durations are never drawn together; the panels
+share one RR scale (the Y-scale bar and the wheel zoom act on all of them),
+and **Figures…** follows the same layout. The Poincaré view draws the
 segments side by side on the same square axes (identity line, centre, SD1 / SD2
 ellipse; only successive valid pairs; at 1 kHz the points are jittered ± half a
 sample for display only). **Export** (the Results card, once ▶ Compare has run): **Excel…** writes a
 workbook (Comparison with Δ % against the first segment, Quality, Summary with
-the template, event and windows, Blocks, then the RR series and Poincaré pairs
+the windows and bands, Blocks, then the RR series and Poincaré pairs
 of each segment), or the metric table alone as **.csv**; **Prism…** a GraphPad
 file (the metric table with one column per segment, the HR block means, the RR
 series and Poincaré pairs, the windows and quality in the project notes);
@@ -331,17 +331,12 @@ series and Poincaré pairs, the windows and quality in the project notes);
 **Figures…** saves the tachograms and the Poincaré plots (300 dpi PNG, or vector
 PDF / SVG). The Report tab's Excel, ZIP and Prism exports include the last
 comparison too ("Seg …" sheets, "Segments — …" tables), as long as the
-recording, its peaks and its events are those it was computed on. **➕ Add to group table…** adds this recording to an
-.xlsx with one row per recording (subject, file, template, then per segment its
+recording and its peaks are those it was computed on. **➕ Add to group table…** adds this recording to an
+.xlsx with one row per recording (subject, file, template — empty now, then per segment its
 times, valid RR %, pairs, QC and every metric, columns named after the segment
-labels; the same recording again replaces its row): use the same template for
-every animal and the columns line up for a paired test (2 segments: Wilcoxon
+labels; the same recording again replaces its row): use the same windows and
+labels for every animal and the columns line up for a paired test (2 segments: Wilcoxon
 matched-pairs or paired t) or a repeated-measures one (Friedman / RM ANOVA).
-
-**Window (s)** next to the template gives every window that length (e.g. 60):
-a window before the event keeps its end, one after it keeps its start, so the
-gap left after the event stays. The **Artefact margin** is a quality check
-only: it does not move the windows.
 
 **Group — all animals** (the last card, also without a recording open): open a
 group table, choose the two segments, **▶ Run**. Each row is checked (missing

@@ -7,6 +7,7 @@ Mixin of ECGApp (see ecg/ui/app.py).
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 import customtkinter as ctk  # type: ignore[import-untyped]
 import tkinter as tk
@@ -17,7 +18,10 @@ from ecg.ui.theme import (
     COLOR_PRIMARY, SPACE_XS, SPACE_S, SPACE_M, SPACE_L, FONT_SMALL, FONT_LABEL,
     FONT_BTN_PRIMARY, FONT_BTN_SEC, FONT_SIDEBAR_HDR, FONT_HINT, FONT_TITLE, FONT_MONO,
     FONT_CARD_TITLE, button_style, disabled_style, BTN_H, BTN_H_LG, RADIUS, CARD,
+    APP_ICON_DIR,
 )
+
+log = logging.getLogger("ecg")
 
 # Mixin of ECGApp: `self: ECGApp` shows pyright the whole app surface, so a
 # typo in self.xxx is reported. It is deliberately not a supertype of this
@@ -31,6 +35,30 @@ class ToolbarMixin:
     """ECGApp toolbar construction and button-state helpers."""
 
     # ─── KPI bar ──────────────────────────────────────────────
+
+    def _app_mark(self: ECGApp, parent):
+        """The app's icon at the left of the header, at the title's height.
+        The 48 px drawing (thick strokes) reads best this small; CTkImage
+        scales it for HiDPI screens. Falls back to the mockup's ECG mark when
+        the icon files are missing (a source checkout without assets)."""
+        size = int(round(26 * THEME.font_scale))
+        png = APP_ICON_DIR / "icon_48.png"
+        if png.exists():
+            try:
+                from PIL import Image
+                img = Image.open(png)
+                self._header_icon = ctk.CTkImage(light_image=img, dark_image=img,
+                                                 size=(size, size))
+                return ctk.CTkLabel(parent, text="", image=self._header_icon,
+                                    width=size, height=size)
+            except Exception as exc:     # never block the window for an icon
+                log.debug("header icon not loaded: %s", exc)
+        mark = tk.Canvas(parent, width=22, height=22, bg=PANEL, highlightthickness=0, bd=0)
+        # The mockup's mark: the path M2 12h4l2-6 4 12 3-9 2 3h5 on a 24 grid.
+        pts = [(2, 12), (6, 12), (8, 6), (12, 18), (15, 9), (17, 12), (22, 12)]
+        mark.create_line(*[c * 22 / 24 for p in pts for c in p], fill=BLUE, width=2,
+                         capstyle="round", joinstyle="round")
+        return mark
 
     def _build_toolbar(self: ECGApp) -> None:
         """Header spanning the full window width: identity and file chip on
@@ -136,14 +164,10 @@ class ToolbarMixin:
             self.btn_more_menu,
             "Parameters, theme, keyboard shortcuts, reset to mouse defaults, clear session cache")
 
-        # ── Identity: ECG mark, app name, project, file chip ──────────────
+        # ── Identity: app icon, app name, project, file chip ──────────────
         left = ctk.CTkFrame(row, fg_color="transparent")
         left.pack(side="left", fill="x", expand=True, padx=(0, SPACE_L))
-        mark = tk.Canvas(left, width=22, height=22, bg=PANEL, highlightthickness=0, bd=0)
-        # The mockup's mark: the path M2 12h4l2-6 4 12 3-9 2 3h5 on a 24 grid.
-        pts = [(2, 12), (6, 12), (8, 6), (12, 18), (15, 9), (17, 12), (22, 12)]
-        mark.create_line(*[c * 22 / 24 for p in pts for c in p], fill=BLUE, width=2,
-                         capstyle="round", joinstyle="round")
+        mark = self._app_mark(left)
         mark.pack(side="left", padx=(0, 10))
         ctk.CTkLabel(left, text="ECG Analysis", font=FONT_TITLE, text_color=TEXT,
                      anchor="w").pack(side="left", padx=(0, 10))

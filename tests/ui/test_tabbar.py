@@ -133,7 +133,11 @@ def shown():
         root = tk.Tk()
     except tk.TclError as exc:
         pytest.skip(f"no display: {exc}")
-    root.geometry("1400x300")
+    root.geometry("1400x300+0+0")
+    # The pixel and pointer tests ask the screen which window is at a point:
+    # keep this one above whatever else is open on the desktop.
+    root.attributes("-topmost", True)
+    root.lift()
     calls = []
     b = TabBar(root, command=lambda: calls.append(b.get()))
     b.pack(fill="both", expand=True)
