@@ -46,9 +46,10 @@ from ecg.io.segment_export import (
     ComparisonResult, comparison_tsv, write_csv, write_pzfx, write_xlsx,
 )
 from ecg.core.segment_plan import (
-    DEFAULT_ARTEFACT_MARGIN_S, MAX_SEGMENTS, SegmentTemplate, delete_template,
-    load_templates, quality_flags, resolve, save_template, segment_quality,
-    template_from_windows, unique_tags,
+    DEFAULT_ARTEFACT_MARGIN_S, MAX_SEGMENTS, PAIRS, PAIRWISE, SegmentTemplate,
+    comparators_caption, comparators_reference, comparison_pairs, delete_template,
+    load_templates, quality_flags, reference_comparators, resolve, save_template,
+    segment_quality, template_from_windows, unique_tags,
 )
 from ecg.ui.plots import CanvasSlot, style_axes
 from ecg.ui.tab_keys import TAB_COMPARE
@@ -61,6 +62,17 @@ if TYPE_CHECKING:
     from ecg.ui.app import ECGApp
 
 log = logging.getLogger("ecg")
+
+# Plot card of the comparison (CTk units): the tachogram view's height, and
+# the height of one row of Poincaré panels -- every panel keeps that size
+# however many segments are compared (more rows instead of smaller panels).
+_PLOT_CARD_H = 460
+_YBAR_H = 26                       # CanvasSlot's Y-scale bar above the plot
+_POINCARE_ROW_H = _PLOT_CARD_H - _YBAR_H
+_POINCARE_ROW_GAP = 48              # between two rows of Poincaré panels
+# Narrowest column that still gives a panel its full row-height size
+# (the square plot plus its Y label and ticks).
+_POINCARE_COL_W = 480
 
 
 class CompareSegmentsMixin:
@@ -160,8 +172,9 @@ class CompareSegmentsMixin:
 
     def _build_compare_segments(self: ECGApp, win) -> None:
         """The comparison inside *win* (the tab's frame): 1 to MAX_SEGMENTS
-        windows, typed or placed by a template around an event, their metric
-        table (Δ % against the first), RR tachograms or Poincaré plots, the
+        windows, typed or placed by a template around an optional event, their
+        metric table (Δ % against a chosen reference segment, or each against
+        the previous one; the first by default), RR tachograms or Poincaré plots, the
         quality of each, the export and the group table. The stats run on a
         background thread."""
         sig    = self._signal_flt
@@ -206,8 +219,11 @@ class CompareSegmentsMixin:
             return hdr_, body
 
         # ── Event and template ────────────────────────────────────────────
-        _h, tcard = _section("Windows around an event", "the same template for every animal",
-                             column=0)
+        # The event is optional: typed windows (0-300 vs 300-600 s) need
+        # none. It places a template's windows and drives the artefact check
+        # (a window overlapping it or the margin after it is flagged).
+        _h, tcard = _section("Windows around an event (optional)",
+                             "only for templates and the artefact check", column=0)
         qrow = ctk.CTkFrame(tcard, fg_color="transparent")
         qrow.pack(fill="x", pady=(0, SPACE_S))
 
@@ -237,11 +253,14 @@ class CompareSegmentsMixin:
             cb_event.pack(side="left", padx=(4, SPACE_M))
 
         ctk.CTkLabel(qrow, text="Start (s):", font=FONT_SMALL, text_color=MUTED).pack(side="left")
-        q_evt_start = ctk.CTkEntry(qrow, width=70, **input_style())
-        if self.ui.nav_pos > 0:
-            # Where the Detection view is: most likely near the event.
-            q_evt_start.insert(0, str(int(self.ui.nav_pos)))
+        # Empty by default: it used to be pre-filled from the Detection view's
+        # position, which put a phantom event under typed windows and flagged
+        # them "overlaps the event" for nothing.
+        q_evt_start = ctk.CTkEntry(qrow, width=70, placeholder_text="optional", **input_style())
         q_evt_start.pack(side="left", padx=(4, SPACE_M))
+        tip(q_evt_start, "Optional. The event (stimulus, injection...) a template places its "
+                         "windows around, and that the artefact check looks for. Leave it "
+                         "empty when you type the windows yourself.")
         ctk.CTkLabel(qrow, text="End (s):", font=FONT_SMALL, text_color=MUTED).pack(side="left")
         q_evt_end = ctk.CTkEntry(qrow, width=70, placeholder_text="= start", **input_style())
         q_evt_end.pack(side="left", padx=(4, SPACE_M))
@@ -250,9 +269,9 @@ class CompareSegmentsMixin:
         ent_margin = ctk.CTkEntry(qrow2, width=48, **input_style())
         ent_margin.insert(0, f"{DEFAULT_ARTEFACT_MARGIN_S:g}")
         ent_margin.pack(side="left", padx=(4, SPACE_M))
-        tip(ent_margin, "Quality check only (it does not move the windows): a window overlapping "
-                        "the event or this "
-                        "many seconds after it is flagged (shock / movement artefact).")
+        tip(ent_margin, "Quality check only (it does not move the windows), and only when an "
+                        "event is set: a window overlapping the event or this many seconds "
+                        "after it is flagged (shock / movement artefact).")
 
         trow = ctk.CTkFrame(tcard, fg_color="transparent")
         trow.pack(fill="x", pady=(0, SPACE_XS))
@@ -366,12 +385,18 @@ class CompareSegmentsMixin:
         lbl_tpl_status.pack(anchor="w", fill="x")
 
         # ── Segments: 1 to MAX_SEGMENTS rows ──────────────────────────────
-        _h, seg_card = _section("Segments", f"the first is the reference  ·  {sub}  ·  "
+        _h, seg_card = _section("Segments", f"Δ % against the first unless chosen in Results"
+                                            f"  ·  {sub}  ·  "
                                             f"{dur:.1f} s  ·  {len(rp)} peaks", column=1)
         rows_frame = ctk.CTkFrame(seg_card, fg_color="transparent")
         rows_frame.pack(fill="x")
         seg_rows: "list[dict]" = []
-        _state: "dict[str, Any]" = {"template": "", "segs": None, "cmps": None, "flags": None}
+        # "ref": what the Δ % are against, kept across runs -- a segment index
+        # or PAIRWISE (segment_plan.reference_comparators); "ev" / "margin":
+        # the run's event and artefact margin, for the quality flags when
+        # the reference changes after it.
+        _state: "dict[str, Any]" = {"template": "", "segs": None, "cmps": None, "flags": None,
+                                    "ref": 0, "ev": None, "margin": DEFAULT_ARTEFACT_MARGIN_S}
 
         def _color(i: int) -> str:
             # Segment colours in order, the first the reference; read at call
@@ -511,6 +536,24 @@ class CompareSegmentsMixin:
         tbl.tag_configure("delta", foreground=MUTED,
                           font=(THEME.font_family, -int(round(11 * _scale))))
         tbl.configure(state="disabled")
+
+        # What the Δ % are against: shown from the first run with two
+        # segments or more. A segment (all against it) or the previous one
+        # (pairwise: S2 vs S1, S3 vs S2...); any pair A vs B is A as the
+        # reference. Changing it re-renders without recomputing the stats.
+        ref_bar = ctk.CTkFrame(res, fg_color="transparent")
+        ctk.CTkLabel(ref_bar, text="Δ % against:", font=FONT_SMALL,
+                     text_color=MUTED).pack(side="left")
+        _ref_opts: "dict[str, Any]" = {}
+        cb_ref = ctk.CTkComboBox(ref_bar, width=240, values=[""], state="readonly",
+                                 **combo_style())
+        cb_ref.pack(side="left", padx=(4, SPACE_M))
+        lbl_ref = ctk.CTkLabel(ref_bar, text="", font=FONT_SMALL, text_color=MUTED,
+                               anchor="w")
+        lbl_ref.pack(side="left", fill="x", expand=True)
+        tip(cb_ref, "The segment every other one is compared with (its Δ % column and the "
+                    "block-mean line above), or each with the one before it. For one pair "
+                    "A vs B, choose A. The exports and the quality checks follow.")
         grid = ctk.CTkFrame(res, fg_color="transparent")
         grid.pack(fill="x")
         grid.grid_columnconfigure(1, weight=1)
@@ -562,12 +605,41 @@ class CompareSegmentsMixin:
                         "± half a step so the cloud's density shows. Off: every point at its "
                         "measured value. Display and figure export only; SD1, SD2 and the "
                         "ellipse never change.")
-        plot_card = ctk.CTkFrame(plot_box, fg_color=CARD, corner_radius=0, height=460)
+        plot_card = ctk.CTkFrame(plot_box, fg_color=CARD, corner_radius=0,
+                                 height=_PLOT_CARD_H)
         plot_card.pack(fill="x")
         plot_card.pack_propagate(False)        # a scrolling page gives no height to fit
         plot_slot = CanvasSlot(plot_card, 14, 4.6, toolbar=False, yscale_bar=True,
                                placeholder="Click ▶ Compare to overlay tachograms")
         plot_slot.enable_wheel_yzoom()
+
+        def _poincare_grid(n: int) -> "tuple[int, int]":
+            """(columns, rows) of the Poincaré panels. Every panel keeps the
+            size it has on a single row (one row height, _POINCARE_ROW_H): as
+            many columns as the card's width holds at that size (at most 4),
+            and further segments wrap onto new rows, which grow the card,
+            instead of every panel shrinking as segments are added."""
+            scale = plot_card._get_widget_scaling()
+            width = plot_card.winfo_width() / scale     # CTk units, like heights
+            fit = int(width // _POINCARE_COL_W) if width > 1 else 4
+            ncols = max(1, min(n, 4, fit))
+            return ncols, -(-n // ncols)
+
+        def _fit_plot_card(_event: "Any" = None) -> None:
+            """The card's height for the view shown: one row for the
+            tachograms, one fixed-size row per row of Poincaré panels."""
+            segs = _state["segs"]
+            if _view["mode"] == "poincare" and segs:
+                rows = _poincare_grid(len(segs))[1]
+                # + the gap the layout puts between two rows of panels.
+                height = (_YBAR_H + rows * _POINCARE_ROW_H
+                          + (rows - 1) * _POINCARE_ROW_GAP)
+            else:
+                height = _PLOT_CARD_H
+            if int(plot_card.cget("height")) != height:
+                plot_card.configure(height=height)
+        # A narrower window holds fewer columns, so more rows: refit on resize.
+        plot_card.bind("<Configure>", _fit_plot_card, add="+")
         _place(2)
 
         _METRICS: "list[tuple[str, str, str]]" = list(self._SEGMENT_TABLE_METRICS)
@@ -594,18 +666,54 @@ class CompareSegmentsMixin:
                 return f"{v:.0f}"
             return _fmt(v)
 
-        def _populate_table(segs: "list[dict]") -> None:
-            val_w, d_w = int(110 * _scale), int(80 * _scale)
+        def _seg_names(segs: "list[dict]") -> "list[str]":
+            """What the screen calls the segments: their labels, unless two
+            are the same (or one is empty / reserved) -- then the export tags
+            (unique_tags: A, B, C...), followed by the label, so the selector,
+            the table, the caption and the exports name the same segment."""
+            labels = [str(s_.get("label") or "").strip() for s_ in segs]
+            tags = unique_tags(labels)
+            if tags == labels:
+                return labels
+            return [f"{t}: {lbl}" if lbl else t for t, lbl in zip(tags, labels)]
+
+        def _populate_table(segs: "list[dict]", comps: "list[Optional[int]]") -> None:
+            """The metric table: each segment's values, then the Δ % against
+            its comparator (comps[k]; none for the reference, marked ref.)."""
+            import tkinter.font as tkfont
+            head_font = tkfont.Font(font=(THEME.font_family, _fsize, "bold"))
+            gap = int(14 * _scale)
+            pairwise = not isinstance(comparators_reference(comps), int)
+            n = len(segs)
+            names = _seg_names(segs)
+
+            def _seg_head(k: int) -> str:
+                # Pairwise has no single reference: the first segment is only
+                # the start of the chain, not marked.
+                return names[k] + (" (ref.)" if comps[k] is None and n > 1
+                                   and not pairwise else "")
+
+            def _d_head(k: int) -> str:
+                # One reference: the caption says which, "Δ %" is enough;
+                # pairwise every column names its own comparator.
+                j = comps[k]
+                if not pairwise or j is None:
+                    return "Δ %"
+                # Whole label up to 18 characters ("Pre Stim 10min" fits), so
+                # the pairs of a Pre / Post protocol read without guessing.
+                lbl = names[j] if len(names[j]) <= 18 else names[j][:17] + "…"
+                return f"Δ % vs {lbl}"
             x = int(270 * _scale)
             stops = []
-            for k in range(len(segs)):
-                x += val_w
+            for k in range(n):
+                # Wide enough for its header (a long label no longer runs
+                # into the column on its left).
+                x += max(int(110 * _scale), head_font.measure(_seg_head(k)) + gap)
                 stops += [x, "right"]
-                if k:
-                    x += d_w
+                if comps[k] is not None:
+                    x += max(int(80 * _scale), head_font.measure(_d_head(k)) + gap)
                     stops += [x, "right"]
             # Text width is in characters: from the font's own "0".
-            import tkinter.font as tkfont
             char_px = max(1, tkfont.Font(font=tbl.cget("font")).measure("0"))
             tbl.configure(state="normal", tabs=stops, width=int(x / char_px) + 3)
             _place(len(segs))
@@ -614,24 +722,23 @@ class CompareSegmentsMixin:
                 tbl.tag_configure(f"seg{k}", font=(THEME.font_family, _fsize, "bold"),
                                   foreground=_color(k))
             tbl.insert("end", "Metric", "head")
-            for k, s_ in enumerate(segs):
+            for k in range(n):
                 tbl.insert("end", "\t")
-                tbl.insert("end", s_["label"], f"seg{k}")
-                if k:
-                    tbl.insert("end", "\tΔ %", "head")
-            ref = segs[0]
+                tbl.insert("end", _seg_head(k), f"seg{k}")
+                if comps[k] is not None:
+                    tbl.insert("end", "\t" + _d_head(k), "head")
             for ri, (key, name, unit) in enumerate(_METRICS):
                 line = ("stripe",) if ri % 2 == 0 else ()
                 tbl.insert("end", "\n" + name, line)
                 if unit:
                     tbl.insert("end", f"  {unit}", ("unit",) + line)
-                va = float(ref.get(key, float("nan")))
-                for k, s_ in enumerate(segs):
-                    v = float(s_.get(key, float("nan")))
+                vals = [float(s_.get(key, float("nan"))) for s_ in segs]
+                for k, v in enumerate(vals):
                     tbl.insert("end", "\t" + _fmt_cell(key, v), line)
-                    if not k:
+                    j = comps[k]
+                    if j is None:
                         continue
-                    d = _delta(va, v)
+                    d = _delta(vals[j], v)
                     if not np.isfinite(d):
                         txt = "—"
                     elif abs(d) < 0.05:
@@ -660,9 +767,11 @@ class CompareSegmentsMixin:
         def _redraw_plot() -> None:
             segs = _state["segs"]
             colors = [_color(k) for k in range(len(segs))]
+            _fit_plot_card()
             if _view["mode"] == "poincare":
                 plot_slot.update(lambda fig: draw_poincare_set(
-                    fig, segs, colors, jitter=self._compare_jitter))
+                    fig, segs, colors, jitter=self._compare_jitter,
+                    ncols=_poincare_grid(len(segs))[0]))
             else:
                 plot_slot.update(_rr_drawer(segs, colors))
 
@@ -670,6 +779,79 @@ class CompareSegmentsMixin:
             for r, fl in zip(seg_rows, flags):
                 r["qc"].configure(text=("⚠  " + "  ·  ".join(fl)) if fl else "✓  quality ok",
                                   text_color=ORANGE if fl else GREEN)
+
+        def _pair_cmps(segs: "list[dict]", comps: "list[Optional[int]]") -> "list[dict]":
+            """compare_segments of every (comparator, segment) pair, in the
+            order of ComparisonResult.pairs. Cheap (block means only)."""
+            from ecg.core.analysis import compare_segments
+            return [compare_segments(segs[j], segs[k]) for j, k in comparison_pairs(comps)]
+
+        def _fill_ref_choices(segs: "list[dict]") -> None:
+            """The selector's choices for *segs*: each segment, pairwise from
+            three on (with two it is the first as the reference), and pairs
+            (2 vs 1, 4 vs 3...) from four on (with three it is one pair and a
+            segment alone)."""
+            _ref_opts.clear()
+            # Unique names: two segments with the same label stay two choices.
+            for k, name in enumerate(_seg_names(segs)):
+                _ref_opts[f"{name} (reference)"] = k
+            if len(segs) > 2:
+                _ref_opts["Previous segment (pairwise)"] = PAIRWISE
+            if len(segs) > 3:
+                _ref_opts["Pairs (2 vs 1, 4 vs 3, 6 vs 5)"] = PAIRS
+            if _state["ref"] not in _ref_opts.values():
+                _state["ref"] = 0
+            cb_ref.configure(values=list(_ref_opts))
+            cb_ref.set(next((name for name, v in _ref_opts.items() if v == _state["ref"]),
+                            next(iter(_ref_opts), "")))
+            if len(segs) > 1:
+                if not ref_bar.winfo_manager():
+                    ref_bar.pack(fill="x", pady=(0, SPACE_S), before=grid)
+            elif ref_bar.winfo_manager():
+                ref_bar.pack_forget()
+
+        def _render_comparison() -> None:
+            """The comparison text, quality flags and table of the last run,
+            and what the app keeps of it, for the reference in _state."""
+            from ecg.core.analysis import segment_comparison_text
+            segs, cmps, flags = _state["segs"], _state["cmps"], _state["flags"]
+            res_ = self.analysis.last_comparison
+            comps = res_.comps if res_ is not None else reference_comparators(len(segs))
+            pairs = comparison_pairs(comps)
+            names = _seg_names(segs)
+            # A vs B of the old two-segment API: the first compared pair.
+            self._last_seg_a = segs[pairs[0][0]] if pairs else segs[0]
+            self._last_seg_b = segs[pairs[0][1]] if pairs else None
+            lines = [segment_comparison_text(c, names[j], names[k]).split("\n")
+                     for c, (j, k) in zip(cmps, pairs)]
+            lbl_mw.configure(text="\n".join(ln[0] for ln in lines)
+                             + (f"\n{lines[0][1]}" if lines and len(lines[0]) > 1 else ""))
+            single_ref = isinstance(comparators_reference(comps), int)
+            lbl_ref.configure(text=(comparators_caption(comps, names)
+                                    + ("  ·  the reference column is marked (ref.)"
+                                       if single_ref else ""))
+                              if len(segs) > 1 else "")
+            _show_flags(flags)
+            _populate_table(segs, comps)
+
+        def _on_ref_pick(choice: str) -> None:
+            """A new reference after a run: the block comparisons, flags and
+            table follow it; the segment statistics are not recomputed."""
+            if choice not in _ref_opts:
+                return
+            _state["ref"] = _ref_opts[choice]
+            segs = _state["segs"]
+            res_ = self.analysis.last_comparison
+            if not segs or res_ is None or res_.segs is not segs:
+                return
+            comps = reference_comparators(len(segs), _state["ref"])
+            cmps = _pair_cmps(segs, comps)
+            flags = quality_flags(segs, _state["ev"], _state["margin"], comps)
+            _state.update(cmps=cmps, flags=flags)
+            res_.comparators, res_.cmps, res_.flags = list(comps), cmps, flags
+            _render_comparison()
+
+        cb_ref.configure(command=_on_ref_pick)
 
         def _run_compare() -> None:
             try:
@@ -703,38 +885,45 @@ class CompareSegmentsMixin:
             # the beats removed by artifact correction (excluded spans).
             rr_lo, rr_hi = self.analysis_ctrl.hrv_rr_bounds()
             seg_breaks   = self.analysis_ctrl.hrv_breaks(rp)
-
             import threading as _th
 
             def _worker():
                 try:
-                    from ecg.core.analysis import compare_segments, compute_segment_stats
+                    from ecg.core.analysis import compute_segment_stats
                     seg_kw = dict(lf_band=lf, hf_band=hf, vlf_band=vlf,
                                   rr_min_ms=rr_lo, rr_max_ms=rr_hi,
                                   breaks=seg_breaks, block_s=block_s)
                     segs = [compute_segment_stats(sig, rp, fs, lo, hi, lbl, **seg_kw)
                             for lbl, lo, hi in windows]
-                    # Descriptive block-mean comparison of each segment with the
-                    # first (no beat-level test: beats are not replicates).
-                    cmps = [compare_segments(segs[0], s) for s in segs[1:]]
-                    flags = quality_flags(segs, ev, margin)
                 except Exception as exc:
                     log.exception("Segment comparison worker failed")
                     win.after(0, lambda e=exc: _on_worker_error(e))
                     return
-                win.after(0, lambda: _on_done(segs, cmps, flags))
+                win.after(0, lambda: _on_done(segs))
 
             def _on_worker_error(exc: Exception) -> None:
                 run_btn.configure(state="normal")
                 progress_bar.stop(); progress_bar.pack_forget()
                 lbl_status.configure(text=f"⚠  Comparison failed — {exc}", text_color=RED)
 
-            def _on_done(segs: "list[dict]", cmps: "list[dict]", flags) -> None:
+            def _on_done(segs: "list[dict]") -> None:
                 run_btn.configure(state="normal")
                 progress_bar.stop(); progress_bar.pack_forget()
-                _state.update(segs=segs, cmps=cmps, flags=flags)
-                self._last_seg_a = segs[0]
-                self._last_seg_b = segs[1] if len(segs) > 1 else None
+                # The reference as it is NOW (the selector stays usable while
+                # the worker runs), kept when it still exists for these
+                # segments; then the cheap block-mean comparison of each
+                # segment with its comparator (descriptive, no beat-level
+                # test: beats are not replicates) and the quality flags.
+                _fill_ref_choices(segs)
+                comps = reference_comparators(len(segs), _state["ref"])
+                try:
+                    cmps = _pair_cmps(segs, comps)
+                    flags = quality_flags(segs, ev, margin, comps)
+                except Exception as exc:
+                    log.exception("Segment comparison failed")
+                    _on_worker_error(exc)
+                    return
+                _state.update(segs=segs, cmps=cmps, flags=flags, ev=ev, margin=margin)
                 # Kept for the exports here and the main ones (Report tab),
                 # with the recording state it rests on (_current_comparison).
                 self.analysis.last_comparison = ComparisonResult(
@@ -742,7 +931,7 @@ class CompareSegmentsMixin:
                     template=_state["template"], subject=_subject(),
                     filepath=self.signal.filepath or "", event=ev,
                     artefact_margin_s=margin, block_s=block_s,
-                    lf_band=tuple(lf), hf_band=tuple(hf))
+                    lf_band=tuple(lf), hf_band=tuple(hf), comparators=list(comps))
                 # The state the tab -- hence rp / sig of this run -- was
                 # built for, not the app's now (peaks may have been edited
                 # on another tab while the worker ran).
@@ -760,13 +949,7 @@ class CompareSegmentsMixin:
                              + (f"  ·  LF/HF withheld for {', '.join(withheld)}" if withheld else "")
                              + (f"  ·  ⚠ {n_flag} segment(s) to check" if n_flag else ""),
                         text_color=ORANGE if (withheld or n_flag) else GREEN)
-                from ecg.core.analysis import segment_comparison_text
-                lines = [segment_comparison_text(c, segs[0]["label"], s["label"]).split("\n")
-                         for c, s in zip(cmps, segs[1:])]
-                lbl_mw.configure(text="\n".join(ln[0] for ln in lines)
-                                 + (f"\n{lines[0][1]}" if lines and len(lines[0]) > 1 else ""))
-                _show_flags(flags)
-                _populate_table(segs)
+                _render_comparison()
                 _redraw_plot()
 
             _th.Thread(target=_worker, daemon=True).start()
@@ -899,6 +1082,14 @@ class CompareSegmentsMixin:
             except Exception as exc:
                 messagebox.showerror("Group table", str(exc), parent=win)
                 return
+            # The Group card tests one pair A vs B: unless one was chosen
+            # there, start from this comparison's reference vs the first
+            # segment compared with it (the group table's tags are the same
+            # unique_tags as res_.tags).
+            gst = getattr(self, "_group_state", None)
+            if gst is not None and not (gst.get("a") and gst.get("b")) and res_.pairs:
+                j, k = res_.pairs[0]
+                gst["a"], gst["b"] = res_.tags[j], res_.tags[k]
             _done(f"{res_.subject or 'recording'} {'updated in' if replaced else 'added to'} "
                   f"{os.path.basename(path)} ({n} recording{'s' if n != 1 else ''})")
 
@@ -911,7 +1102,10 @@ class CompareSegmentsMixin:
                 ("➕  Add to group table…", _add_to_group,
                  "One row per recording (subject, file, template, every metric and the "
                  "quality of each segment): the table for a paired / repeated-measures "
-                 "test across animals. Columns are named after the segment labels: use "
+                 "test across animals. Every segment is stored, whatever the Δ % "
+                 "reference; the pair tested is chosen in the Group card below (the "
+                 "reference vs the first segment compared with it, until you change it). "
+                 "Columns are named after the segment labels: use "
                  "the same template for every animal. A recording already in it is replaced."),
                 ("Figures…", _export_figures,
                  "The tachograms and the Poincaré plots, 300 dpi PNG or vector PDF / SVG"),
@@ -922,7 +1116,8 @@ class CompareSegmentsMixin:
                  "HR block means, the RR series and the Poincaré pairs of each segment; "
                  "the windows, template and quality in the project notes"),
                 ("📊  Excel…", _export_excel,
-                 "Workbook: Comparison (Δ % against the first segment), Quality, Summary, "
+                 "Workbook: Comparison (Δ % against the reference chosen above the table), "
+                 "Quality, Summary, "
                  "Blocks, then the RR series and Poincaré pairs of each segment. "
                  "Choose .csv for the metric table only.")):
             b = ctk.CTkButton(res_hdr, text=text, width=0, command=cmd, state="disabled",

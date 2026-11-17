@@ -31,7 +31,7 @@ REFS = ("start", "end")
 # Quality thresholds of a segment (segment_quality / quality_flags).
 QC_MIN_VALID_PCT = 80.0          # time covered by valid RR intervals, % of the window
 QC_MIN_PAIRS = 200               # Poincaré pairs: SD1 / SD2 are unstable below
-QC_DURATION_TOL = 0.02           # durations within 2 % of the first segment
+QC_DURATION_TOL = 0.02           # durations within 2 % of the segment each is compared with
 QC_JUMP_FRAC = 0.20              # |RR_n+1 - RR_n| > 20 % of the median RR: an abrupt jump
 QC_MAX_JUMP_PCT = 0.5            # more than 0.5 % of the pairs: missed / extra beats likely
 QC_SD1_RATIO = 1.5               # SD1 > 1.5 x its trimmed value: driven by a few outlier pairs
@@ -205,12 +205,100 @@ def segment_quality(seg: dict) -> dict:
             "excluded_pct": float(seg.get("excluded_pct", 0.0) or 0.0)}
 
 
+# ── What each segment is compared with ───────────────────────────────────
+# A comparison is described by its *comparators*: comparators[k] is the index
+# of the segment that segment k is compared with (its Δ % and block-mean
+# comparison), None for the reference, which has neither. None as a whole
+# means every segment against the first, the behaviour before the reference
+# could be chosen (and what old results hold).
+
+PAIRWISE = "previous"           # reference_comparators: each against the one before
+PAIRS = "pairs"                 # reference_comparators: 2 vs 1, 4 vs 3, 6 vs 5
+
+
+def reference_comparators(n: int, reference: "int | str" = 0) -> "list[Optional[int]]":
+    """The comparators of *n* segments: all against segment *reference*
+    (an index; out of range falls back to the first), or each against the
+    one before it when *reference* is PAIRWISE (S2 vs S1, S3 vs S2...), or
+    within consecutive pairs when *reference* is PAIRS (S2 vs S1, S4 vs S3,
+    S6 vs S5: before / after protocols entered Pre, Post, Pre, Post...; an
+    odd last segment is left alone)."""
+    if n <= 0:
+        return []
+    if reference == PAIRWISE:
+        return [None] + list(range(n - 1))
+    if reference == PAIRS:
+        return [k - 1 if k % 2 else None for k in range(n)]
+    r = int(reference) if isinstance(reference, int) and 0 <= reference < n else 0
+    return [None if k == r else r for k in range(n)]
+
+
+def resolve_comparators(comparators: "Optional[Sequence[Optional[int]]]",
+                        n: int) -> "list[Optional[int]]":
+    """*comparators* checked against *n* segments: the default (all against
+    the first) when None or not one valid entry per segment, so a stale or
+    hand-made list can never index out of range or compare a segment with
+    itself."""
+    if comparators is None or len(comparators) != n or not any(c is None for c in comparators):
+        return reference_comparators(n)
+    if any(c is not None and not (0 <= int(c) < n and int(c) != k)
+           for k, c in enumerate(comparators)):
+        return reference_comparators(n)
+    return [None if c is None else int(c) for c in comparators]
+
+
+def comparison_pairs(comparators: "Sequence[Optional[int]]") -> "list[tuple[int, int]]":
+    """(comparator, segment) of every compared segment, in segment order: the
+    order of the block-mean comparisons and of the Δ % columns."""
+    return [(int(c), k) for k, c in enumerate(comparators) if c is not None]
+
+
+def comparators_reference(comparators: "Sequence[Optional[int]]") -> "Optional[int | str]":
+    """What *comparators* compare against: the index every compared segment
+    shares, PAIRWISE when each is compared with the one before, PAIRS within
+    consecutive pairs (where the readings agree, e.g. two segments, the index
+    wins, then PAIRWISE), None for any other pattern."""
+    pairs = comparison_pairs(comparators)
+    if not pairs:
+        return 0 if comparators else None
+    refs = {j for j, _k in pairs}
+    if len(refs) == 1:
+        return next(iter(refs))
+    comps = list(comparators)
+    if comps == reference_comparators(len(comps), PAIRWISE):
+        return PAIRWISE
+    if comps == reference_comparators(len(comps), PAIRS):
+        return PAIRS
+    return None
+
+
+def comparators_caption(comparators: "Sequence[Optional[int]]",
+                        labels: "Sequence[str]") -> str:
+    """One line saying what the Δ % are against, e.g. "Δ % against Post Stim
+    1min" or "Δ % against the previous segment"."""
+    ref = comparators_reference(comparators)
+    if ref == PAIRWISE:
+        return "Δ % against the previous segment (pairwise)"
+    if ref == PAIRS:
+        within = "  ·  ".join(f"{labels[k]} vs {labels[j]}"
+                              for j, k in comparison_pairs(comparators)
+                              if j < len(labels) and k < len(labels))
+        return f"Δ % within pairs: {within}"
+    if isinstance(ref, int) and 0 <= ref < len(labels):
+        return f"Δ % against {labels[ref]}"
+    return "Δ % against the segment named in each column"
+
+
 def quality_flags(segs: "Sequence[dict]", event: "Optional[tuple[float, float]]" = None,
-                  margin_s: float = DEFAULT_ARTEFACT_MARGIN_S) -> "list[list[str]]":
+                  margin_s: float = DEFAULT_ARTEFACT_MARGIN_S,
+                  comparators: "Optional[Sequence[Optional[int]]]" = None
+                  ) -> "list[list[str]]":
     """Per segment, what makes it doubtful: an error, little valid RR, few
-    Poincaré pairs, abrupt RR jumps (missed / extra beats), a duration other than the first segment's, or an overlap
-    with the event and the *margin_s* after it (stimulus artefact)."""
-    ref_dur = float(segs[0].get("duration_s") or 0.0) if segs else 0.0
+    Poincaré pairs, abrupt RR jumps (missed / extra beats), a duration other
+    than that of the segment it is compared with (*comparators*, default the
+    first: the reference, or the previous one pairwise), or an overlap with
+    the event and the *margin_s* after it (stimulus artefact)."""
+    comp = resolve_comparators(comparators, len(segs))
     out = []
     for i, s in enumerate(segs):
         flags: "list[str]" = []
@@ -232,8 +320,17 @@ def quality_flags(segs: "Sequence[dict]", event: "Optional[tuple[float, float]]"
                          f"{QC_SD1_TRIM:.0%} most extreme pairs ({rob:.2f} ms): a few outlier "
                          "pairs drive it (check the peaks)")
         dur = float(s.get("duration_s") or 0.0)
-        if i > 0 and ref_dur > 0 and abs(dur - ref_dur) > QC_DURATION_TOL * ref_dur:
-            flags.append(f"lasts {dur:.0f} s, not {ref_dur:.0f} s like the first")
+        j = comp[i]
+        ref_dur = float(segs[j].get("duration_s") or 0.0) if j is not None else 0.0
+        if ref_dur > 0 and abs(dur - ref_dur) > QC_DURATION_TOL * ref_dur:
+            # Unequal durations bias SDNN, LF and HF of the Δ % against it.
+            other = str(segs[j].get("label") or "").strip()
+            if not other:
+                other = f"segment {j + 1}"
+            elif sum(str(t.get("label") or "").strip() == other for t in segs) > 1:
+                other = f"{other} (segment {j + 1})"    # two share the label
+            flags.append(f"lasts {dur:.0f} s, not {ref_dur:.0f} s like {other} "
+                         "(its comparison)")
         if event is not None:
             a, b = event[0], event[1] + max(0.0, margin_s)
             lo, hi = float(s.get("t_lo", math.nan)), float(s.get("t_hi", math.nan))

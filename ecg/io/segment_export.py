@@ -3,7 +3,8 @@
 ecg.io.segment_export
 ---------------------
 The exports of a Compare segments result, from one place: the metric table
-(each segment, Δ % against the first), the quality of each segment, the
+(each segment, its Δ % against the segment it is compared with: the chosen
+reference, the previous one pairwise, the first by default), the quality of each segment, the
 per-block HR means, the RR series and the Poincaré pairs, as
 
 * an Excel workbook (``write_xlsx``), or sheets added to the main workbook
@@ -26,7 +27,10 @@ from typing import Any, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from ecg.core.segment_plan import segment_quality, unique_tags
+from ecg.core.segment_plan import (
+    PAIRS, PAIRWISE, comparators_caption, comparators_reference, comparison_pairs,
+    resolve_comparators, segment_quality, unique_tags,
+)
 
 # Prism XY tables are decimated past this many rows (as the main export does).
 PRISM_MAX_ROWS = 20_000
@@ -35,9 +39,10 @@ PRISM_MAX_ROWS = 20_000
 @dataclass
 class ComparisonResult:
     """One run of Compare segments, with what it was computed from."""
-    segs: "list[dict]"                       # compute_segment_stats results, first = reference
+    segs: "list[dict]"                       # compute_segment_stats results
     metrics: "Sequence[tuple[str, str, str]]"  # (key, label, unit) rows of the table
-    cmps: "list[dict]" = field(default_factory=list)    # compare_segments(ref, seg_k)
+    # compare_segments(segs[j], segs[k]) of each (j, k) of self.pairs, in order.
+    cmps: "list[dict]" = field(default_factory=list)
     flags: "list[list[str]]" = field(default_factory=list)  # quality_flags
     template: str = ""
     subject: str = ""
@@ -47,10 +52,29 @@ class ComparisonResult:
     block_s: "Optional[float]" = None
     lf_band: "Optional[tuple[float, float]]" = None
     hf_band: "Optional[tuple[float, float]]" = None
+    # What each segment is compared with (segment_plan.reference_comparators):
+    # None = every segment against the first, as results kept before the
+    # reference could be chosen.
+    comparators: "Optional[list[Optional[int]]]" = None
 
     @property
     def tags(self) -> "list[str]":
         return unique_tags([s.get("label", "") for s in self.segs])
+
+    @property
+    def comps(self) -> "list[Optional[int]]":
+        """The comparators, validated (the default when unset or stale)."""
+        return resolve_comparators(self.comparators, len(self.segs))
+
+    @property
+    def pairs(self) -> "list[tuple[int, int]]":
+        """(comparator, segment) index pairs, the order of cmps and Δ %."""
+        return comparison_pairs(self.comps)
+
+    @property
+    def caption(self) -> str:
+        """What the Δ % are against, in words."""
+        return comparators_caption(self.comps, self.tags)
 
 
 def _num(v: Any) -> float:
@@ -69,19 +93,22 @@ def delta_pct(ref: float, v: float) -> float:
 
 def comparison_frame(res: ComparisonResult) -> "pd.DataFrame":
     """One row per metric: its label (with unit), the value of each segment
-    (columns named by the segment labels) and the Δ % of each against the
-    first ("Δ% Ref→Seg")."""
+    (columns named by the segment labels) and the Δ % of each compared
+    segment against its comparator ("Δ% Ref→Seg", res.pairs: against the
+    first by default)."""
     tags = res.tags
+    pairs = res.pairs
+    dcols = [f"Δ% {tags[j]}→{tags[k]}" for j, k in pairs]
     rows = []
     for key, label, unit in res.metrics:
         row: "dict[str, Any]" = {"Metric": f"{label} ({unit})" if unit else label}
         vals = [_num(s.get(key)) for s in res.segs]
         for tag, v in zip(tags, vals):
             row[tag] = v
-        for tag, v in zip(tags[1:], vals[1:]):
-            row[f"Δ% {tags[0]}→{tag}"] = delta_pct(vals[0], v)
+        for col, (j, k) in zip(dcols, pairs):
+            row[col] = delta_pct(vals[j], vals[k])
         rows.append(row)
-    cols = ["Metric", *tags, *(f"Δ% {tags[0]}→{t}" for t in tags[1:])]
+    cols = ["Metric", *tags, *dcols]
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -121,7 +148,8 @@ def blocks_frame(res: ComparisonResult) -> "pd.DataFrame":
 def summary_rows(res: ComparisonResult, exported_at: str = "") -> "list[tuple[str, str]]":
     """What the comparison rests on and its block-mean summary, as (item,
     value) rows: subject, file, template, event, windows, bands, block
-    length, each segment against the first, and the descriptive caveat."""
+    length, what the Δ % are against, each compared pair's block-mean
+    summary, and the descriptive caveat."""
     from ecg.core.analysis import segment_comparison_text
     tags = res.tags
     rows = [("Subject", res.subject or "—"),
@@ -133,16 +161,22 @@ def summary_rows(res: ComparisonResult, exported_at: str = "") -> "list[tuple[st
         rows.append(("Artefact margin (s)", f"{res.artefact_margin_s:g}"))
     for tag, s in zip(tags, res.segs):
         rows.append((f"Segment {tag} (s)", f"{_num(s.get('t_lo')):g}–{_num(s.get('t_hi')):g}"))
-    rows.append(("Reference", tags[0] if tags else "—"))
+    ref = comparators_reference(res.comps)
+    rows.append(("Reference", "previous segment (pairwise)" if ref == PAIRWISE else
+                 "within pairs (2 vs 1, 4 vs 3, 6 vs 5)" if ref == PAIRS else
+                 tags[ref] if isinstance(ref, int) and ref < len(tags) else
+                 "per column" if tags else "—"))
+    if len(tags) > 1:
+        rows.append(("Δ %", res.caption))
     if res.lf_band:
         rows.append(("LF band (Hz)", f"{res.lf_band[0]:.2f}–{res.lf_band[1]:.2f}"))
     if res.hf_band:
         rows.append(("HF band (Hz)", f"{res.hf_band[0]:.2f}–{res.hf_band[1]:.2f}"))
     if res.block_s:
         rows.append(("Block length (s)", f"{res.block_s:g}"))
-    for tag, c in zip(tags[1:], res.cmps):
-        rows.append((f"{tags[0]} vs {tag}",
-                     segment_comparison_text(c, tags[0], tag).split("\n")[0]))
+    for (j, k), c in zip(res.pairs, res.cmps):
+        rows.append((f"{tags[j]} vs {tags[k]}",
+                     segment_comparison_text(c, tags[j], tags[k]).split("\n")[0]))
     if res.cmps:
         rows.append(("Note", str(res.cmps[0].get("note", ""))))
     n_flag = sum(1 for f in (res.flags or []) if f)
