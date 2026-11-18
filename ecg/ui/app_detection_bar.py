@@ -49,8 +49,8 @@ _METHOD_HELP = ("SG + Derivative: downsample → Savitzky-Golay derivative "
                 "(its options: Filters chip)\n"
                 "Wavelet: CWT separates noise / QRS / J-wave (needs PyWavelets)\n"
                 "Envelope Max: local maxima — best for clipped / saturated signals\n"
-                "ML Detector: trained on your verified recordings "
-                "(status and training: Signal quality panel)\n"
+                "ML Detector: learns from your training examples — recordings "
+                "whose peaks you corrected (Signal quality panel, ML DETECTOR)\n"
                 "Auto: NeuroKit2's own detector")
 
 
@@ -83,8 +83,8 @@ class DetectionBarMixin:
         )
         self.cb_det_method.set("SG + Derivative (10 kHz)")
         self.cb_det_method.grid(row=1, column=0, sticky="w", padx=(0, SPACE_M))
-        # ML status lives in the Signal quality panel's ML section now, shown
-        # with Method = ML Detector; no second copy beside the combobox.
+        # ML status lives in the Signal quality panel's ML DETECTOR section,
+        # whatever the Method; no second copy beside the combobox.
         self.lbl_ml_inline_status = None
 
         # ── Threshold: slider + exact value, always in view ──────

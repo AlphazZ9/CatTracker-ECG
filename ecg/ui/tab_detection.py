@@ -23,11 +23,12 @@ from ecg.ui.theme import (
     PAGE_PAD_Y, PAGE_GAP, CARD_PAD,
 )
 from ecg.ui.theme import input_style
-from ecg.ui.theme import button_style, disabled_style, toggle_style
+from ecg.ui.theme import BTN_H, button_style, disabled_style, toggle_style
 from ecg.core.detection import detect_rr_artifacts
 from ecg.core.models import MouseECG
 from ecg.ui.plots import CanvasSlot
 from ecg.ui.tab_keys import TAB_DETECTION
+from ecg.ui import ml_examples
 
 # Mixin of ECGApp: `self: ECGApp` shows pyright the whole app surface, so a
 # typo in self.xxx is reported. It is deliberately not a supertype of this
@@ -350,8 +351,8 @@ class TabDetectionMixin:
         if not self.ui.rrhr_strip_visible:
             self.subplot_frame.grid_remove()
         self._slots["detail_rrhr"] = CanvasSlot(self.subplot_frame, 12, 2.8, toolbar=False)
-        # SG options (Filters popover) and the ML section (quality panel)
-        # follow the Method combobox's default; both exist only now.
+        # SG options (Filters popover) follow the Method combobox's default;
+        # they exist only now.
         self._on_det_method_change(self.cb_det_method.get())
 
     def _build_quality_panel(self: ECGApp, parent) -> None:
@@ -412,7 +413,14 @@ class TabDetectionMixin:
             "Beats confirmed by at least one other detector, after Check detector "
             "agreement (below)")
 
-        # Bottom first: the two plots share what is left.
+        # The curve's title is packed before the rows at the bottom: pack
+        # gives room in packing order, so it stays on screen (saying why the
+        # curve is missing) when the open ML section leaves the plots none.
+        time_head = ctk.CTkLabel(panel, text="Template correlation over time",
+                                 font=FONT_KPI_LABEL, text_color=MUTED, anchor="w", height=14)
+        time_head.pack(side="top", fill="x", padx=CARD_PAD)
+
+        # Bottom next: the two plots share what is left.
         self._build_quality_actions(panel)
 
         plots = ctk.CTkFrame(panel, fg_color="transparent")
@@ -421,9 +429,12 @@ class TabDetectionMixin:
         self._quality_plots = plots
         for row, (key, title) in enumerate((("quality_time", "Template correlation over time"),
                                             ("quality_hist", "Template correlation histogram"))):
-            head = ctk.CTkLabel(plots, text=title, font=FONT_KPI_LABEL, text_color=MUTED,
-                                anchor="w", height=14)
-            head.grid(row=2 * row, column=0, sticky="ew", padx=SPACE_XS)
+            if row == 0:
+                head = time_head
+            else:
+                head = ctk.CTkLabel(plots, text=title, font=FONT_KPI_LABEL, text_color=MUTED,
+                                    anchor="w", height=14)
+                head.grid(row=2 * row, column=0, sticky="ew", padx=SPACE_XS)
             plots.grid_rowconfigure(2 * row + 1, weight=1)
             box = tk.Frame(plots, bg=PLOT["bg"], bd=0, highlightthickness=1,
                            highlightbackground=HAIRLINE, height=60)
@@ -432,22 +443,33 @@ class TabDetectionMixin:
             self._slots[key] = CanvasSlot(box, 2.6, 1.0, toolbar=False)
             if row == 0:
                 self._quality_time_rows = (head, box)
-        # The histogram gives its room to the ML section (_show_ml_section) and,
+        # The histogram gives its room to the ML section when it is open
+        # (_set_ml_expanded) and,
         # on a short window, to the curve over time (_fit_quality_plots).
         self._quality_hist_rows = (head, box)
         self._quality_hist_wanted = True
+        # Open or closed as the UI state says (kept across a rebuild).
+        self._set_ml_expanded(bool(getattr(getattr(self, "ui", None), "ml_section_open", False)),
+                              remember=False)
         # The panel too: plots squeezed flat from the start never get a
         # <Configure> of their own (their size stays 1 px).
         for w in (plots, panel):
             w.bind("<Configure>", lambda _e: self._fit_quality_plots(), add="+")
+        # Opening the ML section can leave the plots no room at all: pack then
+        # unmaps them without a <Configure> (their height stays the old one),
+        # and maps them back after it.
+        for ev in ("<Unmap>", "<Map>"):
+            plots.bind(ev, lambda _e: self._fit_quality_plots(), add="+")
 
     def _build_quality_actions(self: ECGApp, panel) -> None:
         """What acts on the peaks' quality, under the plots: artifact review,
         auto-correction, detector agreement, and the ML detector's training
-        (shown with Method = ML Detector, see _show_ml_section)."""
+        examples (always there, collapsed by default: _set_ml_expanded)."""
         wrap = int(QUALITY_PANEL_W * THEME.font_scale) - 2 * CARD_PAD
         actions = ctk.CTkFrame(panel, fg_color="transparent")
-        actions.pack(side="bottom", fill="x", padx=CARD_PAD, pady=(0, CARD_PAD - 4))
+        # The ML section under it closes the card: its bottom margin is the
+        # card's (CARD_PAD - 4 in all), so the collapsed header costs one row.
+        actions.pack(side="bottom", fill="x", padx=CARD_PAD, pady=(0, SPACE_XS))
         self._quality_actions = actions
         # Review and agreement share one row: every row here is taken from the
         # correlation plot above on a 768-px screen.
@@ -491,67 +513,169 @@ class TabDetectionMixin:
             anchor="w", wraplength=wrap, justify="left", height=16)
         self.lbl_agreement_status.pack(fill="x")
 
-        # ── ML detector: status, verified flag, save, train ──────
+        # ── ML detector: training examples, whatever the Method ──
+        # Its explanations are floating tooltips (_bind_float_tip): the status
+        # bar holds only a few words on a 1366-px screen.
+        # Examples are prepared with the other methods, before any model
+        # exists: the section is always there. Collapsed it is one row (title
+        # + a short status), so the quality plots keep their room on a
+        # 768-px screen; its open/closed state is kept in self.ui.
         ml = ctk.CTkFrame(panel, fg_color=BG, corner_radius=6)
+        # side="bottom" stacks from the bottom up: before=actions puts it
+        # under them.
+        ml.pack(side="bottom", fill="x", padx=SPACE_M, pady=(0, CARD_PAD - 4 - SPACE_XS),
+                before=actions)
         self._ml_frame = ml
-        # Title and verified flag share a row: every row here is taken from
-        # the correlation plot above on a 768-px screen.
-        head = ctk.CTkFrame(ml, fg_color="transparent")
-        head.pack(fill="x", padx=SPACE_S, pady=(SPACE_XS, 0))
-        ctk.CTkLabel(head, text="ML DETECTOR", font=FONT_SUBSECTION, text_color=MUTED,
-                     anchor="w").pack(side="left")
-        self.sw_verified_training = self._switch(
-            head, "✓ Verified for training", dict(padx=0), default_on=False,
-            command=self._on_verified_training_toggle)
-        self.sw_verified_training.pack_configure(side="right", anchor="e", pady=0)
+        head = ctk.CTkFrame(ml, fg_color="transparent", cursor="hand2")
+        head.pack(fill="x", padx=SPACE_S)
+        self._ml_head = head
+        self.lbl_ml_title = ctk.CTkLabel(head, text="ML DETECTOR  ▸", font=FONT_SUBSECTION,
+                                         text_color=MUTED, anchor="w", height=16)
+        self.lbl_ml_title.pack(side="left")
+        self.lbl_ml_short = ctk.CTkLabel(head, text="", font=FONT_KPI_LABEL, text_color=MUTED,
+                                         anchor="e", height=16)
+        self.lbl_ml_short.pack(side="right")
+        for w in (head, self.lbl_ml_title, self.lbl_ml_short):
+            w.bind("<Button-1>", lambda _e: self._toggle_ml_section(), add="+")
+            self._bind_float_tip(w, ml_examples.TIP_HEADER)
+
+        body = ctk.CTkFrame(ml, fg_color="transparent")
+        self._ml_body = body          # packed by _set_ml_expanded
         self.lbl_ml_status = ctk.CTkLabel(
-            ml, text="No trained model yet", font=FONT_KPI_LABEL,
-            text_color=MUTED, anchor="w", wraplength=wrap - SPACE_M, justify="left", height=16)
+            body, text="No model yet", font=FONT_KPI_LABEL, height=16,
+            text_color=MUTED, anchor="w", wraplength=wrap - SPACE_M, justify="left")
         self.lbl_ml_status.pack(fill="x", padx=SPACE_S, pady=(0, SPACE_XS))
-        self._bind_hover_tip(
-            self.sw_verified_training,
-            "Marks this recording's corrected R-peaks as clean training data. "
-            "Takes effect on Save Session.")
-        row = ctk.CTkFrame(ml, fg_color="transparent")
-        row.pack(fill="x", padx=SPACE_S, pady=(0, SPACE_S))
-        row.grid_columnconfigure((0, 1), weight=1, uniform="ml")
-        self.btn_save_for_training = ctk.CTkButton(
-            row,
-            text="📥  Save for training",
-            command=self._save_for_training_only,
-            **button_style("secondary"),
-        )
-        self.btn_save_for_training.grid(row=0, column=0, sticky="ew", padx=(0, SPACE_XS))
-        self._bind_hover_tip(
-            self.btn_save_for_training,
-            "Caches this recording's peaks as training data right away, without "
-            "writing a .ecgsession file or export stats.")
+        self._ml_status_full = ""
+        self._bind_float_tip(
+            self.lbl_ml_status,
+            lambda: "\n\n".join(t for t in (self._ml_status_full, ml_examples.TIP_STATUS) if t))
+        row = ctk.CTkFrame(body, fg_color="transparent")
+        row.pack(fill="x", padx=SPACE_S, pady=(0, SPACE_XS))
+        row.grid_columnconfigure(0, weight=1)
+        # Compact buttons (BTN_H - 4): open, this section shares a 768-px
+        # screen's panel with the score, the cells and the review buttons.
+        ml_btn_h = int(round((BTN_H - 4) * THEME.font_scale))
+        # The one training-example action: Add / ✓ In examples — Remove /
+        # Update (peaks edited), see ml_examples.example_button.
+        self.btn_ml_example = ctk.CTkButton(
+            row, text=ml_examples.BTN_ADD, command=self._on_ml_example_click,
+            state="disabled",
+            **{**button_style("secondary"), **disabled_style(), "height": ml_btn_h})
+        self.btn_ml_example.grid(row=0, column=0, sticky="ew")
+        self._ml_example_tip = ml_examples.TIP_ADD
+        self._bind_float_tip(self.btn_ml_example, lambda: self._ml_example_tip)
+        self.btn_ml_remove = ctk.CTkButton(
+            row, text=ml_examples.BTN_REMOVE_SHORT, width=int(70 * THEME.font_scale),
+            command=self._remove_training_example,
+            **{**button_style("secondary"), "height": ml_btn_h})
+        self.btn_ml_remove.grid(row=0, column=1, sticky="e", padx=(SPACE_XS, 0))
+        self.btn_ml_remove.grid_remove()
+        self._bind_float_tip(self.btn_ml_remove, ml_examples.TIP_REMOVE)
+        self.lbl_ml_hint = ctk.CTkLabel(
+            body, text="", font=FONT_KPI_LABEL, text_color=LIGHT, anchor="w",
+            wraplength=wrap - SPACE_M, justify="left", height=16)
+        self._ml_hint_row = row      # the hint packs right after this row
         self.btn_train_ml = ctk.CTkButton(
-            row,
-            text="🤖  Train model…",
+            body,
+            text=ml_examples.BTN_TRAIN,
             command=self._open_ml_training_dialog,
-            **button_style("primary"),
+            **{**button_style("primary"), "height": ml_btn_h},
         )
-        self.btn_train_ml.grid(row=0, column=1, sticky="ew")
-        self._bind_hover_tip(self.btn_train_ml, "Train / retrain the ML R-peak detector")
+        self.btn_train_ml.pack(fill="x", padx=SPACE_S, pady=(0, SPACE_S))
+        self._bind_float_tip(self.btn_train_ml, ml_examples.TIP_TRAIN)
+        self._ml_example_seen = None
         self.after(0, self.refresh_ml_status)
 
-    def _show_ml_section(self: ECGApp, shown: bool) -> None:
-        """The ML section, below the actions, while Method = ML Detector; the
-        correlation histogram is hidden meanwhile, so the curve over time
-        keeps a readable height on a 768-px screen."""
-        ml = getattr(self, "_ml_frame", None)
-        if ml is None:
+    def _toggle_ml_section(self: ECGApp) -> None:
+        frame = getattr(self, "_ml_body", None)
+        if frame is not None:
+            self._set_ml_expanded(not bool(frame.winfo_manager()))
+
+    def _set_ml_expanded(self: ECGApp, expanded: bool, remember: bool = True) -> None:
+        """Open or close the ML DETECTOR section (its header stays). Open, it
+        takes the correlation histogram's room, so the curve over time keeps a
+        readable height on a 768-px screen (_fit_quality_plots)."""
+        body = getattr(self, "_ml_body", None)
+        if body is None:
             return
-        if shown and not ml.winfo_manager():
-            # side="bottom" stacks from the bottom up: before=actions puts it
-            # under them.
-            ml.pack(side="bottom", fill="x", padx=SPACE_M, pady=(0, SPACE_S),
-                    before=self._quality_actions)
-        elif not shown and ml.winfo_manager():
-            ml.pack_forget()
-        self._quality_hist_wanted = not shown
+        if expanded and not body.winfo_manager():
+            body.pack(fill="x")
+        elif not expanded and body.winfo_manager():
+            body.pack_forget()
+        self.lbl_ml_title.configure(text="ML DETECTOR  ▾" if expanded else "ML DETECTOR  ▸")
+        ui = getattr(self, "ui", None)
+        if remember and ui is not None:
+            ui.ml_section_open = bool(expanded)
+        self._quality_hist_wanted = not expanded
         self._fit_quality_plots()
+
+    def _refresh_ml_example(self: ECGApp, force: bool = False) -> None:
+        """The training-example button for the open recording: Add, ✓ In
+        training examples — Remove, or Update when the peaks were edited after
+        it was added. Cheap on the shell tick: the cached example is read again
+        only when the peaks, the file or the cache changed."""
+        btn = getattr(self, "btn_ml_example", None)
+        if btn is None:
+            return
+        if getattr(self, "_async_busy", False):
+            # A job may be writing this recording's example (Add / Update, or
+            # Save Session refreshing it): removing it now would be undone by
+            # that job. Both buttons wait; seen again once the job is over.
+            self._set_btn_enabled(btn, False, "secondary")
+            self._set_btn_enabled(self.btn_ml_remove, False, "secondary")
+            self._ml_example_seen = None
+            return
+        sig = getattr(self, "signal", None)
+        det = getattr(self, "detection", None)
+        path = getattr(sig, "filepath", None)
+        rp = getattr(det, "rpeaks_ok", None)
+        state = "absent"
+        mtime = None
+        if path:
+            from ecg.io.session import _file_fingerprint
+            from ecg.core.ml_detector import training_example_path, training_example_state
+            fp = _file_fingerprint(path)
+            try:
+                mtime = training_example_path(fp).stat().st_mtime
+            except OSError:
+                mtime = None
+            seen = self._ml_example_seen
+            if (not force and seen is not None and seen[0] == path and seen[1] is rp
+                    and seen[2] == mtime):
+                return
+            state = "absent" if mtime is None else training_example_state(fp, rp)
+        elif not force and self._ml_example_seen == (None, None, None):
+            return
+        self._ml_example_seen = (path, rp, mtime)
+        look = ml_examples.example_button(bool(path), 0 if rp is None else len(rp), state)
+        self._ml_example_mode = look.mode
+        self._ml_example_tip = look.tip
+        if btn.cget("text") != look.text:
+            btn.configure(text=look.text)
+        kind = "primary" if look.mode in ("add", "update") else "secondary"
+        self._set_btn_enabled(btn, look.enabled, kind)
+        self._set_btn_enabled(self.btn_ml_remove, True, "secondary")
+        if look.show_remove:
+            self.btn_ml_remove.grid()
+        else:
+            self.btn_ml_remove.grid_remove()
+        hint = self.lbl_ml_hint
+        text = look.hint
+        if text and path and getattr(self, "_ml_no_model_note", False):
+            text = ""       # the status line above already says what to do
+        if text:
+            hint.configure(text=text)
+            if not hint.winfo_manager():
+                hint.pack(fill="x", padx=SPACE_S, pady=(0, SPACE_XS), after=self._ml_hint_row)
+        elif hint.winfo_manager():
+            hint.pack_forget()
+
+    def _on_ml_example_click(self: ECGApp) -> None:
+        mode = getattr(self, "_ml_example_mode", "none")
+        if mode in ("add", "update"):
+            self._add_training_example()
+        elif mode == "remove":
+            self._remove_training_example()
 
     def _fit_quality_plots(self: ECGApp) -> None:
         """Show the histogram only when both plots get a readable height
@@ -560,19 +684,28 @@ class TabDetectionMixin:
         if plots is None:
             return
         h = plots.winfo_height()
-        row_h = QUALITY_PLOT_MIN_H + 14 + SPACE_XS      # title + plot
+        # The curve's title sits above the plots frame (always on screen); the
+        # histogram's is inside it: its own height, which grows with the font.
+        curve_h = QUALITY_PLOT_MIN_H + SPACE_XS
+        row_h = curve_h + max(14, self._quality_hist_rows[0].winfo_reqheight())
         # Not laid out yet: 1 px with the panel unmapped. With the panel shown,
         # 1 px means squeezed flat (pack even unmaps a frame left no room).
         known = h > 1 or bool(plots.master.winfo_ismapped())
+        if plots.master.winfo_ismapped() and not plots.winfo_ismapped():
+            h = 0       # squeezed out by pack: winfo_height() is stale
         # A curve squeezed below that height is unreadable: its title says why
         # it is missing rather than drawing a sliver.
-        curve = not known or h >= row_h
-        hist = self._quality_hist_wanted and (not known or h >= 2 * row_h)
+        curve = not known or h >= curve_h
+        hist = self._quality_hist_wanted and (not known or h >= curve_h + row_h)
         head, box = self._quality_time_rows
         if curve != bool(box.winfo_manager()):
             if curve:
                 box.grid()
                 head.configure(text="Template correlation over time")
+                # Back from a squeeze (a <Map> of the plots): Tk's grid could
+                # keep the width it had while unmapped (1 px), leaving the
+                # curve unmapped. Laying the grid out again once idle fixes it.
+                plots.after_idle(lambda: plots.winfo_exists() and plots.grid_columnconfigure(0, weight=1))
             else:
                 box.grid_remove()
                 head.configure(text="Template correlation over time: "
@@ -652,3 +785,4 @@ class TabDetectionMixin:
         enabled = rp is not None and len(rp) > 4
         if (btn.cget("state") == "normal") != enabled:
             self._set_btn_enabled(btn, enabled, "secondary")
+        self._refresh_ml_example()

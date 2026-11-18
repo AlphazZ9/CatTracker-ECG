@@ -248,8 +248,12 @@ def test_save_session_uses_the_state_of_the_file_it_saves(monkeypatch):
     monkeypatch.setattr(sc_module, "save_session", lambda fp, state: "C:/data/A.ecgsession")
     monkeypatch.setattr(sc_module, "upsert_recording", lambda **kw: upserts.append(kw))
     monkeypatch.setattr(sc_module, "save_training_sample",
-                        lambda fp, flt, fs, rp, progress_cb=None: samples.append((fs, rp)) or 7)
+                        lambda fp, flt, fs, rp, progress_cb=None, source_path="":
+                        samples.append((fs, rp)) or 7)
     monkeypatch.setattr(sc_module, "delete_training_sample", lambda fp: deleted.append(fp))
+    # A is a training example whose peaks were edited since it was added:
+    # Save Session refreshes it (and only then touches the training cache).
+    monkeypatch.setattr(sc_module, "training_example_state", lambda fp, rp: "changed")
     import ecg.io.session as io_session
     monkeypatch.setattr(io_session, "_file_fingerprint", lambda p: "fp-" + p)
 

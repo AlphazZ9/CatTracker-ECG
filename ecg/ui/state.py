@@ -259,6 +259,8 @@ class UIState:
     time_course_mode: str = "Epochs"
     # Morphology & Intervals: distribution plots open; a UI rebuild keeps it.
     morph_dist_open: bool = False
+    # Signal quality panel: the ML DETECTOR section open (collapsed by default).
+    ml_section_open: bool = False
     # When each module's result last landed (ISO strings; the out-of-date banner).
     module_computed_at: dict = field(default_factory=dict)
     # Report: Include ticks that differ from the default, as {line: [ticked, the
@@ -290,4 +292,4 @@ class SessionState:
     recent_files: list[str] = field(default_factory=list)
     dirty: bool = False
     recording_notes: str = ""                    # freetext notes for this recording
-    verified_for_training: bool = False           # user-confirmed clean R-peaks -- ML training data
+    verified_for_training: bool = False           # the recording is an ML training example (cached corrected R-peaks)

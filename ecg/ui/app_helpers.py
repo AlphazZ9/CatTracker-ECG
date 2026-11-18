@@ -315,6 +315,71 @@ class HelpersMixin:
         widget.bind("<Enter>", _enter)
         widget.bind("<Leave>", _leave)
 
+    def _bind_float_tip(self: ECGApp, widget, text: "str | Callable[[], str]",
+                        delay_ms: int = 450) -> None:
+        """A floating tooltip for *widget*: *text* (or what it returns) in a
+        small borderless window under the pointer after *delay_ms*, gone on
+        leave or click.
+
+        For explanations longer than the status bar holds: on a 1366-px
+        screen lbl_status is only a few words wide, so _bind_hover_tip cut
+        them to their first word.
+        """
+        state: "dict[str, Any]" = {"job": None, "win": None}
+
+        def _hide(_e=None) -> None:
+            if state["job"] is not None:
+                try:
+                    widget.after_cancel(state["job"])
+                except (tk.TclError, ValueError):
+                    pass
+                state["job"] = None
+            win = state["win"]
+            state["win"] = None
+            if win is not None:
+                try:
+                    win.destroy()
+                except tk.TclError:
+                    pass
+
+        def _show() -> None:
+            state["job"] = None
+            shown = text() if callable(text) else text
+            if not shown:
+                return
+            try:
+                if not widget.winfo_exists() or not widget.winfo_ismapped():
+                    return
+                win = tk.Toplevel(widget)
+                win.wm_overrideredirect(True)
+                try:
+                    win.attributes("-topmost", True)
+                except tk.TclError:
+                    pass
+                tk.Label(win, text=shown, justify="left", wraplength=320,
+                         bg="#FFFFE6", fg="#202020", relief="solid", bd=1,
+                         padx=6, pady=4, font=("Segoe UI", 9)).pack()
+                win.update_idletasks()
+                w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+                x = widget.winfo_pointerx() + 12
+                y = widget.winfo_rooty() + widget.winfo_height() + 4
+                sw, sh = widget.winfo_screenwidth(), widget.winfo_screenheight()
+                x = max(0, min(x, sw - w - 4))
+                if y + h > sh - 4:                    # no room under it: above
+                    y = max(0, widget.winfo_rooty() - h - 4)
+                win.wm_geometry(f"+{x}+{y}")
+                state["win"] = win
+            except tk.TclError as exc:
+                log.debug("float tip: %s", exc)
+
+        def _enter(_e=None) -> None:
+            _hide()
+            state["job"] = widget.after(delay_ms, _show)
+
+        widget.bind("<Enter>", _enter, add="+")
+        widget.bind("<Leave>", _hide, add="+")
+        widget.bind("<ButtonPress>", _hide, add="+")
+
     def _fit_status_text(self: ECGApp, text: str) -> str:
         """Truncate *text* with an ellipsis so it fits on one line of
         lbl_status, never wrapping.  See lbl_status's construction in

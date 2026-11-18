@@ -48,10 +48,13 @@ strain and experimental conditions.
   Savitzky-Golay + derivative, continuous wavelet transform, envelope-max,
   and a classical-ML detector trainable from your own reviewed recordings),
   with manual edit/undo/redo and an interactive threshold slider.
-- **ML R-peak detector** — trains a Random Forest from recordings you mark
-  "Verified for training"; the training dialog reports hold-out accuracy,
-  F1, precision, recall, and a confusion matrix for the binary peak /
-  non-peak classifier.
+- **ML R-peak detector** — trains a Random Forest from your *training
+  examples*: recordings whose peaks were detected with another method,
+  corrected, then added with **Add recording to training examples** (each
+  caches its candidate features, labels and corrected peaks). At least 2
+  examples are required, 5 or more recommended; the model is checked on whole
+  recordings held out from training (accuracy over candidate peaks, recall,
+  precision, F1 and a confusion matrix), then refit on all examples.
 - **RR artifact handling** — duplicate/non-physiological/ectopic-beat
   detection with a reviewable candidate list before anything is removed.
 - **Signal quality** — a 0–100 composite quality score and gauge from

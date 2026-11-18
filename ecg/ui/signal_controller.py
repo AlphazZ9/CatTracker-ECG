@@ -24,9 +24,10 @@ from ecg.core.detection import (
     fix_polarity, apply_threshold,
     detect_peaks_sg_derivative, detect_peaks_wavelet, detect_peaks_envelope_max,
 )
-from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel
+from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel, NoModelError
+from ecg.ui.ml_examples import NO_MODEL_STATUS
 from ecg.io.loaders import load_mat_signal
-from ecg.io.db import _DB_AVAILABLE, get_notes, get_recording
+from ecg.io.db import _DB_AVAILABLE, get_notes
 from ecg.ui.app_async import recording_changed
 from ecg.ui.session_controller import pending_template_info_text
 from ecg.ui.theme import BLUE, GREEN, LIGHT, MUTED, ORANGE, RED, nk
@@ -281,6 +282,7 @@ class SignalController:
             else:
                 inverted = False
             detector_warning: Optional[str] = None
+            ml_no_model = False
 
             def _ml_prog(pct: int, msg: str) -> None:
                 # Rescale detect_peaks_ml's own 0-100 stage progress into the
@@ -293,8 +295,18 @@ class SignalController:
             try:
                 model = MLPeakModel.load()
                 peaks_ml, proms_ml, t_amp_ml = detect_peaks_ml(sig, fs, model, progress_cb=_ml_prog)
+            except NoModelError as exc:
+                # No trained model yet: the status bar points at the panel's
+                # ML section, which opens and says what to do (the whole
+                # NO_MODEL_MESSAGE does not fit the status bar).
+                log.warning("ML detector: %s", exc)
+                detector_warning = NO_MODEL_STATUS
+                ml_no_model = True
+                peaks_ml = np.array([], dtype=int)
+                proms_ml = np.array([])
+                t_amp_ml = 0.0
             except RuntimeError as exc:
-                # No trained model yet -- a clearly different situation from
+                # Degenerate signal -- a clearly different situation from
                 # "detection failed on this signal", surfaced distinctly so
                 # the user isn't left guessing why 0 peaks were found.
                 log.warning("ML detector: %s", exc)
@@ -317,6 +329,7 @@ class SignalController:
                 "all_proms":       proms_ml if len(proms_ml) else np.ones(len(peaks_ml)),
                 "inverted":        inverted,
                 "detector_warning": detector_warning,
+                "ml_no_model":     ml_no_model,
             }
 
         # ── Auto (NeuroKit2) pipeline — original path ─────────────────────
@@ -857,6 +870,13 @@ class SignalController:
                     text=pending_template_info_text(), text_color=MUTED)
         if detector_warning:
             self.app._set_status(detector_warning + edits_note, ORANGE)
+            if bundle.get("ml_no_model"):
+                expand = getattr(self.app, "_set_ml_expanded", None)
+                if expand is not None:
+                    expand(True)
+                refresh = getattr(self.app, "refresh_ml_status", None)
+                if refresh is not None and getattr(self.app, "lbl_ml_status", None) is not None:
+                    refresh()
         else:
             self.app._set_status(
                 f"Signal ready — {n} peaks  |  {dur:.0f} s  |  {fs} Hz  "
@@ -1110,11 +1130,10 @@ class SignalController:
         # Mirrors recording_notes above: the registry is the authoritative
         # source (also backs the ML training dialog's file list), the
         # session JSON is a fallback restored below when sqlite is unavailable.
-        if _DB_AVAILABLE:
-            _rec = get_recording(path)
-            self.app.session.verified_for_training = bool(_rec.get("verified_for_training")) if _rec else False
-        else:
-            self.app.session.verified_for_training = False
+        # "Is a training example" is the training cache's answer (the
+        # registry's verified_for_training flag mirrors it: older registries
+        # may hold the flag without a cached example).
+        self.app.session.verified_for_training = self.app.session_ctrl.is_training_example(path)
         self.app.session_ctrl.sync_verified_switch()
         self.app.lbl_file.configure(text=os.path.basename(path), text_color=GREEN)  # type: ignore[union-attr]
         self.app._add_recent(path)

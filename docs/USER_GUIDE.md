@@ -126,14 +126,69 @@ signal-quality score, built from how closely each beat matches the
 recording's own beat template; heart rate, RR and HRV (SDNN / RMSSD / pNN6)
 are on **Rhythm & HRV** and **Report**. Under the quality plots,
 **Review artifacts** and **Check agreement** share one row, then
-**Auto-correct artifacts on Analyze**; with Method = ML Detector, the ML
-section (model status, **Verified for training**, **Save for training**,
-**Train model…**). On a short window the panel drops the correlation
-histogram first, then the curve over time (its title then reads "taller
-window needed"); both come back when the window is taller. Excluding, adding,
+**Auto-correct artifacts on Analyze**; at the bottom, the **ML DETECTOR**
+section (see [ML R-peak detector](#ml-r-peak-detector) below). On a short
+window the panel drops the correlation histogram first, then the curve over
+time (its title then reads "taller window needed"); both come back when the
+window is taller. Excluding, adding,
 or undoing a peak clears the HRV numbers immediately (they'd otherwise
 be describing beats that no longer match what's on screen) — click
 **Analyze all** again to recompute them from the corrected peaks.
+
+### ML R-peak detector
+
+The ML Detector learns what an R-peak looks like from your own recordings:
+the **training examples** are recordings whose peaks you detected with
+another method and corrected. Its controls sit at the bottom of the
+**Signal quality** panel, in the **ML DETECTOR** section, whatever the
+Method — the examples are prepared with the other methods, before any model
+exists. The section is collapsed by default (one row, so the quality plots
+keep their room on a small screen): click its header **ML DETECTOR ▸** to
+open it; it stays as you leave it. Its header always shows a short status
+("No model yet · 2 examples", "Model ready · 7 examples", "Retrain
+suggested"); opened, one line under it says what to do next ("Add at least 5
+training examples, then Train.") or how good the model is ("Trained on 6 ·
+98 % correct on held-out data"). Hover that line, or open **Train model…**,
+for the full status, for example *"7 training examples · model trained on 6
+(98 % of candidate peaks classified correctly on held-out data) · retrain
+suggested: 1 new or updated example"*. Hover a control for a one-sentence
+explanation (a small floating tooltip).
+
+1. Open a recording, detect its peaks with another method (SG + Derivative,
+   Wavelet…) and correct them (**Edit Peaks**, **Review artifacts**).
+2. Click **Add recording to training examples**. The corrected peaks are
+   cached right away (no session save needed). The button then reads
+   **✓ In training examples — Remove**; click it to take the recording out
+   (after a confirmation). If you edit the peaks after adding the recording,
+   it offers **↻ Update example (peaks edited)** (with a separate
+   **Remove**). With no peaks yet the button is disabled and says why.
+3. Repeat for at least 5 recordings, from different animals / sessions.
+4. Click **Train model…**. The dialog repeats these steps, lists the training
+   examples (file name, date added, number of peaks, mean rate) with a
+   **Remove** button on each, and trains: at least 2 examples are required
+   (one is held out to check the model), 5 or more are recommended. The
+   result is given in plain words — the share of candidate peaks classified
+   correctly on the recordings kept aside, the share of your R-peaks found,
+   and the share of its peaks that were real — and compared with the previous
+   model.
+5. For new recordings choose **Method = ML Detector**, and check its peaks
+   with **Check agreement**.
+
+Choosing Method = ML Detector before a model is trained opens the section,
+whose status line then says what to do (choose another Method, detect and
+correct the peaks, add the recording, train with 5 or more examples); the
+status bar points at it. **Detect Peaks** then finds no peaks and opens the
+section again, instead of failing silently.
+
+While another operation runs (adding or updating an example, Save Session),
+the example buttons wait and the training dialog's Remove and Train say so:
+that operation could otherwise write back an example you just removed.
+
+**Save Session** does not add or remove training examples. For a recording
+that already is one, it refreshes the example when its peaks were edited
+since it was added, so the example keeps matching the saved peaks. Retrain
+the model after adding, updating or removing examples (the status suggests
+it).
 
 ---
 
@@ -1152,10 +1207,10 @@ data for your strain and experimental conditions.
 - **💾 Save to cohort registry** (Time course > Event-locked) keeps
   each recording's per-event autonomic results in the local registry, for
   the cohort calibration of ks / kp.
-- If you're building a training set for the ML R-peak detector, **Save
-  for training** (Signal quality panel, shown with Method = ML Detector)
-  caches this recording's corrected peaks without needing a full session
-  save.
+- If you're building a training set for the ML R-peak detector, **Add
+  recording to training examples** (Signal quality panel, ML DETECTOR
+  section) caches this recording's corrected peaks without needing a full
+  session save (see [ML R-peak detector](#ml-r-peak-detector)).
 - A saved session also restores the Recording sheet (channel, rate, crop,
   Subject ID), the detection bar (method, threshold, Min / Max RR), the
   Filters popover (including SG options and the raw / filtered view), the

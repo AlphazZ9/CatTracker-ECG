@@ -24,7 +24,8 @@ from ecg.core.detection import (
     active_removed_samples, drop_removed_peaks,
     detect_peaks_wavelet, detect_peaks_sg_derivative, detect_peaks_envelope_max,
 )
-from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel
+from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel, NoModelError
+from ecg.ui.ml_examples import NO_MODEL_STATUS
 from ecg.ui.theme import (
     BLUE, BORDER, BORDER2, GREEN, LIGHT, MUTED, ORANGE, ORANGE_DEEP, RED,
 )
@@ -212,14 +213,19 @@ class DetectionController:
             else:
                 self.app._sg_frame.pack_forget()
 
-        # ML Detector needs a trained model before it can run: its status,
-        # verified flag and training show in the Signal quality panel while
-        # it is the method (absent from test doubles without that panel).
-        show_ml = getattr(self.app, "_show_ml_section", None)
-        if show_ml is not None:
-            if choice == "ML Detector":
-                self.app.refresh_ml_status()
-            show_ml(choice == "ML Detector")
+        # ML Detector needs a trained model before it can run. Its section in
+        # the Signal quality panel is always there (examples are prepared
+        # with the other methods); choosing the method without a model opens
+        # it and says what to do (absent from test doubles without that panel).
+        # Its status line says so while Method = ML Detector (and stops
+        # saying it on another Method): refreshed on every change.
+        if getattr(self.app, "lbl_ml_status", None) is not None:
+            self.app.refresh_ml_status()
+            if choice == "ML Detector" and not MLPeakModel.exists():
+                expand = getattr(self.app, "_set_ml_expanded", None)
+                if expand is not None:
+                    expand(True)
+                self.app._set_status(NO_MODEL_STATUS, ORANGE)
 
     def on_filtering_toggle(self) -> None:
         """Grey out (not hide) FILTER SETTINGS -- notch/band-pass/cleaning
@@ -802,6 +808,8 @@ class DetectionController:
                     peaks, _proms, _t = detect_peaks_ml(sig, fs, model)
                     other_peaks.append(np.asarray(peaks))
                     methods_run.append(f"ML Detector ({len(peaks)} peaks)")
+                except NoModelError:
+                    methods_skipped.append("ML Detector (no model trained yet)")
                 except Exception as exc:
                     methods_skipped.append(f"ML Detector ({exc})")
 
