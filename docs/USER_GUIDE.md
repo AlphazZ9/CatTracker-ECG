@@ -410,6 +410,30 @@ animal (centre = mean RR, half-axes SD2 / SD1) and the group mean ellipse
 thick, for each segment, then HR, SD1 and SD2 before-after (one line per
 animal, the median thick).
 
+*Analysis: All pairs (B vs A, D vs C, F vs E)* runs the same tests for every
+consecutive pair of segments of the table (e.g. Pre / Post 1, 5 and 10 min:
+A–B, C–D, E–F; an odd last segment is not tested, with a note), Holm within
+each pair; tick *Holm across all pairs × metrics* for one correction over
+everything tested. The label of each segment is stored in the table
+("label A"…) and checked: a row whose segment A is not labelled like the
+group's (e.g. "Pre Stim 5min" where the others say "Pre Stim 1min") is a row
+to check — listed under the pair and left out with *Leave out rows to check*
+(kept, but listed, otherwise). The pairs follow the order of the segments
+in each recording (1st with 2nd, 3rd with 4th…), not the column order of the
+table, so a label typed differently in one animal ("Post 1 min" where the
+others say "Post 1") never makes a pair of its own: that animal's segment is
+a row to check of its pair (*segment 2 is 'Post 1 min', not 'Post 1' like
+the group*). A difference of case or spacing only ("pre stim 5min") is the
+same segment: *Add to group table…* puts it under the existing column, and
+older tables are read the same way (with a note). A pair with fewer animals
+than the table has rows is flagged in the status line. Tables written before
+the labels were kept still open; their labels are not checked (a note says
+so). **Statistics…**
+then saves one workbook: a Summary sheet (pair × metric: n, median Δ,
+Wilcoxon p, Holm p) and one sheet per pair with the single-pair report
+(Statistics, About, Rows checked, Paired values); **Figure…** one Mean HR
+panel per pair (one line per animal, the median thick, the pair's p).
+
 Click **▶ Compare**: the table shows every metric for every segment, with the same definitions
 as the main panels. Each segment is also cut into **non-overlapping blocks**
 of **Block (s)** seconds (default 10 s; a block is used when valid RR

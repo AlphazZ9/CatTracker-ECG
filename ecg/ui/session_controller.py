@@ -24,7 +24,9 @@ from ecg.core.analysis import (
     mean_hr_bpm, migrate_legacy_results, rebuild_beat_corr_times,
     recompute_qtc_column, signal_crop_info,
 )
-from ecg.io.loaders import load_mat_signal, _serialise_results, _deserialise_results
+from ecg.io.loaders import (
+    load_mat_signal, read_spike2_markers, _serialise_results, _deserialise_results,
+)
 from ecg.io.session import load_session, save_session, delete_session
 from ecg.io.db import _DB_AVAILABLE, upsert_recording, set_verified
 from ecg.core.ml_detector import (
@@ -262,6 +264,8 @@ class SessionController:
         i0 = int(prep.t_start * fs) if prep.t_start > 0 else 0
         i1 = int(prep.t_end   * fs) if prep.t_end   > 0 else len(sig_raw)
         signal_crop = signal_crop_info(prep.t_start, prep.t_end, len(sig_raw) / fs)
+        # Spike2 markers re-read from the file (not saved in the session).
+        markers = read_spike2_markers(path, prep.t_start, prep.t_end)
         sig_raw = sig_raw[i0:i1]
         n_samples = len(sig_raw)
 
@@ -304,6 +308,7 @@ class SessionController:
             "signal_raw":       sig_raw,
             "signal_bundle":    signal_bundle,
             "signal_crop":      signal_crop,
+            "markers":          markers,
             "filter_params":    fp,
             "thresh_amp":       float(state.get("threshold", float(state.get("thresh_amp", 0.5)))),
             # The slider FRACTION (0.01-2.0, apply_threshold()'s thresh_frac
@@ -363,6 +368,10 @@ class SessionController:
             "event_locked_params": state.get("event_locked_params"),
             # Subject ID, SG window, raw / filtered view (absent in older sessions).
             "recording_fields": state.get("recording_fields"),
+            # The Compare segments rows / reference / view and whether the
+            # comparison was run (absent in older sessions: None, nothing
+            # restored). Its statistics are not saved: re-run on restore.
+            "compare_segments": state.get("compare_segments"),
             # Which filter_params keys the session holds: only those are
             # written back to widgets the restore did not always set.
             "filter_keys":      sorted(state.get("filter_params", {}) or {}),
@@ -425,6 +434,7 @@ class SessionController:
         self.app.signal.filter_text     = sb.get("filter_text")
         self.app.signal.prepare_params  = sb.get("prepare_params")
         self.app.signal.crop            = bundle.get("signal_crop")
+        self.app.signal.markers         = bundle.get("markers") or {}
         self.app.signal.inverted = sb.get("inverted", False)
 
         # ── Restore user-edited state (session values win over freshly
@@ -664,6 +674,14 @@ class SessionController:
             self.app.tabs.set(saved_tab)
         except Exception as e:
             log.debug("Failed to restore tab from session: %s", e)
+        # Compare segments: the setup saved, its comparison re-run on the
+        # restored peaks (now if the tab is open, else when it is opened).
+        restore_cmp = getattr(self.app, "_restore_compare_setup", None)
+        if restore_cmp is not None:
+            try:
+                restore_cmp(bundle.get("compare_segments"))
+            except Exception as exc:
+                log.warning("Compare segments setup not restored: %s", exc, exc_info=True)
         if self.app.analysis.results is not None:
             self.app.after(100, self.app._draw_all_results)
             pass  # interpretation removed
@@ -838,6 +856,17 @@ class SessionController:
         if ectl is not None:
             state["event_locked_params"] = ectl.widget_params()
         state["recording_fields"] = self.recording_fields()
+        # Compare segments: rows, block, reference, view, jitter and the
+        # windows of the comparison shown (re-run on restore, not stored).
+        snap_cmp = getattr(self.app, "_compare_setup_snapshot", None)
+        if snap_cmp is not None:
+            try:
+                cmp_setup = snap_cmp()
+            except Exception as exc:
+                log.debug("compare setup not saved: %s", exc, exc_info=True)
+                cmp_setup = None
+            if cmp_setup is not None:
+                state["compare_segments"] = cmp_setup
         return state
 
     # FilterParams.to_dict's detection_method key -> the Method combobox label.
@@ -1375,6 +1404,14 @@ class SessionController:
                 s["event_locked_params"] = ectl.widget_params()
         except Exception as exc:
             log.debug("snapshot event-locked params failed: %s", exc, exc_info=True)
+        # Compare segments rows typed (and the comparison shown): the
+        # rebuilt tab would start from its defaults otherwise.
+        try:
+            snap_cmp = getattr(self.app, "_compare_setup_snapshot", None)
+            if snap_cmp is not None:
+                s["compare_segments"] = snap_cmp()
+        except Exception as exc:
+            log.debug("snapshot compare setup failed: %s", exc, exc_info=True)
         return s
 
     def restore_ui_state(self, s: dict) -> None:
@@ -1473,3 +1510,8 @@ class SessionController:
                 ectl.apply_params(s["event_locked_params"])
             except Exception as exc:
                 log.debug("restore event-locked params failed: %s", exc, exc_info=True)
+        if s.get("compare_segments") is not None:
+            try:
+                self.app._restore_compare_setup(s["compare_segments"])
+            except Exception as exc:
+                log.debug("restore compare setup failed: %s", exc, exc_info=True)

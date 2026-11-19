@@ -103,3 +103,52 @@ def test_listing_shows_channels_and_markers(fake_smr):
     path, _ = fake_smr
     text = loaders.list_channels(path)
     assert "Spike2" in text and "Recording" in text and "STIM" in text
+
+
+class _FakeEventReader(_FakeReader):
+    """A Spike2RawIO with marker channels (times in ticks of 1 µs)."""
+
+    def __init__(self, chans, events):
+        super().__init__(chans)
+        self.events = events
+        self.header["event_channels"] = np.array(
+            [(n, str(i)) for i, n in enumerate(events)], dtype=[("name", "U16"), ("id", "U8")])
+
+    def get_event_timestamps(self, _b, _s, i):
+        ts = np.asarray(list(self.events.values())[i], dtype=np.int64)
+        return ts, None, np.array([""] * len(ts))
+
+    def rescale_event_timestamp(self, ts, dtype, event_channel_index):
+        return ts.astype(dtype) * 1e-6
+
+
+def test_markers_are_read_per_channel_in_the_signal_time_base(monkeypatch, tmp_path):
+    reader = _FakeEventReader(
+        [("Recording", 1000.0, _ecg(1000.0, 30))],
+        {"STIM SUB": [1_808_180_000, 1_808_200_000], "STIM COL": [],
+         "Keyboard": [198_000_000, 396_000_000]})
+    monkeypatch.setattr(loaders, "_spike2_reader", lambda _p: reader)
+    path = tmp_path / "rec.smr"
+    path.write_bytes(b"\x05\x00(C) CED 87")
+    loaders._MARKER_CACHE.clear()
+    m = loaders.read_spike2_markers(str(path))
+    assert m == {"STIM SUB": [1808.18, 1808.2], "STIM COL": [],
+                 "Keyboard": [198.0, 396.0]}
+    # A load-time crop 300 .. 2000 s: times from its start, the rest dropped.
+    m = loaders.read_spike2_markers(str(path), 300.0, 2000.0)
+    assert m["Keyboard"] == [96.0] and m["STIM SUB"] == [1508.18, 1508.2]
+    # The signal loader's return is unchanged.
+    assert len(loaders.load_mat_signal(str(path), "Recording")) == 4
+
+
+def test_no_markers_for_matlab_or_unreadable_files(monkeypatch, tmp_path):
+    mat = tmp_path / "rec.mat"
+    mat.write_bytes(b"MATLAB 5.0 MAT-file" + bytes(100))
+    assert loaders.read_spike2_markers(str(mat)) == {}
+    assert loaders.read_spike2_markers(None) == {}
+
+    def _boom(_p):
+        raise OSError("unreadable")
+    monkeypatch.setattr(loaders, "_spike2_reader", _boom)
+    loaders._MARKER_CACHE.clear()
+    assert loaders.read_spike2_markers(str(tmp_path / "x.smr")) == {}

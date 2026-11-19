@@ -20,7 +20,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 import numpy as np
 
@@ -173,6 +173,81 @@ def delete_template(name: str, path: "Path | str" = TEMPLATES_PATH) -> "list[Seg
     Path(path).write_text(json.dumps({"templates": [_to_json(t) for t in user]},
                                      ensure_ascii=False, indent=1), encoding="utf-8")
     return load_templates(path)
+
+
+# ── user configurations relative to the stimulus ─────────────────────────
+# A configuration of the Compare segments tab is a user template whose
+# windows are all placed from the stimulus time ("start" ref, offsets in s):
+# saved once from the rows of one animal (stim at 1803 s), applied to
+# another whose stimulus is elsewhere (rows at its stim + the offsets).
+
+def user_templates(path: "Path | str" = TEMPLATES_PATH) -> "list[SegmentTemplate]":
+    """The user's saved templates (configurations), built-ins left out."""
+    return [t for t in load_templates(path) if not t.builtin]
+
+
+def config_from_rows(name: str, rows: "Iterable[tuple[str, float, float]]",
+                     stim: float) -> SegmentTemplate:
+    """A configuration from rows (label, from, to) in recording time, for a
+    stimulus at *stim* s: every window an offset from it (lo - stim,
+    hi - stim), in the order of the rows."""
+    specs = tuple(_w(str(label).strip(), "start", round(float(lo) - stim, 3),
+                     round(float(hi) - stim, 3)) for label, lo, hi in rows)
+    return SegmentTemplate(str(name).strip(), specs)
+
+
+def apply_config(template: SegmentTemplate, stim: float,
+                 duration: float) -> "list[ResolvedWindow]":
+    """The windows of *template* at a stimulus at *stim* s, clamped to the
+    recording [0, *duration*] (clamped=True for a window cut or outside)."""
+    return resolve(template, float(stim), None, float(duration))
+
+
+def default_stim(rows: "Iterable[tuple[str, Any, Any]]") -> "Optional[float]":
+    """The start of the first row labelled Post... (the stimulus time a
+    configuration is most likely saved against), None when there is none."""
+    for label, lo, _hi in rows:
+        if str(label).strip().lower().startswith("post"):
+            try:
+                v = float(lo)
+            except (TypeError, ValueError):
+                return None
+            return v if math.isfinite(v) else None
+    return None
+
+
+def marker_onsets(times: "Sequence[float]", gap_s: float = 1.0
+                  ) -> "list[tuple[float, int]]":
+    """(onset, number of markers) of each train of *times*: markers closer
+    than *gap_s* to the previous one belong to the same train (a 50 Hz
+    stimulation train is one stimulus, at its first pulse)."""
+    out: "list[tuple[float, int]]" = []
+    last = None
+    for t in sorted(float(x) for x in times):
+        if last is not None and t - last < gap_s and out:
+            out[-1] = (out[-1][0], out[-1][1] + 1)
+        else:
+            out.append((t, 1))
+        last = t
+    return out
+
+
+def marker_choices(markers: "dict[str, Sequence[float]]", max_n: int = 50,
+                   gap_s: float = 1.0) -> "list[tuple[str, float]]":
+    """The entries of the "Stim marker" picker: (text, time) grouped by
+    channel, the first onsets of each (marker_onsets), *max_n* at most in
+    all (shared between the channels that have markers)."""
+    chans = [(name, marker_onsets(ts, gap_s)) for name, ts in (markers or {}).items()]
+    chans = [(n, o) for n, o in chans if o]
+    if not chans:
+        return []
+    per = max(1, max_n // len(chans))
+    out = []
+    for name, onsets in chans:
+        for t, n in onsets[:per]:
+            extra = f"  ×{n}" if n > 1 else ""    # a train of n pulses
+            out.append((f"{name}  {t:.1f} s{extra}", t))
+    return out[:max_n]
 
 
 # ── quality of each segment ───────────────────────────────────────────────

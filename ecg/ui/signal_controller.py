@@ -26,7 +26,7 @@ from ecg.core.detection import (
 )
 from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel, NoModelError
 from ecg.ui.ml_examples import NO_MODEL_STATUS
-from ecg.io.loaders import load_mat_signal
+from ecg.io.loaders import load_mat_signal, read_spike2_markers
 from ecg.io.db import _DB_AVAILABLE, get_notes
 from ecg.ui.app_async import recording_changed
 from ecg.ui.session_controller import pending_template_info_text
@@ -430,6 +430,8 @@ class SignalController:
         # relative to its start (disclosed as the "Signal crop" row).
         signal_crop = signal_crop_info(t0, t1, len(sig) / fs if fs else None)
         sig = sig[i0:i1]
+        # Spike2 marker channels in this signal's time base ({} otherwise).
+        markers = read_spike2_markers(self.app.signal.filepath, t0, t1)
 
         if sig.std() < 1e-10:
             raise ValueError("Signal is flat — wrong channel.")
@@ -451,6 +453,7 @@ class SignalController:
             "signal_raw_norm": signal_raw_norm,
             "dur_s":        dur_s,
             "signal_crop":  signal_crop,
+            "markers":      markers,
             "detected_ch":  detected_ch,
             "detected_fs":  detected_fs,
             "requested_ch": params["channel"],
@@ -487,6 +490,7 @@ class SignalController:
         self.app.signal.filter_text      = None
         self.app.signal.prepare_params   = None
         self.app.signal.crop             = bundle.get("signal_crop")
+        self.app.signal.markers          = bundle.get("markers") or {}
         self.app.signal.inverted  = False
         self.app.signal.raw_only_loaded  = True
         self.app.ui.nav_pos          = 0.0
@@ -639,6 +643,8 @@ class SignalController:
         # relative to its start (disclosed as the "Signal crop" row).
         signal_crop = signal_crop_info(t0, t1, len(sig) / fs if fs else None)
         sig = sig[i0:i1]
+        # Spike2 marker channels in this signal's time base ({} otherwise).
+        markers = read_spike2_markers(self.app.signal.filepath, t0, t1)
 
         if sig.std() < 1e-10:
             raise ValueError("Signal is flat — wrong channel.")
@@ -671,6 +677,7 @@ class SignalController:
             "signal_raw":      sig,
             "dur_s":           dur_s,
             "signal_crop":     signal_crop,
+            "markers":         markers,
             "detected_ch":     detected_ch,
             "detected_fs":     detected_fs,
             "requested_ch":    params["channel"],
@@ -738,6 +745,7 @@ class SignalController:
         self.app.signal.filter_text     = bundle.get("filter_text")
         self.app.signal.prepare_params  = bundle.get("prepare_params")
         self.app.signal.crop            = bundle.get("signal_crop")
+        self.app.signal.markers         = bundle.get("markers") or {}
         self.app.signal.inverted = bundle.get("inverted", False)
         self.app.signal.raw_only_loaded = False
         # recommended_min_rr_ms supprimé — ent_minrr non modifié automatiquement.
@@ -1210,12 +1218,20 @@ class SignalController:
         self.app.ui.nav_pos              = 0.0
         self.app.signal.inverted      = False
         self.app.signal.channel       = None
+        self.app.signal.markers       = {}
         self.app.signal.raw_only_loaded      = False
         self.app.ui.thr_debounce_id      = None
         self.app.analysis.annotations          = []
         self.app.analysis.pacing_periods       = []
         self.app.ui.tsv_store            = {}
         self.app.analysis.wave_template        = None
+        # The Compare segments setup belongs to the previous recording: a
+        # setup waiting to be applied (restored session, tab not opened
+        # since) and the old tab's rows are never carried to this one. A
+        # session of the new file restores its own after the load.
+        self.app._compare_pending_setup = None
+        self.app._compare_setup_getter  = None
+        self.app._compare_setup_key     = None
         self.app.session.dirty        = False
         self.app.session.verified_for_training = False
         self.app._generation           = getattr(self.app, "_generation", 0) + 1  # invalidate async workers

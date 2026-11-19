@@ -125,9 +125,11 @@ def test_no_event_or_template_card(tab):
     assert not any(t.strip() in ("Template:", "Artefact margin (s):", "Window (s):")
                    for t in texts)
     buttons = [str(w.cget("text")) for w in _walk(frame) if isinstance(w, ctk.CTkButton)]
-    assert not any(b in ("Apply", "Save as template…", "Delete") for b in buttons)
-    # Only the segment rows' entries and the block length are left.
-    assert all(e.cget("placeholder_text") in ("Label", None, "") for e in _entries(frame))
+    assert "Save as template…" not in buttons
+    # The segment rows' entries, the block length and the Stim at entry of
+    # the configurations row (relative to the stimulus, not to an event).
+    assert all(e.cget("placeholder_text") in ("Label", None, "", "e.g. 1803")
+               for e in _entries(frame))
     # Typed windows over the Detection view's position: no event, no template.
     # This drives the real _run_compare / _on_done path, real quality_flags
     # included (a wrong keyword there used to break every run).

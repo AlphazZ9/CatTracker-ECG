@@ -489,6 +489,68 @@ def load_spike2_signal(
     return np.ascontiguousarray(sig, dtype=np.float64), pick["name"], keys, float(fs_out)
 
 
+# Marker times of the last Spike2 files read: {(path, mtime, size): markers}
+# (read_spike2_markers runs on every load / re-detection of the same file).
+_MARKER_CACHE: "dict[tuple, dict[str, list[float]]]" = {}
+MAX_MARKERS_PER_CHANNEL = 20000
+
+
+def _spike2_markers_raw(reader) -> "dict[str, list[float]]":
+    """{channel name: [times, s from the start of the file]} of every
+    event / marker channel of a parsed Spike2RawIO (channels with no event
+    included, empty)."""
+    out: "dict[str, list[float]]" = {}
+    for i, ev in enumerate(reader.header["event_channels"]):
+        name = str(ev["name"])
+        try:
+            ts, _dur, _lab = reader.get_event_timestamps(0, 0, i)
+            t = reader.rescale_event_timestamp(ts, dtype="float64", event_channel_index=i)
+            t = np.asarray(t, dtype=np.float64)
+            t = np.sort(t[np.isfinite(t)])[:MAX_MARKERS_PER_CHANNEL]
+        except Exception as exc:
+            log.debug("Spike2 marker channel %r not read: %s", name, exc)
+            continue
+        key, k = name, 2
+        while key in out:                    # two channels of the same name
+            key, k = f"{name} ({k})", k + 1
+        out[key] = [float(x) for x in t]
+    return out
+
+
+def read_spike2_markers(filepath: "Optional[str]", t_start: float = 0.0,
+                        t_end: float = 0.0) -> "dict[str, list[float]]":
+    """The marker / event channels of a Spike2 .smr file: {channel: [times
+    in s]}, in the time base of the loaded signal -- the load-time crop
+    *t_start* .. *t_end* (file s, 0 = none) subtracted and the markers
+    outside it dropped (resampling the waveform does not move them).
+    {} for any other file, or when the markers cannot be read (the signal
+    loads anyway: load_mat_signal is unchanged)."""
+    if not filepath or not is_spike2_file(str(filepath)):
+        return {}
+    try:
+        st = Path(filepath).stat()
+        key = (str(filepath), st.st_mtime, st.st_size)
+    except OSError:
+        key = None
+    raw = _MARKER_CACHE.get(key) if key is not None else None
+    if raw is None:
+        try:
+            raw = _spike2_markers_raw(_spike2_reader(str(filepath)))
+        except Exception as exc:
+            log.info("Spike2 markers not read from %s: %s", filepath, exc)
+            return {}
+        if key is not None:
+            _MARKER_CACHE.clear()            # one file at a time
+            _MARKER_CACHE[key] = raw
+    t0 = float(t_start) if t_start and t_start > 0 else 0.0
+    t1 = float(t_end) if t_end and t_end > 0 else None
+    out = {}
+    for name, times in raw.items():
+        out[name] = [round(t - t0, 6) for t in times
+                     if t >= t0 and (t1 is None or t <= t1)]
+    return out
+
+
 def list_spike2_channels(filepath: str) -> str:
     try:
         reader = _spike2_reader(filepath)

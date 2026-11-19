@@ -15,7 +15,7 @@ import os
 from datetime import datetime
 from typing import Any, Optional, TYPE_CHECKING
 import customtkinter as ctk  # type: ignore[import-untyped]
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
@@ -38,17 +38,28 @@ from ecg.ui.theme import button_style, disabled_style, toggle_style
 from ecg.ui.poincare_figure import draw_poincare_set
 from ecg.io.group_table import append_group_row, group_row
 from ecg.io.group_stats import (
-    DEFAULT_METRICS_NOTE, check_rows, paired_stats, read_group_table, segment_tags,
-    smallest_wilcoxon_p,
-    write_group_report,
+    DEFAULT_METRICS_NOTE, HOLM_ALL, all_pairs_stats, check_rows,
+    paired_stats, read_group_table, segment_tags, smallest_wilcoxon_p,
+    write_all_pairs_report, write_group_report,
 )
-from ecg.ui.group_figure import draw_group_figure
+from ecg.ui.group_figure import MAIN_METRIC, draw_all_pairs_figure, draw_group_figure
+
+# Group card analysis modes.
+MODE_ONE = "One pair (A vs B)"
+MODE_ALL = "All pairs (B vs A, D vs C, F vs E)"
+
+
+def all_pairs_figsize(n_pairs: int) -> "tuple[float, float]":
+    """The saved all-pairs figure: about 3.3 in per pair panel."""
+    return (max(5.0, 3.3 * max(1, n_pairs)), 4.6)
 from ecg.io.segment_export import (
     ComparisonResult, comparison_tsv, write_csv, write_pzfx, write_xlsx,
 )
+from ecg.core import segment_plan
 from ecg.core.segment_plan import (
-    MAX_SEGMENTS, PAIRS, PAIRWISE, comparators_caption, comparators_reference,
-    comparison_pairs, quality_flags, reference_comparators, unique_tags,
+    MAX_SEGMENTS, PAIRS, PAIRWISE, apply_config, comparators_caption, comparators_reference,
+    comparison_pairs, config_from_rows, default_stim, delete_template, marker_choices,
+    quality_flags, reference_comparators, save_template, unique_tags, user_templates,
 )
 from ecg.ui.plots import CanvasSlot, style_axes
 from ecg.ui.tab_keys import TAB_COMPARE
@@ -61,6 +72,121 @@ if TYPE_CHECKING:
     from ecg.ui.app import ECGApp
 
 log = logging.getLogger("ecg")
+
+_VIEWS = ("rr", "poincare")
+
+
+_NO_CONFIG = "(no configuration saved)"
+_MARKER_PROMPT = "Stim marker ▾"
+
+
+def _templates_path() -> "Any":
+    """Where the configurations are kept (segment_plan.TEMPLATES_PATH, read
+    at call time so a test can point it elsewhere)."""
+    return segment_plan.TEMPLATES_PATH
+
+
+def ask_config_name(parent: "Any", initial: str = "") -> "Optional[str]":
+    """The name of a configuration to save (None: cancelled)."""
+    return simpledialog.askstring("Save configuration",
+                                  "Name of this configuration:",
+                                  initialvalue=initial, parent=parent)
+
+
+def _recording_key(app: "Any") -> "Optional[tuple]":
+    """The recording a Compare segments setup belongs to (its file and
+    channel, and the filtered signal array, not its peaks: rows typed stay
+    with the recording when its peaks are edited). The file and channel
+    are part of it because CPython reuses a freed array's id: two files of
+    the same length could otherwise share a key. None without a signal."""
+    sig = getattr(app, "_signal_flt", None)
+    if sig is None:
+        return None
+    signal = getattr(app, "signal", None)
+    path = getattr(signal, "filepath", None) or ""
+    channel = getattr(signal, "channel", None)
+    return (str(path), str(channel), id(sig), len(sig))
+
+
+def _fmt_s(v: "Any") -> str:
+    """A time in seconds for an entry or a message: millisecond precision,
+    trailing zeros dropped ("1808.183", "2000", "0.5"). Unlike ``:g`` it
+    keeps every digit before the point, so 12345.678 stays 12345.678."""
+    s = f"{float(v):.3f}".rstrip("0").rstrip(".")
+    return "0" if s in ("", "-0") else s
+
+
+def _finite(v: "Any") -> "Optional[float]":
+    if isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if np.isfinite(f) else None
+
+
+def _cell(v: "Any") -> "Any":
+    """A From / To cell: its number, else the text typed ("" for none)."""
+    f = _finite(v)
+    return f if f is not None else ("" if v is None else str(v))
+
+
+def normalize_compare_setup(raw: "Any") -> "Optional[dict]":
+    """A Compare segments setup as saved in a session (or snapshot before a
+    UI rebuild), checked: {"rows": [[label, from, to], ...] (1 to
+    MAX_SEGMENTS, from / to a number or, typed but not valid, the text),
+    "block_s" (text), "ref" (a segment index, PAIRWISE or PAIRS), "view"
+    ("rr" / "poincare"), "jitter" (bool), "run": the windows and block
+    length of the comparison shown ({"rows": [[label, lo, hi]...],
+    "block_s"}) or None, "ran": whether there is one, "stim": the Stim at
+    entry, text, "" when empty}. None when *raw* is not one (an older session: the
+    tab keeps its defaults)."""
+    if not isinstance(raw, dict):
+        return None
+    rows = []
+    for r in raw.get("rows") or []:
+        if isinstance(r, (list, tuple)) and len(r) == 3:
+            rows.append(["" if r[0] is None else str(r[0]), _cell(r[1]), _cell(r[2])])
+    rows = rows[:MAX_SEGMENTS]
+    ref = raw.get("ref", 0)
+    if isinstance(ref, bool) or not (
+            (isinstance(ref, int) and 0 <= ref < MAX_SEGMENTS) or ref in (PAIRWISE, PAIRS)):
+        ref = 0
+    view = raw.get("view") if raw.get("view") in _VIEWS else "rr"
+    blk = raw.get("block_s")
+    if isinstance(blk, str):
+        block_s = blk
+    elif _finite(blk) is not None:
+        block_s = _fmt_s(_finite(blk))
+    else:
+        block_s = f"{MouseECG.SEGMENT_BLOCK_S:g}"
+    run = None
+    rr = raw.get("run")
+    if isinstance(rr, dict):
+        r_rows: "list[list]" = []
+        for r in rr.get("rows") or []:
+            lo = _finite(r[1]) if isinstance(r, (list, tuple)) and len(r) == 3 else None
+            hi = _finite(r[2]) if lo is not None else None
+            if lo is None or hi is None or lo >= hi:
+                r_rows = []
+                break
+            r_rows.append([str(r[0]), lo, hi])
+        r_blk = _finite(rr.get("block_s"))
+        if r_rows and len(r_rows) <= MAX_SEGMENTS and r_blk is not None and r_blk > 0:
+            run = {"rows": r_rows, "block_s": r_blk}
+    if not rows and run is None:
+        return None
+    if not rows:
+        rows = [list(r) for r in run["rows"]]
+    st_raw = raw.get("stim")
+    if isinstance(st_raw, str):
+        stim = st_raw.strip()
+    else:
+        stim = _fmt_s(_finite(st_raw)) if _finite(st_raw) is not None else ""
+    return {"rows": rows, "block_s": block_s, "ref": ref, "view": view,
+            "jitter": bool(raw.get("jitter", True)), "ran": run is not None, "run": run,
+            "stim": stim}
 
 # Plot card of the comparison (CTk units): the tachogram view's height, and
 # the height of one row of Poincaré panels -- every panel keeps that size
@@ -212,6 +338,22 @@ class CompareSegmentsMixin:
         sig = self._compare_signature()
         if sig is not None and sig == self._compare_built_for:
             return
+        # The rows typed for this recording survive a rebuild for its new
+        # peaks (not the comparison: it rests on the old ones), unless a
+        # session / UI rebuild left a setup to apply instead.
+        key = _recording_key(self)
+        getter = getattr(self, "_compare_setup_getter", None)
+        old_key = getattr(self, "_compare_setup_key", None)
+        self._compare_setup_getter = None
+        pend = getattr(self, "_compare_pending_setup", None)
+        if (getter is not None and sig is not None and key is not None and old_key == key
+                and (pend is None or pend[0] != key)):
+            try:
+                carried = getter()
+                carried["run"] = None
+                self._compare_pending_setup = (key, carried)
+            except Exception as exc:        # widgets already destroyed (UI rebuild)
+                log.debug("compare rows not carried over: %s", exc)
         for child in holder.winfo_children():
             child.destroy()
         self._compare_built_for = sig
@@ -222,6 +364,44 @@ class CompareSegmentsMixin:
         else:
             self._build_compare_segments(holder)
         self._build_group_card(holder)
+
+    def _compare_setup_snapshot(self: ECGApp) -> "Optional[dict]":
+        """The Compare segments setup of the current recording, for Save
+        Session and a UI rebuild: the one waiting to be applied (a restored
+        session, the tab not built since), else the tab's as typed. None
+        when the tab holds nothing for this recording."""
+        key = _recording_key(self)
+        if key is None:
+            return None
+        pend = getattr(self, "_compare_pending_setup", None)
+        if pend is not None and pend[0] == key:
+            return normalize_compare_setup(pend[1])
+        getter = getattr(self, "_compare_setup_getter", None)
+        if getter is not None and getattr(self, "_compare_setup_key", None) == key:
+            try:
+                return normalize_compare_setup(getter())
+            except Exception as exc:
+                log.debug("compare setup snapshot failed: %s", exc, exc_info=True)
+        return None
+
+    def _restore_compare_setup(self: ECGApp, raw: "Any") -> None:
+        """Apply a saved setup (rows, block, reference, view, jitter) to the
+        tab, re-running the comparison it showed: now when the tab is open,
+        else when it is next built for this recording. *raw* None or invalid
+        (an older session): nothing is restored."""
+        setup = normalize_compare_setup(raw)
+        key = _recording_key(self)
+        if setup is None or key is None:
+            self._compare_pending_setup = None
+            return
+        self._compare_pending_setup = (key, setup)
+        self._compare_built_for = None          # rebuilt for it, open or next opened
+        try:
+            is_open = self.tabs.get() == TAB_COMPARE
+        except Exception:
+            is_open = False
+        if is_open:
+            self._refresh_compare_tab()
 
     def _build_compare_segments(self: ECGApp, win) -> None:
         """The comparison inside *win* (the tab's frame): 1 to MAX_SEGMENTS
@@ -265,12 +445,202 @@ class CompareSegmentsMixin:
         _h, seg_card = _section("Segments", f"Δ % against the first unless chosen in Results"
                                             f"  ·  {sub}  ·  "
                                             f"{dur:.1f} s  ·  {len(rp)} peaks", first=True)
+        # ── Configurations relative to the stimulus (one row) ─────────────
+        # Saved from the rows of one animal as offsets from its stim time,
+        # applied to another at its own stim time (segment_plan).
+        cfg_bar = ctk.CTkFrame(seg_card, fg_color="transparent")
+        cfg_bar.pack(fill="x", pady=(0, SPACE_S))
+        ctk.CTkLabel(cfg_bar, text="Stim at (s):", font=FONT_SMALL,
+                     text_color=MUTED).pack(side="left")
+        ent_stim = ctk.CTkEntry(cfg_bar, width=80, placeholder_text="e.g. 1803",
+                                **input_style())
+        ent_stim.pack(side="left", padx=(4, SPACE_S))
+        _markers = getattr(getattr(self, "signal", None), "markers", None) or {}
+        _marker_opts: "dict[str, float]" = dict(marker_choices(_markers))
+        cb_marker = None
+        if _marker_opts:
+            cb_marker = ctk.CTkComboBox(cfg_bar, width=240, state="readonly",
+                                        values=list(_marker_opts), **combo_style())
+            cb_marker.set(_MARKER_PROMPT)
+            cb_marker.pack(side="left", padx=(0, SPACE_M))
+            tip(cb_marker, "Markers of this Spike2 file (the first pulse of each train, ×n: its "
+                           "number of pulses): "
+                           "choosing one puts its time in Stim at.")
+        ctk.CTkLabel(cfg_bar, text="Configuration:", font=FONT_SMALL,
+                     text_color=MUTED).pack(side="left", padx=(SPACE_S, 4))
+        cb_cfg = ctk.CTkComboBox(cfg_bar, width=220, state="readonly", values=[_NO_CONFIG],
+                                 **combo_style())
+        cb_cfg.pack(side="left", padx=(0, SPACE_S))
+        btn_cfg_apply = ctk.CTkButton(cfg_bar, text="Apply", width=0,
+                                      **button_style("secondary"))
+        btn_cfg_apply.pack(side="left", padx=(0, SPACE_XS))
+        btn_cfg_save = ctk.CTkButton(cfg_bar, text="Save as…", width=0,
+                                     **button_style("secondary"))
+        btn_cfg_save.pack(side="left", padx=(0, SPACE_XS))
+        btn_cfg_del = ctk.CTkButton(cfg_bar, text="Delete", width=0,
+                                    **button_style("secondary"))
+        btn_cfg_del.pack(side="left")
+        lbl_cfg = ctk.CTkLabel(cfg_bar, text="", font=FONT_SMALL, text_color=MUTED,
+                               anchor="w", justify="left")
+        lbl_cfg.pack(side="left", fill="x", expand=True, padx=(SPACE_M, 0))
+        tip(ent_stim, "Time of the stimulus in this recording (s). A configuration is "
+                      "saved as offsets from it and applied at the stim time typed here.")
+        tip(cb_cfg, "Your saved configurations: the windows as offsets from the stimulus.")
+        tip(btn_cfg_apply, "Fill the rows with the chosen configuration, placed at Stim at.")
+        tip(btn_cfg_save, "Save the rows below as a configuration, relative to Stim at.")
+        tip(btn_cfg_del, "Delete the chosen configuration.")
+        _cfgs: "dict[str, Any]" = {}
+
+        def _cfg_say(text: str, color: "Any" = None) -> None:
+            lbl_cfg.configure(text=text, text_color=MUTED if color is None else color)
+
+        def _cfg_refresh(select: "Optional[str]" = None) -> None:
+            """The saved configurations in the selector (*select* chosen,
+            else the one shown when it still exists, else the first)."""
+            try:
+                temps = user_templates(_templates_path())
+            except Exception as exc:
+                log.warning("configurations not read: %s", exc)
+                temps = []
+            _cfgs.clear()
+            _cfgs.update((t.name, t) for t in temps)
+            names = list(_cfgs) or [_NO_CONFIG]
+            cb_cfg.configure(values=names)
+            shown = cb_cfg.get()
+            cur = select if select in _cfgs else (shown if shown in _cfgs else names[0])
+            cb_cfg.set(cur)
+            for b in (btn_cfg_apply, btn_cfg_del):
+                b.configure(state="normal" if _cfgs else "disabled")
+
+        def _stim_value() -> "Optional[float]":
+            """Stim at as a number (None: empty); ValueError when not one."""
+            text = ent_stim.get().strip().replace(",", ".")
+            if not text:
+                return None
+            v = float(text)
+            if not np.isfinite(v):
+                raise ValueError(text)
+            return v
+
+        def _set_stim(v: float) -> None:
+            ent_stim.delete(0, "end")
+            ent_stim.insert(0, _fmt_s(v))
+
+        def _on_marker_pick(choice: str) -> None:
+            t = _marker_opts.get(choice)
+            if t is None:
+                return
+            _set_stim(t)
+            _cfg_say(f"Stim at {_fmt_s(t)} s ({choice.split('  ')[0]})")
+
+        if cb_marker is not None:
+            cb_marker.configure(command=_on_marker_pick)
+
+        def _cfg_apply() -> None:
+            t = _cfgs.get(cb_cfg.get())
+            if t is None:
+                _cfg_say("⚠  Choose a saved configuration", RED)
+                return
+            try:
+                stim = _stim_value()
+            except ValueError:
+                _cfg_say("⚠  Stim at: not a number", RED)
+                return
+            if stim is None:
+                _cfg_say("⚠  Type the stim time in Stim at (s) first", RED)
+                return
+            res_w = apply_config(t, stim, dur)
+            _set_rows([(w.label, w.lo, w.hi) for w in res_w])
+            out = [w.label for w in res_w if w.clamped and not w.hi > w.lo]
+            cut = [w.label for w in res_w if w.clamped and w.hi > w.lo]
+            if out or cut:
+                parts = []
+                if out:
+                    parts.append("outside: " + ", ".join(out))
+                if cut:
+                    parts.append("cut to fit: " + ", ".join(cut))
+                _cfg_say(f"⚠  '{t.name}' at {_fmt_s(stim)} s, recording {dur:.1f} s — "
+                         + "; ".join(parts), RED if out else ORANGE)
+            else:
+                _cfg_say(f"✓  '{t.name}' applied at {_fmt_s(stim)} s", GREEN)
+
+        def _cfg_save() -> None:
+            try:
+                rows = _read_rows()
+            except ValueError as exc:
+                _cfg_say(f"⚠  {exc}", RED)
+                return
+            bad = [i + 1 for i, (_l, lo, hi) in enumerate(rows) if not hi > lo]
+            if bad:
+                _cfg_say(f"⚠  Segment {bad[0]}: start ≥ end", RED)
+                return
+            try:
+                stim = _stim_value()
+            except ValueError:
+                _cfg_say("⚠  Stim at: not a number", RED)
+                return
+            if stim is None:
+                guess = default_stim(rows)
+                if guess is None:
+                    _cfg_say("⚠  Type the stim time in Stim at (s): the windows are "
+                             "saved relative to it", RED)
+                    return
+                post = next(lb for lb, _lo, _hi in rows
+                            if lb.strip().lower().startswith("post"))
+                if not messagebox.askyesno(
+                        "Stim time",
+                        f"Stim at is empty. Use {_fmt_s(guess)} s, the start of '{post}', "
+                        "as the stim time?", parent=win):
+                    _cfg_say("Type the stim time in Stim at (s), then Save as… again")
+                    return
+                stim = guess
+                _set_stim(stim)
+            shown = cb_cfg.get()
+            name = (ask_config_name(win, shown if shown in _cfgs else "") or "").strip()
+            if not name:
+                return
+            if name in _cfgs and not messagebox.askyesno(
+                    "Save configuration", f"Replace the configuration '{name}'?",
+                    parent=win):
+                return
+            try:
+                save_template(config_from_rows(name, rows, stim), _templates_path())
+            except (ValueError, OSError) as exc:
+                _cfg_say(f"⚠  Not saved: {exc}", RED)
+                return
+            _cfg_refresh(select=name)
+            _cfg_say(f"✓  '{name}' saved: {len(rows)} window(s) relative to the stim "
+                     f"({_fmt_s(stim)} s here)", GREEN)
+
+        def _cfg_delete() -> None:
+            name = cb_cfg.get()
+            if name not in _cfgs:
+                return
+            if not messagebox.askyesno("Delete configuration",
+                                       f"Delete the configuration '{name}'? "
+                                       "This cannot be undone.", parent=win):
+                return
+            try:
+                delete_template(name, _templates_path())
+            except OSError as exc:
+                _cfg_say(f"⚠  Not deleted: {exc}", RED)
+                return
+            _cfg_refresh()
+            _cfg_say(f"'{name}' deleted")
+
+        btn_cfg_apply.configure(command=_cfg_apply)
+        btn_cfg_save.configure(command=_cfg_save)
+        btn_cfg_del.configure(command=_cfg_delete)
+        _cfg_refresh()
+
         rows_frame = ctk.CTkFrame(seg_card, fg_color="transparent")
         rows_frame.pack(fill="x")
         seg_rows: "list[dict]" = []
         # "ref": what the Δ % are against, kept across runs -- a segment index,
         # PAIRWISE or PAIRS (segment_plan.reference_comparators).
-        _state: "dict[str, Any]" = {"segs": None, "cmps": None, "flags": None, "ref": 0}
+        # "run": the windows and block length of the comparison shown.
+        _state: "dict[str, Any]" = {"segs": None, "cmps": None, "flags": None, "ref": 0,
+                                    "run": None, "inflight": None}
 
         def _color(i: int) -> str:
             # Segment colours in order, the first the reference; read at call
@@ -299,10 +669,11 @@ class CompareSegmentsMixin:
         def _remove_row(r: dict) -> None:
             if len(seg_rows) <= 1:
                 return
-            vals = [(x["lbl"].get(), x["lo"].get(), x["hi"].get()) for x in seg_rows if x is not r]
-            _set_rows([(lbl, float(lo or 0), float(hi or 0)) for lbl, lo, hi in vals])
+            # As typed: an entry not (yet) a number stays as it is.
+            _set_rows([(x["lbl"].get(), x["lo"].get(), x["hi"].get())
+                       for x in seg_rows if x is not r])
 
-        def _add_row(label: str, lo: float, hi: float) -> None:
+        def _add_row(label: str, lo: "Any", hi: "Any") -> None:
             i = len(seg_rows)
             col = _color(i)
             f = ctk.CTkFrame(rows_frame, fg_color="transparent")
@@ -313,11 +684,11 @@ class CompareSegmentsMixin:
             lbl_e.pack(side="left", padx=(SPACE_XS, SPACE_M))
             ctk.CTkLabel(f, text="From (s):", font=FONT_SMALL, text_color=MUTED).pack(side="left")
             lo_e = ctk.CTkEntry(f, width=80, **input_style())
-            lo_e.insert(0, f"{lo:g}")
+            lo_e.insert(0, _fmt_s(lo) if isinstance(lo, (int, float)) else str(lo))
             lo_e.pack(side="left", padx=(4, SPACE_M))
             ctk.CTkLabel(f, text="To (s):", font=FONT_SMALL, text_color=MUTED).pack(side="left")
             hi_e = ctk.CTkEntry(f, width=80, **input_style())
-            hi_e.insert(0, f"{hi:g}")
+            hi_e.insert(0, _fmt_s(hi) if isinstance(hi, (int, float)) else str(hi))
             hi_e.pack(side="left", padx=(4, SPACE_S))
             len_l = ctk.CTkLabel(f, text="", font=FONT_SMALL, text_color=MUTED, width=70, anchor="w")
             len_l.pack(side="left")
@@ -333,7 +704,7 @@ class CompareSegmentsMixin:
             def _upd_len(_e=None) -> None:
                 try:
                     d = float(hi_e.get()) - float(lo_e.get())
-                    len_l.configure(text=f"= {d:g} s" if d > 0 else "⚠ end ≤ start",
+                    len_l.configure(text=f"= {_fmt_s(d)} s" if d > 0 else "⚠ end ≤ start",
                                     text_color=MUTED if d > 0 else RED)
                 except ValueError:
                     len_l.configure(text="")
@@ -445,7 +816,8 @@ class CompareSegmentsMixin:
                 plot_box.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(SPACE_M, 0))
         view_bar = ctk.CTkFrame(plot_box, fg_color="transparent")
         view_bar.pack(fill="x", pady=(0, SPACE_S))
-        _view = {"mode": "rr"}
+        # ncols: the Poincaré columns last drawn (None: no Poincaré drawn).
+        _view: "dict[str, Any]" = {"mode": "rr", "ncols": None}
         _view_btns: "dict[str, ctk.CTkButton]" = {}
 
         def _set_view(mode: str) -> None:
@@ -510,8 +882,16 @@ class CompareSegmentsMixin:
         def _fit_plot_card(_event: "Any" = None) -> None:
             """The card's height for the view shown: one row for the
             tachograms (one fixed-size row per pair in Pairs mode), one
-            fixed-size row per row of Poincaré panels."""
+            fixed-size row per row of Poincaré panels. On a resize (an
+            event) that changes how many Poincaré columns the card holds --
+            also when a freshly built card reaches its real width after a
+            draw (session restore, UI rebuild) -- the panels are redrawn."""
             segs = _state["segs"]
+            if (_event is not None and _view["mode"] == "poincare" and segs
+                    and _view["ncols"] is not None
+                    and _poincare_grid(len(segs))[0] != _view["ncols"]):
+                _redraw_plot()
+                return
             if _view["mode"] == "poincare" and segs:
                 rows = _poincare_grid(len(segs))[1]
                 # + the gap the layout puts between two rows of panels.
@@ -646,10 +1026,12 @@ class CompareSegmentsMixin:
             colors = [_color(k) for k in range(len(segs))]
             _fit_plot_card()
             if _view["mode"] == "poincare":
+                ncols = _poincare_grid(len(segs))[0]
+                _view["ncols"] = ncols
                 plot_slot.update(lambda fig: draw_poincare_set(
-                    fig, segs, colors, jitter=self._compare_jitter,
-                    ncols=_poincare_grid(len(segs))[0]))
+                    fig, segs, colors, jitter=self._compare_jitter, ncols=ncols))
             else:
+                _view["ncols"] = None
                 plot_slot.update(_rr_drawer(segs, colors, _cur_comps(segs)))
 
         def _show_flags(flags: "list[list[str]]") -> None:
@@ -733,19 +1115,26 @@ class CompareSegmentsMixin:
 
         cb_ref.configure(command=_on_ref_pick)
 
-        def _run_compare() -> None:
-            try:
-                windows = _read_rows()
-            except ValueError as exc:
-                lbl_status.configure(text=f"⚠  {exc}", text_color=RED); return
-            try:
-                block_s = float(ent_block.get())
-                if not (np.isfinite(block_s) and block_s > 0):
-                    raise ValueError("block length")
-            except ValueError:
-                lbl_status.configure(text="⚠  Block length must be a positive number of seconds",
-                                     text_color=RED)
-                return
+        def _run_compare(run: "Optional[dict]" = None) -> None:
+            """Compare the rows typed, or the windows and block length of
+            *run* (a restored setup's, the rows shown being those typed)."""
+            if run is not None:
+                windows = [(str(lbl), float(lo), float(hi)) for lbl, lo, hi in run["rows"]]
+                block_s = float(run["block_s"])
+            else:
+                try:
+                    windows = _read_rows()
+                except ValueError as exc:
+                    lbl_status.configure(text=f"⚠  {exc}", text_color=RED); return
+                try:
+                    block_s = float(ent_block.get())
+                    if not (np.isfinite(block_s) and block_s > 0):
+                        raise ValueError("block length")
+                except ValueError:
+                    lbl_status.configure(
+                        text="⚠  Block length must be a positive number of seconds",
+                        text_color=RED)
+                    return
             for i, (_lbl, lo, hi) in enumerate(windows):
                 if lo >= hi:
                     lbl_status.configure(text=f"⚠  Segment {i + 1}: start ≥ end", text_color=RED)
@@ -755,6 +1144,11 @@ class CompareSegmentsMixin:
                         text=f"⚠  Segment {i + 1}: outside recording ({dur:.1f} s)",
                         text_color=RED)
                     return
+            # The windows being computed: a Save Session or a UI rebuild
+            # before the result lands keeps (and re-runs) this comparison.
+            _state["inflight"] = {"rows": [[str(l), float(lo), float(hi)]
+                                           for l, lo, hi in windows],
+                                  "block_s": float(block_s)}
             run_btn.configure(state="disabled")
             progress_bar.pack(side="right", padx=(SPACE_M, 0))
             progress_bar.start()
@@ -777,60 +1171,70 @@ class CompareSegmentsMixin:
                     log.exception("Segment comparison worker failed")
                     win.after(0, lambda e=exc: _on_worker_error(e))
                     return
-                win.after(0, lambda: _on_done(segs))
-
-            def _on_worker_error(exc: Exception) -> None:
-                run_btn.configure(state="normal")
-                progress_bar.stop(); progress_bar.pack_forget()
-                lbl_status.configure(text=f"⚠  Comparison failed — {exc}", text_color=RED)
-
-            def _on_done(segs: "list[dict]") -> None:
-                run_btn.configure(state="normal")
-                progress_bar.stop(); progress_bar.pack_forget()
-                # The reference as it is NOW (the selector stays usable while
-                # the worker runs), kept when it still exists for these
-                # segments; then the cheap block-mean comparison of each
-                # segment with its comparator (descriptive, no beat-level
-                # test: beats are not replicates) and the quality flags.
-                _fill_ref_choices(segs)
-                comps = reference_comparators(len(segs), _state["ref"])
-                try:
-                    cmps = _pair_cmps(segs, comps)
-                    flags = quality_flags(segs, None, comparators=comps)
-                except Exception as exc:
-                    log.exception("Segment comparison failed")
-                    _on_worker_error(exc)
-                    return
-                _state.update(segs=segs, cmps=cmps, flags=flags)
-                # Kept for the exports here and the main ones (Report tab),
-                # with the recording state it rests on (_current_comparison).
-                self.analysis.last_comparison = ComparisonResult(
-                    segs=segs, metrics=list(_METRICS), cmps=cmps, flags=flags,
-                    template="", subject=_subject(),
-                    filepath=self.signal.filepath or "", event=None,
-                    artefact_margin_s=None, block_s=block_s,
-                    lf_band=tuple(lf), hf_band=tuple(hf), comparators=list(comps))
-                # The state the tab -- hence rp / sig of this run -- was
-                # built for, not the app's now (peaks may have been edited
-                # on another tab while the worker ran).
-                self.analysis.last_comparison_basis = built_for
-                for b in _export_btns:
-                    self._set_btn_enabled(b, True, "secondary")
-                errs = [s["error"] for s in segs if s.get("error")]
-                n_flag = sum(1 for f in flags if f)
-                if errs:
-                    lbl_status.configure(text=f"⚠  {errs[0]}", text_color=RED)
-                else:
-                    withheld = [s["label"] for s in segs if s.get("freq_withheld_reason")]
-                    lbl_status.configure(
-                        text="✓  " + "  ·  ".join(f"{s['label']}: {s['n_beats']} beats" for s in segs)
-                             + (f"  ·  LF/HF withheld for {', '.join(withheld)}" if withheld else "")
-                             + (f"  ·  ⚠ {n_flag} segment(s) to check" if n_flag else ""),
-                        text_color=ORANGE if (withheld or n_flag) else GREEN)
-                _render_comparison()
-                _redraw_plot()
+                win.after(0, lambda: _on_done(segs, windows, block_s))
 
             _th.Thread(target=_worker, daemon=True).start()
+
+        def _on_worker_error(exc: Exception) -> None:
+            if not run_btn.winfo_exists():      # the tab was rebuilt meanwhile
+                return
+            _state["inflight"] = None
+            run_btn.configure(state="normal")
+            progress_bar.stop(); progress_bar.pack_forget()
+            lbl_status.configure(text=f"⚠  Comparison failed — {exc}", text_color=RED)
+
+        def _on_done(segs: "list[dict]", windows: "list[tuple[str, float, float]]",
+                     block_s: float) -> None:
+            if not run_btn.winfo_exists():      # the tab was rebuilt meanwhile
+                return
+            _state["inflight"] = None
+            run_btn.configure(state="normal")
+            progress_bar.stop(); progress_bar.pack_forget()
+            # The reference as it is NOW (the selector stays usable while
+            # the worker runs), kept when it still exists for these
+            # segments; then the cheap block-mean comparison of each
+            # segment with its comparator (descriptive, no beat-level
+            # test: beats are not replicates) and the quality flags.
+            _fill_ref_choices(segs)
+            comps = reference_comparators(len(segs), _state["ref"])
+            try:
+                cmps = _pair_cmps(segs, comps)
+                flags = quality_flags(segs, None, comparators=comps)
+            except Exception as exc:
+                log.exception("Segment comparison failed")
+                _on_worker_error(exc)
+                return
+            run_spec = {"rows": [[str(lbl), float(lo), float(hi)] for lbl, lo, hi in windows],
+                        "block_s": float(block_s)}
+            _state.update(segs=segs, cmps=cmps, flags=flags, run=run_spec)
+            # Kept for the exports here and the main ones (Report tab),
+            # with the recording state it rests on (_current_comparison).
+            self.analysis.last_comparison = ComparisonResult(
+                segs=segs, metrics=list(_METRICS), cmps=cmps, flags=flags,
+                template="", subject=_subject(),
+                filepath=self.signal.filepath or "", event=None,
+                artefact_margin_s=None, block_s=block_s,
+                lf_band=tuple(lf), hf_band=tuple(hf), comparators=list(comps))
+            # The state the tab -- hence rp / sig of this run -- was
+            # built for, not the app's now (peaks may have been edited
+            # on another tab while the worker ran).
+            self.analysis.last_comparison_basis = built_for
+            self.analysis.last_comparison_run = run_spec
+            for b in _export_btns:
+                self._set_btn_enabled(b, True, "secondary")
+            errs = [s["error"] for s in segs if s.get("error")]
+            n_flag = sum(1 for f in flags if f)
+            if errs:
+                lbl_status.configure(text=f"⚠  {errs[0]}", text_color=RED)
+            else:
+                withheld = [s["label"] for s in segs if s.get("freq_withheld_reason")]
+                lbl_status.configure(
+                    text="✓  " + "  ·  ".join(f"{s['label']}: {s['n_beats']} beats" for s in segs)
+                         + (f"  ·  LF/HF withheld for {', '.join(withheld)}" if withheld else "")
+                         + (f"  ·  ⚠ {n_flag} segment(s) to check" if n_flag else ""),
+                    text_color=ORANGE if (withheld or n_flag) else GREEN)
+            _render_comparison()
+            _redraw_plot()
 
         # ── Export: Excel / CSV, Prism, clipboard, figures, group table ───
         def _result() -> "Optional[ComparisonResult]":
@@ -1014,6 +1418,59 @@ class CompareSegmentsMixin:
                      font=FONT_HINT, text_color=MUTED, anchor="w").pack(
             fill="x", pady=(SPACE_XS, 0))
 
+        # ── Setup kept by Save Session and a UI rebuild ───────────────────
+        def _num(text: str) -> "Any":
+            f = _finite(text.strip()) if isinstance(text, str) else None
+            return f if f is not None else text
+
+        def _get_setup() -> dict:
+            """The rows as typed, the block length, the reference, the view
+            and the jitter flag, with the windows of the comparison shown
+            (or being computed: it is re-run on restore)."""
+            run = _state["inflight"] or _state["run"]
+            return {"rows": [[r["lbl"].get(), _num(r["lo"].get()), _num(r["hi"].get())]
+                             for r in seg_rows],
+                    "block_s": ent_block.get(), "ref": _state["ref"],
+                    "stim": ent_stim.get().strip(),
+                    "view": _view["mode"], "jitter": bool(self._compare_jitter),
+                    "ran": run is not None,
+                    "run": dict(run) if run is not None else None}
+
+        def _apply_setup(setup: dict) -> None:
+            """A normalised setup (normalize_compare_setup) into the tab; its
+            comparison shown again: the kept result when it is of these
+            peaks and windows (a UI rebuild), else re-run on them."""
+            _set_rows([tuple(r) for r in setup["rows"]])
+            ent_stim.delete(0, "end")
+            if setup.get("stim"):
+                ent_stim.insert(0, setup["stim"])
+            ent_block.delete(0, "end")
+            ent_block.insert(0, setup["block_s"])
+            _state["ref"] = setup["ref"]
+            self._compare_jitter = bool(setup["jitter"])
+            chk_jitter.select() if self._compare_jitter else chk_jitter.deselect()
+            _set_view(setup["view"])
+            run = setup.get("run")
+            if run is None:
+                return
+            res_ = self.analysis.last_comparison
+            if (res_ is not None and getattr(res_, "segs", None)
+                    and getattr(self.analysis, "last_comparison_basis", None) == built_for
+                    and getattr(self.analysis, "last_comparison_run", None) == run):
+                _on_done(res_.segs, [tuple(r) for r in run["rows"]], run["block_s"])
+            else:
+                _run_compare(run)
+
+        self._compare_setup_getter = _get_setup
+        self._compare_setup_key = _recording_key(self)
+        pend = getattr(self, "_compare_pending_setup", None)
+        if pend is not None and pend[0] == self._compare_setup_key:
+            self._compare_pending_setup = None
+            try:
+                _apply_setup(pend[1])
+            except Exception as exc:
+                log.warning("Compare segments setup not restored: %s", exc, exc_info=True)
+
     # ── Group: the group table across animals ────────────────────────────
 
     def _build_group_card(self: ECGApp, win) -> None:
@@ -1025,6 +1482,8 @@ class CompareSegmentsMixin:
         if st is None:
             st = self._group_state = {"path": "", "a": "", "b": "", "exclude": True,
                                       "name_a": "", "name_b": ""}
+        st.setdefault("mode", MODE_ONE)
+        st.setdefault("holm_all", False)
         tip = self._bind_hover_tip
         card = ctk.CTkFrame(win, **card_style())
         card.pack(fill="x", padx=PAGE_PAD_X, pady=(0, PAGE_GAP))
@@ -1040,6 +1499,28 @@ class CompareSegmentsMixin:
         row1 = ctk.CTkFrame(body, fg_color="transparent")
         row1.pack(fill="x", pady=(0, SPACE_S))
         lbl_file = ctk.CTkLabel(row1, text="", font=FONT_SMALL, text_color=MUTED, anchor="w")
+        row_mode = ctk.CTkFrame(body, fg_color="transparent")
+        row_mode.pack(fill="x", pady=(0, SPACE_S))
+        ctk.CTkLabel(row_mode, text="Analysis:", font=FONT_SMALL,
+                     text_color=MUTED).pack(side="left")
+        cb_mode = ctk.CTkComboBox(row_mode, width=290, values=[MODE_ONE, MODE_ALL],
+                                  state="readonly", **combo_style())
+        cb_mode.set(st["mode"] if st["mode"] in (MODE_ONE, MODE_ALL) else MODE_ONE)
+        cb_mode.pack(side="left", padx=(4, SPACE_M))
+        tip(cb_mode, "One pair: the two segments chosen below. All pairs: every consecutive pair "
+                     "of segments of the table (B vs A, D vs C, F vs E: Pre / Post 1, 5, 10 min), "
+                     "the same paired tests for each, Holm within each pair; an odd last "
+                     "segment is left out. A row whose segment label is not the group's is a "
+                     "row to check.")
+        chk_holm_all = ctk.CTkCheckBox(row_mode, text="Holm across all pairs × metrics",
+                                       font=FONT_SMALL, text_color=MUTED, fg_color=BLUE,
+                                       checkmark_color="white", border_color=BORDER2, width=16)
+        if st["holm_all"]:
+            chk_holm_all.select()
+        chk_holm_all.pack(side="left", padx=(0, SPACE_M))
+        tip(chk_holm_all, "All pairs only. Off: Holm within each pair, over its metrics (as for "
+                          "one pair). On: also one Holm correction over every pair × metric "
+                          "tested, when the pairs answer one question together.")
         row2 = ctk.CTkFrame(body, fg_color="transparent")
         row2.pack(fill="x", pady=(0, SPACE_S))
         ctk.CTkLabel(row2, text="Compare:", font=FONT_SMALL, text_color=MUTED).pack(side="left")
@@ -1077,6 +1558,17 @@ class CompareSegmentsMixin:
         run_btn = ctk.CTkButton(row2, text="▶  Run", width=0, **button_style("primary"))
         run_btn.pack(side="left")
 
+        def _sync_mode(_v: object = None) -> None:
+            """All pairs: no A / B to choose, the Holm-across option instead."""
+            all_pairs = cb_mode.get() == MODE_ALL
+            for w in (cb_a, cb_b, ent_na, ent_nb):
+                w.configure(state="disabled" if all_pairs else
+                            ("readonly" if isinstance(w, ctk.CTkComboBox) else "normal"))
+            chk_holm_all.configure(state="normal" if all_pairs else "disabled")
+
+        cb_mode.configure(command=_sync_mode)
+        _sync_mode()
+
         lbl_status = ctk.CTkLabel(body, text="", font=FONT_SMALL, text_color=MUTED,
                                   anchor="w", justify="left")
         lbl_status.pack(fill="x")
@@ -1097,7 +1589,7 @@ class CompareSegmentsMixin:
         slot = CanvasSlot(plot_card, 14, 4.3, toolbar=False,
                           placeholder="Open a group table and click Run")
         res_state: "dict[str, Any]" = {"df": None, "used": None, "stats": None, "checks": None,
-                                      "left_out": []}
+                                      "left_out": [], "mode": MODE_ONE, "all": None}
 
         def _load(path: str, quiet: bool = False) -> bool:
             def fail(msg: str) -> bool:
@@ -1121,8 +1613,11 @@ class CompareSegmentsMixin:
             filled = sorted(tags, key=lambda t: -int(df[f"start (s) {t}"].notna().sum()))
             a = st["a"] if st["a"] in tags else filled[0]
             b = st["b"] if st["b"] in tags and st["b"] != a else next(t for t in filled if t != a)
+            for cb in (cb_a, cb_b):          # a disabled entry ignores set()
+                cb.configure(state="readonly")
             cb_a.set(a)
             cb_b.set(b)
+            _sync_mode()
             lbl_file.configure(text=f"{os.path.basename(path)}  ·  {len(df)} rows  ·  "
                                     f"segments: {', '.join(tags)}")
             return True
@@ -1185,6 +1680,112 @@ class CompareSegmentsMixin:
                 txt.pack(fill="x", pady=(SPACE_S, SPACE_M))
                 plot_card.pack(fill="x")
 
+        def _fmt(v: object, p: bool = False) -> str:
+            try:
+                v = float(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return "—"
+            if not np.isfinite(v):
+                return "—"
+            if p:
+                return f"{v:.3f}" if v >= 0.001 else f"{v:.1e}"
+            return f"{v:.3g}" if abs(v) < 1000 else f"{v:.0f}"
+
+        def _show_all(res) -> None:
+            """All pairs: one line per pair × metric, then the notes and the
+            rows to check of each pair."""
+            txt.configure(state="normal")
+            txt.delete("1.0", "end")
+            x = int(250 * _scale)
+            stops = [x, "left"]
+            x += int(250 * _scale)
+            widths = (60, 100, 90, 90) + ((120,) if res.holm_across else ())
+            for w in widths:
+                x += int(w * _scale)
+                stops += [x, "right"]
+            txt.configure(tabs=stops)
+            heads = ["Pair", "Metric", "n (≠0)", "Median Δ", "Wilcoxon p", "p (Holm)"]
+            if res.holm_across:
+                heads.append("Holm all pairs")
+            txt.insert("end", "\t".join(heads), "head")
+            line_no = 0
+            for k, pr in enumerate(res.pairs, 1):
+                if not len(pr.stats):
+                    txt.insert("end", f"\n{k}. {pr.title}\tno animal with both segments",
+                               "muted")
+                    continue
+                for j, r in pr.stats.reset_index(drop=True).iterrows():
+                    line = ("stripe",) if line_no % 2 == 0 else ()
+                    line_no += 1
+                    txt.insert("end", "\n" + (f"{k}. {pr.title}" if j == 0 else ""), line)
+                    txt.insert("end", "\t" + str(r["Metric"]), line)
+                    for v in (f"{int(r['n'])} ({int(r['n tested (Δ ≠ 0)'])})",
+                              _fmt(r["Median Δ (B − A)"]), _fmt(r["Wilcoxon p"], True)):
+                        txt.insert("end", "\t" + v, line)
+                    hcols = ["Wilcoxon p (Holm)"] + ([HOLM_ALL] if res.holm_across else [])
+                    for hc in hcols:
+                        ph = float(r.get(hc, float("nan")))
+                        # Significance shown on the strictest correction asked.
+                        sig = np.isfinite(ph) and ph < 0.05 and hc == hcols[-1]
+                        txt.insert("end", "\t" + _fmt(ph, True), ("sig",) + line if sig else line)
+            notes = list(res.notes) + [f"{pr.title}: {n}" for pr in res.pairs for n in pr.notes]
+            if notes:
+                txt.insert("end", "\n\nNotes", "head")
+                for n in notes:
+                    txt.insert("end", "\n" + n, "muted")
+            for k, pr in enumerate(res.pairs, 1):
+                bad = [(c, kp) for c, kp in zip(pr.checks, pr.keep) if not c.ok]
+                if not bad:
+                    continue
+                txt.insert("end", f"\n\nRows to check — {k}. {pr.title}", "head")
+                for c, kp in bad:
+                    missing = any(p.startswith("no segment") for p in c.problems)
+                    tag = "kept" if kp else ("not in this pair" if missing else "left out")
+                    txt.insert("end", f"\n[{tag}] {c.subject or '—'} · {c.file}: "
+                               + "; ".join(c.problems), "muted" if missing else "warn")
+            n_lines = int(txt.index("end-1c").split(".")[0])
+            txt.configure(height=n_lines, state="disabled")
+            if not txt.winfo_manager():
+                txt.pack(fill="x", pady=(SPACE_S, SPACE_M))
+                plot_card.pack(fill="x")
+
+        def _run_all(df) -> None:
+            st.update(exclude=bool(chk_ex.get()), all=bool(chk_all.get()))
+            # Pairs follow each row's own order of segments (segment_layout),
+            # not the column order: a typo in one animal's label is a row to
+            # check, never a pair of its own.
+            res = all_pairs_stats(df, "all" if st["all"] else None, exclude=st["exclude"],
+                                  holm_across=st["holm_all"])
+            if not res.pairs:
+                lbl_status.configure(text="⚠  the table holds fewer than two segments",
+                                     text_color=RED)
+                return
+            res_state.update(mode=MODE_ALL, all=res, used=None, stats=None)
+            left = sorted({s for pr in res.pairs for s in pr.left_out})
+            ns = [len(pr.used) for pr in res.pairs]
+            # Animals of the table missing from a pair (no such segment).
+            short = [k for k, n in enumerate(ns, 1) if n < len(df)]
+            n_test = max((int(pr.stats["n tested (Δ ≠ 0)"].max()) for pr in res.pairs
+                          if len(pr.stats)), default=0)
+            weak = not (smallest_wilcoxon_p(n_test) < 0.05) if n_test else True
+            msg = (f"{len(res.pairs)} pair{'s' if len(res.pairs) != 1 else ''} tested "
+                   f"({', '.join(f'{pr.b} vs {pr.a}' for pr in res.pairs)})  ·  animals per pair: "
+                   f"{', '.join(map(str, ns))}"
+                   + (f"  ·  segment {res.odd} has no partner: not tested" if res.odd else "")
+                   + (f"  ·  left out (rows to check): {', '.join(left)}" if left else "")
+                   + (f"  ·  fewer animals than rows ({len(df)}) in pair "
+                      f"{', '.join(map(str, short))}" if short else "")
+                   + ("  ·  Holm across all pairs × metrics" if res.holm_across else "")
+                   + ("  ·  no metric can reach p < 0.05 with these n" if weak else ""))
+            warn = bool(left or short or weak or res.odd or res.notes
+                        or any(pr.notes for pr in res.pairs))
+            lbl_status.configure(text=("⚠  " if warn else "✓  ") + msg,
+                                 text_color=ORANGE if warn else GREEN)
+            _show_all(res)
+            slot.update(lambda fig: draw_all_pairs_figure(fig, res))
+            for btn_ in (btn_xlsx, btn_fig):
+                self._set_btn_enabled(btn_, True, "secondary")
+
         def _run() -> None:
             # Read again: rows added since (Add to group table…) count.
             if st["path"] and os.path.exists(st["path"]):
@@ -1197,6 +1798,10 @@ class CompareSegmentsMixin:
             df = res_state["df"]
             if df is None:
                 _open()
+                return
+            st.update(mode=cb_mode.get(), holm_all=bool(chk_holm_all.get()))
+            if st["mode"] == MODE_ALL:
+                _run_all(df)
                 return
             a, b = cb_a.get(), cb_b.get()
             if not a or not b or a == b:
@@ -1212,7 +1817,8 @@ class CompareSegmentsMixin:
             used = df.loc[keep].reset_index(drop=True)
             left_out = [c.subject or c.file for c, k in zip(checks, keep) if not k]
             stats = paired_stats(used, a, b, "all" if st["all"] else None)
-            res_state.update(used=used, stats=stats, checks=checks, left_out=left_out, keep=keep)
+            res_state.update(used=used, stats=stats, checks=checks, left_out=left_out, keep=keep,
+                             mode=MODE_ONE, all=None)
             n = len(used)
             n_test = int(stats["n tested (Δ ≠ 0)"].max()) if len(stats) else 0
             names = (st["name_a"] or a, st["name_b"] or b)
@@ -1232,7 +1838,49 @@ class CompareSegmentsMixin:
 
         run_btn.configure(command=_run)
 
+        def _save_all_stats() -> None:
+            res = res_state["all"]
+            path = filedialog.asksaveasfilename(
+                parent=win, title="Save the group statistics (all pairs)",
+                defaultextension=".xlsx", initialfile="group_stats_all_pairs.xlsx",
+                initialdir=os.path.dirname(st["path"]) or None,
+                filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
+            if not path:
+                return
+            try:
+                write_all_pairs_report(path, res,
+                                       note=f"group table: {os.path.basename(st['path'])}")
+            except Exception as exc:
+                messagebox.showerror("Group statistics", str(exc), parent=win)
+                return
+            lbl_status.configure(text=f"✓  statistics → {os.path.basename(path)}", text_color=GREEN)
+
+        def _save_all_figure() -> None:
+            res = res_state["all"]
+            path = filedialog.asksaveasfilename(
+                parent=win, title="Save the group figure (all pairs)",
+                defaultextension=".png", initialfile="group_all_pairs_HR.png",
+                initialdir=os.path.dirname(st["path"]) or None,
+                filetypes=[("PNG image (300 dpi)", "*.png"), ("PDF (vector)", "*.pdf"),
+                           ("SVG (vector)", "*.svg"), ("All files", "*.*")])
+            if not path:
+                return
+            fig = Figure(figsize=all_pairs_figsize(len(res.pairs)), dpi=300, facecolor="white",
+                         layout="constrained")
+            try:
+                draw_all_pairs_figure(fig, res, MAIN_METRIC)
+                fig.savefig(path, dpi=300, facecolor="white", bbox_inches="tight")
+            except Exception as exc:
+                messagebox.showerror("Group figure", str(exc), parent=win)
+                return
+            finally:
+                plt.close(fig)
+            lbl_status.configure(text=f"✓  figure → {os.path.basename(path)}", text_color=GREEN)
+
         def _save_stats() -> None:
+            if res_state.get("mode") == MODE_ALL and res_state.get("all") is not None:
+                _save_all_stats()
+                return
             if res_state["stats"] is None:
                 return
             a, b = st["a"], st["b"]
@@ -1253,6 +1901,9 @@ class CompareSegmentsMixin:
             lbl_status.configure(text=f"✓  statistics → {os.path.basename(path)}", text_color=GREEN)
 
         def _save_figure() -> None:
+            if res_state.get("mode") == MODE_ALL and res_state.get("all") is not None:
+                _save_all_figure()
+                return
             used = res_state["used"]
             if used is None:
                 return
@@ -1281,12 +1932,14 @@ class CompareSegmentsMixin:
                                 state="disabled", **{**button_style("secondary"), **disabled_style()})
         btn_fig.pack(side="right", padx=(SPACE_S, 0))
         tip(btn_fig, "The group Poincaré (one ellipse per animal, the group mean thick) and "
-                     "the before-after panels: 300 dpi PNG or vector PDF / SVG")
+                     "the before-after panels; all pairs: one Mean HR panel per pair (one line "
+                     "per animal, the pair's p). 300 dpi PNG or vector PDF / SVG")
         btn_xlsx = ctk.CTkButton(hdr, text="📊  Statistics…", width=0, command=_save_stats,
                                  state="disabled", **{**button_style("secondary"), **disabled_style()})
         btn_xlsx.pack(side="right", padx=(SPACE_S, 0))
         tip(btn_xlsx, "Excel: the paired tests (Wilcoxon, paired t, Holm), the rows checked "
-                      "and the paired values of every metric, one row per animal")
+                      "and the paired values of every metric, one row per animal; all pairs: "
+                      "a Summary sheet (pairs × metrics) and one sheet per pair")
         ctk.CTkLabel(body, text=(
             "One row per animal: the test unit is the animal. Use the same windows and labels for "
             "every animal. Holm corrects the Wilcoxon p over the metrics listed; pick your primary "

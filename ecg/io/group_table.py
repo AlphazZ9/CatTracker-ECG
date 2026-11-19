@@ -38,9 +38,10 @@ def group_row(subject: str, filepath: "Optional[str]", segs: "Sequence[dict]",
               metrics: "Iterable[tuple[str, str, str]]", template: str = "",
               flags: "Optional[Sequence[Sequence[str]]]" = None) -> dict:
     """The row of one recording: subject, file, template, then per segment
-    (tagged by its label) start, end, valid RR %, Poincaré pairs and QC
-    flags, then each (key, label, unit) of *metrics*."""
-    tags = unique_tags([s.get("label", "") for s in segs])
+    (tagged by its label) start, end, valid RR %, Poincaré pairs, QC flags
+    and the label as typed, then each (key, label, unit) of *metrics*."""
+    # Inner spacing does not make another segment ("Pre  5min" is "Pre 5min").
+    tags = [" ".join(t.split()) for t in unique_tags([s.get("label", "") for s in segs])]
     row = {"subject": subject or "", "file": os.path.basename(filepath or ""),
            "template": template or ""}
     for i, (tag, seg) in enumerate(zip(tags, segs)):
@@ -51,11 +52,52 @@ def group_row(subject: str, filepath: "Optional[str]", segs: "Sequence[dict]",
         row[f"Poincaré pairs (n) {tag}"] = q["n_pairs"]
         row[f"abrupt RR jumps (n) {tag}"] = q["n_jumps"]
         row[f"QC {tag}"] = "; ".join(flags[i]) if flags and i < len(flags) and flags[i] else "ok"
+        # The label as typed: the tag is A, B, C... when labels repeat, so
+        # this is what tells whether segment A is the same window in every
+        # animal (ecg.io.group_stats.label_problems).
+        row[f"label {tag}"] = str(seg.get("label", "") or "").strip()
+        # Its place in the recording (1, 2, 3...): all pairs mode pairs the
+        # segments of each row by this, not by the column order of the table.
+        row[f"index {tag}"] = i + 1
     for key, label, unit in metrics:
         name = f"{label} ({unit})" if unit else label
         for tag, seg in zip(tags, segs):
             row[f"{name} {tag}"] = _num(seg.get(key))
     return row
+
+
+def _norm(tag: str) -> str:
+    return " ".join(str(tag).split()).casefold()
+
+
+def _row_tags(keys: "Iterable[str]") -> "list[str]":
+    return [k[len("start (s) "):] for k in keys if str(k).startswith("start (s) ")]
+
+
+def match_existing_tags(row: dict, columns: "Sequence[str]") -> dict:
+    """*row* with each segment tag new to the table renamed to the table's
+    tag that differs from it only by case or spacing ("pre stim 5min" goes
+    under "Pre Stim 5min"), so that a typing slip does not make a column of
+    its own. The label as typed is kept in "label <tag>"."""
+    existing = _row_tags(columns)
+    mine = _row_tags(row)
+    rename = {}
+    for t in mine:
+        if t in existing:
+            continue
+        same = [e for e in existing if _norm(e) == _norm(t) and e not in mine
+                and e not in rename.values()]
+        if len(same) == 1:
+            rename[t] = same[0]
+    if not rename:
+        return row
+    out = {}
+    for k, v in row.items():
+        owner = max((t for t in mine if str(k).endswith(f" {t}")), key=len, default=None)
+        if owner in rename:
+            k = k[: -len(owner)] + rename[owner]
+        out[k] = v
+    return out
 
 
 def append_group_row(path: str, row: dict) -> "tuple[int, bool]":
@@ -72,6 +114,7 @@ def append_group_row(path: str, row: dict) -> "tuple[int, bool]":
         same = ((df["subject"].astype(str) == str(row["subject"]))
                 & (df["file"].astype(str) == str(row["file"])))
         replaced = bool(same.any())
+        row = match_existing_tags(row, list(df.columns))
         df = df.loc[~same]
         df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     else:

@@ -64,6 +64,11 @@ class SignalState:
     # different channel drops the recording's wave template
     # (SignalController.on_preview_done). None = nothing loaded yet.
     channel: Optional[str] = None
+    # Marker / event channels of a Spike2 file ({channel: [times s]}, in the
+    # loaded signal's time base: loaders.read_spike2_markers), read at load
+    # time; {} for MATLAB files and before a load. The Compare segments
+    # "Stim marker" picker lists them.
+    markers: "dict[str, list[float]]" = field(default_factory=dict)
 
 
 @dataclass
@@ -185,6 +190,10 @@ class AnalysisState:
     # _compare_signature): the main exports include it only while current.
     last_comparison: Any = None
     last_comparison_basis: Optional[tuple] = None
+    # The windows and block length of that run ({"rows": [[label, lo, hi]...],
+    # "block_s"}): a theme rebuild re-shows the kept result instead of
+    # recomputing it when they match (compare_segments._apply_setup).
+    last_comparison_run: Optional[dict] = None
     # Cumulative artifact report (merge_artifact_reports): "removed_samples"
     # / "removed_types" are every removal still in effect (re-applied after
     # a session restore re-detects the peaks), "break_samples" the subset
