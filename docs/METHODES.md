@@ -53,10 +53,14 @@ expérimentales de votre étude.
   propres enregistrements validés), avec édition manuelle, undo/redo et
   curseur de seuil interactif.
 - **Détecteur de pics R par ML** — entraîne une forêt aléatoire à partir des
-  enregistrements marqués « Vérifié pour entraînement » ; la fenêtre
-  d'entraînement affiche l'exactitude, le F1, la précision et le rappel sur
-  un jeu de test isolé, ainsi qu'une matrice de confusion pour la
-  classification binaire pic / non-pic.
+  *exemples d'entraînement* : des enregistrements dont les pics ont été
+  détectés avec une autre méthode, corrigés, puis ajoutés avec **Add recording
+  to training examples** (chacun met en cache ses caractéristiques de
+  candidats, ses étiquettes et ses pics corrigés). Il faut au moins 2
+  exemples, 5 ou plus sont recommandés ; le modèle est vérifié sur des
+  enregistrements entiers mis de côté (exactitude sur les pics candidats,
+  rappel, précision, F1 et matrice de confusion), puis réentraîné sur tous
+  les exemples.
 - **Gestion des artefacts RR** — détection des doublons, intervalles
   non-physiologiques et battements ectopiques, avec une liste de candidats
   à valider avant toute suppression.

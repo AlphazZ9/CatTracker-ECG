@@ -84,6 +84,10 @@ for _opt in ("h5py", "pzfx"):
         hiddenimports.append(_opt)
 if _have("h5py"):
     hiddenimports += ["h5py.defs", "h5py.utils", "h5py.h5ac", "h5py._proxy"]
+if _have("neo"):
+    # Spike2 (.smr) loading (ecg.io.loaders); quantities carries unit data.
+    hiddenimports += ["neo", "neo.rawio", "neo.rawio.spike2rawio", "quantities"]
+    datas += collect_data_files("quantities")
 
 # Not used by the app; leaving them out keeps the bundle smaller.
 excludes = [

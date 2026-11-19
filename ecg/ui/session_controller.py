@@ -24,12 +24,17 @@ from ecg.core.analysis import (
     mean_hr_bpm, migrate_legacy_results, rebuild_beat_corr_times,
     recompute_qtc_column, signal_crop_info,
 )
-from ecg.io.loaders import load_mat_signal, _serialise_results, _deserialise_results
+from ecg.io.loaders import (
+    load_mat_signal, read_spike2_markers, _serialise_results, _deserialise_results,
+)
 from ecg.io.session import load_session, save_session, delete_session
 from ecg.io.db import _DB_AVAILABLE, upsert_recording, set_verified
-from ecg.core.ml_detector import save_training_sample, delete_training_sample
+from ecg.core.ml_detector import (
+    save_training_sample, delete_training_sample, training_example_state,
+)
 from ecg.core.wave_template import WaveTemplate
 from ecg.ui.app_async import recording_changed
+from ecg.ui.ml_examples import BUSY_MESSAGE
 from ecg.ui.theme import GREEN, MUTED, ORANGE, RED, toggle_style
 from ecg.ui.tab_keys import (
     TAB_DETECTION, TAB_HRV, TAB_MORPHOLOGY, TAB_EVENTS, TAB_REPORT,
@@ -259,6 +264,8 @@ class SessionController:
         i0 = int(prep.t_start * fs) if prep.t_start > 0 else 0
         i1 = int(prep.t_end   * fs) if prep.t_end   > 0 else len(sig_raw)
         signal_crop = signal_crop_info(prep.t_start, prep.t_end, len(sig_raw) / fs)
+        # Spike2 markers re-read from the file (not saved in the session).
+        markers = read_spike2_markers(path, prep.t_start, prep.t_end)
         sig_raw = sig_raw[i0:i1]
         n_samples = len(sig_raw)
 
@@ -301,6 +308,7 @@ class SessionController:
             "signal_raw":       sig_raw,
             "signal_bundle":    signal_bundle,
             "signal_crop":      signal_crop,
+            "markers":          markers,
             "filter_params":    fp,
             "thresh_amp":       float(state.get("threshold", float(state.get("thresh_amp", 0.5)))),
             # The slider FRACTION (0.01-2.0, apply_threshold()'s thresh_frac
@@ -360,6 +368,10 @@ class SessionController:
             "event_locked_params": state.get("event_locked_params"),
             # Subject ID, SG window, raw / filtered view (absent in older sessions).
             "recording_fields": state.get("recording_fields"),
+            # The Compare segments rows / reference / view and whether the
+            # comparison was run (absent in older sessions: None, nothing
+            # restored). Its statistics are not saved: re-run on restore.
+            "compare_segments": state.get("compare_segments"),
             # Which filter_params keys the session holds: only those are
             # written back to widgets the restore did not always set.
             "filter_keys":      sorted(state.get("filter_params", {}) or {}),
@@ -422,6 +434,7 @@ class SessionController:
         self.app.signal.filter_text     = sb.get("filter_text")
         self.app.signal.prepare_params  = sb.get("prepare_params")
         self.app.signal.crop            = bundle.get("signal_crop")
+        self.app.signal.markers         = bundle.get("markers") or {}
         self.app.signal.inverted = sb.get("inverted", False)
 
         # ── Restore user-edited state (session values win over freshly
@@ -431,7 +444,10 @@ class SessionController:
         self.app.detection.manual_added    = set(bundle["manual_added"])
         self.app.signal.inverted = bundle["signal_inverted"]
         self.app.signal.no_filter_mode  = bundle["no_filter_mode"]
-        self.app.session.verified_for_training = bundle["verified_for_training"]
+        # The training cache says whether this recording is an example; the
+        # session's own flag (older sessions, no cache) is only a fallback.
+        self.app.session.verified_for_training = self.is_training_example(
+            self.app.signal.filepath, default=bundle["verified_for_training"])
         self.sync_verified_switch()
 
         # ── Restore analysis results (DataFrames already deserialised) ───
@@ -658,6 +674,14 @@ class SessionController:
             self.app.tabs.set(saved_tab)
         except Exception as e:
             log.debug("Failed to restore tab from session: %s", e)
+        # Compare segments: the setup saved, its comparison re-run on the
+        # restored peaks (now if the tab is open, else when it is opened).
+        restore_cmp = getattr(self.app, "_restore_compare_setup", None)
+        if restore_cmp is not None:
+            try:
+                restore_cmp(bundle.get("compare_segments"))
+            except Exception as exc:
+                log.warning("Compare segments setup not restored: %s", exc, exc_info=True)
         if self.app.analysis.results is not None:
             self.app.after(100, self.app._draw_all_results)
             pass  # interpretation removed
@@ -832,6 +856,17 @@ class SessionController:
         if ectl is not None:
             state["event_locked_params"] = ectl.widget_params()
         state["recording_fields"] = self.recording_fields()
+        # Compare segments: rows, block, reference, view, jitter and the
+        # windows of the comparison shown (re-run on restore, not stored).
+        snap_cmp = getattr(self.app, "_compare_setup_snapshot", None)
+        if snap_cmp is not None:
+            try:
+                cmp_setup = snap_cmp()
+            except Exception as exc:
+                log.debug("compare setup not saved: %s", exc, exc_info=True)
+                cmp_setup = None
+            if cmp_setup is not None:
+                state["compare_segments"] = cmp_setup
         return state
 
     # FilterParams.to_dict's detection_method key -> the Method combobox label.
@@ -917,27 +952,30 @@ class SessionController:
             except Exception as exc:
                 log.debug("restore project name failed: %s", exc, exc_info=True)
 
-    def save_for_training_only(self) -> None:
-        """Cache this recording's corrected R-peaks as ML training data only.
+    @staticmethod
+    def is_training_example(filepath: "str | None", default: bool = False) -> bool:
+        """Whether *filepath* has a cached training example. *default* when it
+        cannot be told (no file)."""
+        if not filepath:
+            return default
+        from ecg.io.session import _file_fingerprint
+        return training_example_state(_file_fingerprint(filepath), None) != "absent"
 
-        Lighter-weight alternative to save_session() for a user who wants
-        to contribute training data right away -- mid-review, or before
-        full analysis results exist -- without writing a .ecgsession file
-        or computing/storing export stats. Sets the same verified flag
-        save_session() would (DB + in-memory state + sidebar switch), so
-        a later Save Session on this file is a no-op for the ML cache.
+    def add_training_example(self) -> None:
+        """Add the open recording to the ML training examples, now: caches its
+        corrected R-peaks as training data (or replaces the cached ones after
+        the peaks were edited) and sets the registry's verified flag.
 
-        Runs in the background via _start_async: feature extraction over
-        the whole signal is the single most expensive step in this whole
-        feature (see save_session_worker's docstring), and this button
-        exists specifically to trigger it on demand, so it must not
-        freeze the UI either.
+        Needs no .ecgsession file or export stats. Runs in the background via
+        _start_async: feature extraction over the whole signal is the single
+        most expensive step of the ML feature, so it must not freeze the UI.
         """
         if self.app.signal.filepath is None:
             messagebox.showwarning("No file", "Open a file first.")
             return
-        if self.app.signal.filtered is None or self.app.detection.rpeaks_ok is None:
-            messagebox.showwarning("Not ready", "Click Detect Peaks first.")
+        if (self.app.signal.filtered is None or self.app.detection.rpeaks_ok is None
+                or len(self.app.detection.rpeaks_ok) == 0):
+            messagebox.showwarning("Not ready", "Detect the peaks first (any method).")
             return
 
         # Snapshot on the main thread rather than letting the worker read
@@ -949,46 +987,83 @@ class SessionController:
         fs        = self.app.signal.fs
         rpeaks_ok = self.app.detection.rpeaks_ok
         gen = getattr(self.app, "_generation", 0)
+        updating = self.is_training_example(filepath)
 
         self.app._start_async(
-            self.app.btn_save_for_training, "Saving…", "Saving training data…",
+            self.app.btn_ml_example, "Saving…",
+            "Updating the training example…" if updating else "Adding the training example…",
             lambda: self.save_for_training_worker(filepath, filtered, fs, rpeaks_ok),
-            lambda result: self.on_save_for_training_done(result, gen=gen),
+            lambda result: self.on_save_for_training_done(result, gen=gen, updated=updating),
             pass_result=True,
         )
+
+    # Former name (the "📥 Save for training" button).
+    save_for_training_only = add_training_example
 
     def save_for_training_worker(
         self, filepath: str, filtered: np.ndarray, fs: int, rpeaks_ok: np.ndarray,
     ) -> dict:
-        """Background worker for save_for_training_only -- no widget access."""
+        """Background worker for add_training_example -- no widget access."""
         def _prog(pct: int, msg: str) -> None:
             self.app.after(0, lambda p=pct, m=msg: self.app._set_progress(p, m))
 
         from ecg.io.session import _file_fingerprint
         fp = _file_fingerprint(filepath)
         n_cand = save_training_sample(
-            fp, filtered, fs, rpeaks_ok, progress_cb=_prog)
+            fp, filtered, fs, rpeaks_ok, progress_cb=_prog, source_path=filepath)
         if _DB_AVAILABLE:
             set_verified(filepath, True)
-        return {"n_cand": n_cand}
+        return {"n_cand": n_cand, "n_peaks": int(len(rpeaks_ok))}
 
-    def on_save_for_training_done(self, result: dict, gen: "int | None" = None) -> None:
+    def on_save_for_training_done(self, result: dict, gen: "int | None" = None,
+                                  updated: bool = False) -> None:
         """Main thread: sync state/widgets after save_for_training_worker.
 
         *gen*: the recording it was saved for (None: no check). Another file
         opened meanwhile must not get that file's verified flag."""
+        n_peaks = result.get("n_peaks")
+        what = f"{n_peaks} peaks" if n_peaks is not None else f"{result['n_cand']} candidates"
         if gen is not None and recording_changed(
-                self.app, gen, "Training data",
-                msg=f"Training data saved — {result['n_cand']} candidates cached, "
-                    "for the recording open before this one."):
+                self.app, gen, "Training example",
+                msg=f"Training example saved ({what}), for the recording open "
+                    "before this one."):
             self.app.refresh_ml_status()
             return
         self.app.session.verified_for_training = True
         self.sync_verified_switch()
         self.app.refresh_ml_status()
         self.app._set_status(
-            f"Training data saved — {result['n_cand']} candidates cached "
-            "(session not saved).", GREEN)
+            f"{'Training example updated' if updated else 'Added to the training examples'}"
+            f" — {what}. Retrain the model (Train model…) to use it.", GREEN)
+
+    def remove_training_example(self, confirm: bool = True) -> bool:
+        """Take the open recording out of the training examples: deletes its
+        cached .npz and clears the registry flag, after a confirmation."""
+        filepath = self.app.signal.filepath
+        if filepath is None:
+            return False
+        if getattr(self.app, "_async_busy", False):
+            # A running Add / Update / Save Session may be writing this very
+            # example: it would write it back (and set the flag) after the
+            # removal. The buttons are disabled meanwhile; this is the guard.
+            self.app._set_status(BUSY_MESSAGE, ORANGE)
+            return False
+        if confirm and not messagebox.askyesno(
+                "Remove training example",
+                f"Remove {Path(filepath).name} from the ML training examples?\n\n"
+                "Its corrected peaks stay in the recording and its session; the "
+                "model changes only when you train it again.", icon="warning"):
+            return False
+        from ecg.io.session import _file_fingerprint
+        delete_training_sample(_file_fingerprint(filepath))
+        if _DB_AVAILABLE:
+            set_verified(filepath, False)
+        self.app.session.verified_for_training = False
+        self.sync_verified_switch()
+        self.app.refresh_ml_status()
+        self.app._set_status(
+            f"{Path(filepath).name} removed from the training examples.", MUTED)
+        return True
 
     def save_session(self) -> None:
         """Serialise full analysis state to a .ecgsession cache file and update registry.
@@ -999,10 +1074,10 @@ class SessionController:
         dataclass state, so it runs in a background thread via
         _start_async -- mirroring the _preview_worker / _on_preview_done
         split. This used to run entirely on the main thread and would
-        visibly freeze the UI, worst case when "Verified for training" is
-        on: save_training_sample() runs full-signal candidate generation
-        + feature extraction inline, which is the single most expensive
-        step in this whole feature.
+        visibly freeze the UI, worst case when the recording is a training
+        example whose peaks changed: save_training_sample() runs full-signal
+        candidate generation + feature extraction inline, which is the
+        single most expensive step in this whole feature.
         """
         if self.app.signal.filepath is None:
             messagebox.showwarning("No file", "Open a file first.")
@@ -1119,18 +1194,20 @@ class SessionController:
             )
 
         # ── ML training-data cache ─────────────────────────────────────
-        # Independent of the sqlite registry -- the .npz cache is the
-        # only thing Train/Retrain reads, so it must be kept in sync
-        # here even when _DB_AVAILABLE is False.
+        # Save Session never adds or removes a training example (that is
+        # the panel's one button). It only keeps an existing example in
+        # sync: when the recording is one and its peaks were edited since
+        # it was cached (or the cache predates storing the peaks), the
+        # cached sample is refreshed with the peaks being saved.
         n_cand = None
         try:
-            if snap["verified"] and rpeaks_ok is not None:
-                n_cand = save_training_sample(
-                    fp, filtered, fs, rpeaks_ok, progress_cb=_prog)
-                log.info("ML training sample cached for %s (%d candidates)",
-                          filepath, n_cand)
-            else:
-                delete_training_sample(fp)
+            if snap["verified"] and rpeaks_ok is not None and len(rpeaks_ok):
+                if training_example_state(fp, rpeaks_ok) in ("changed", "unknown"):
+                    n_cand = save_training_sample(
+                        fp, filtered, fs, rpeaks_ok, progress_cb=_prog,
+                        source_path=filepath)
+                    log.info("ML training example refreshed for %s (%d candidates)",
+                              filepath, n_cand)
         except Exception as exc:
             log.warning("ML training-data cache update failed: %s", exc)
 
@@ -1165,31 +1242,19 @@ class SessionController:
         else:
             self.app._set_status("No session cache to delete.", MUTED)
 
-    def on_verified_training_toggle(self) -> None:
-        """Sync verified-for-training state from the sidebar switch.
-
-        The switch is the interactive source of truth while a file is open;
-        the actual .npz cache write / registry update happens later, at
-        Save Session (see save_session below), not on every toggle.
-        """
-        sw = self.app.sw_verified_training
-        if sw is not None:
-            self.app.session.verified_for_training = bool(sw.get())
-
     def sync_verified_switch(self) -> None:
-        """Reflect self.app.session.verified_for_training on the sidebar switch.
+        """Reflect the open recording's training-example state on the ML
+        section's button (Add / ✓ In training examples — Remove / Update).
 
-        Called after loading a file or restoring a session, since the
-        widget must not carry over the previous recording's checked state.
+        Called after loading a file, restoring a session or a UI rebuild,
+        since the widget must not carry over the previous recording's state.
+        Never changes the state it mirrors.
         """
-        sw = self.app.sw_verified_training
-        if sw is None:
+        refresh = getattr(self.app, "_refresh_ml_example", None)
+        if refresh is None:
             return
         try:
-            if self.app.session.verified_for_training:
-                sw.select()
-            else:
-                sw.deselect()
+            refresh(force=True)
         except Exception as exc:
             log.debug("sync_verified_switch failed: %s", exc)
 
@@ -1283,8 +1348,9 @@ class SessionController:
         "ent_sg_target_fs", "ent_sg_window_ms", "ent_entropy_cap")
     # sw_permissive lives only in its widget (read at Measure intervals), so
     # it must be carried over or a rebuild silently returns to strict bounds.
-    # sw_verified_training / sw_filter_preview are not listed: they mirror
-    # state (session / ui) and are re-synced from it by restore_ui_state.
+    # sw_filter_preview and the ML training-example button are not listed:
+    # they mirror state (ui / training cache) and are re-synced from it by
+    # restore_ui_state.
     _SNAPSHOT_SWITCHES = ("sw_show_raw", "sw_filtering", "sw_notch", "sw_invert_signal",
                           "sw_artifact", "sw_epoch", "sw_permissive")
 
@@ -1338,6 +1404,14 @@ class SessionController:
                 s["event_locked_params"] = ectl.widget_params()
         except Exception as exc:
             log.debug("snapshot event-locked params failed: %s", exc, exc_info=True)
+        # Compare segments rows typed (and the comparison shown): the
+        # rebuilt tab would start from its defaults otherwise.
+        try:
+            snap_cmp = getattr(self.app, "_compare_setup_snapshot", None)
+            if snap_cmp is not None:
+                s["compare_segments"] = snap_cmp()
+        except Exception as exc:
+            log.debug("snapshot compare setup failed: %s", exc, exc_info=True)
         return s
 
     def restore_ui_state(self, s: dict) -> None:
@@ -1436,3 +1510,8 @@ class SessionController:
                 ectl.apply_params(s["event_locked_params"])
             except Exception as exc:
                 log.debug("restore event-locked params failed: %s", exc, exc_info=True)
+        if s.get("compare_segments") is not None:
+            try:
+                self.app._restore_compare_setup(s["compare_segments"])
+            except Exception as exc:
+                log.debug("restore compare setup failed: %s", exc, exc_info=True)

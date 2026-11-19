@@ -22,8 +22,8 @@ Model persistence uses a small JSON metadata sidecar plus a skops artifact.
 Only the expected RandomForestClassifier and its tree type are trusted while
 loading. load() never raises -- missing or corrupt files mean "no model yet".
 
-Training data itself is never a raw signal on disk: marking a file "verified"
-extracts features+labels for it immediately (signal and accepted R-peaks are
+Training data itself is never a raw signal on disk: adding a recording to the
+training examples extracts features+labels for it immediately (signal and accepted R-peaks are
 already in memory in the running app) into a small per-file .npz cache under
 SESSION_DIR / "ml_training". Training just pools every cached file and fits a
 classifier -- it never needs to reopen or re-filter the original recordings.
@@ -67,6 +67,21 @@ _model_cache: "dict[str, Any]" = {"mtime": None, "model": None}
 # Candidate within this many ms of an accepted R-peak counts as a positive
 # training example.
 LABEL_TOLERANCE_MS = 5.0
+
+# Training needs whole recordings on both sides of the hold-out split (see
+# _grouped_holdout_indices): 2 is the hard floor, 5 the advice the UI gives.
+MIN_EXAMPLES_REQUIRED = 2
+MIN_EXAMPLES_RECOMMENDED = 5
+
+NO_MODEL_MESSAGE = (
+    "ML Detector: no model is trained yet. Detect the peaks with another "
+    "method and correct them, add the recording to the training examples "
+    "(Signal quality panel, ML DETECTOR), repeat for at least 5 recordings, "
+    "then click Train model…")
+
+
+class NoModelError(RuntimeError):
+    """detect_peaks_ml without a trained model (a RuntimeError, as before)."""
 
 # find_peaks' `distance` constraint already bounds candidate count to
 # roughly duration_ms / PEAK_DISTANCE_MS (~180k for a 2h recording at the
@@ -326,10 +341,7 @@ def detect_peaks_ml(
     if model is None:
         model = MLPeakModel.load()
     if model is None:
-        raise RuntimeError(
-            "No trained ML model available. Mark a few recordings "
-            "“Verified for training” and use Train / Retrain Model first."
-        )
+        raise NoModelError(NO_MODEL_MESSAGE)
 
     _prog(5, "Generating candidates…")
     candidates = _generate_candidates(signal, fs)
@@ -368,12 +380,18 @@ def save_training_sample(
     fingerprint: str, signal: np.ndarray, fs: float,
     rpeaks_ok: np.ndarray,
     progress_cb: "Optional[Callable[[int, str], None]]" = None,
+    source_path: str = "",
 ) -> int:
-    """Extract features+labels for one verified recording and cache them.
+    """Extract features+labels for one training example and cache them.
 
-    Called once, immediately, when the user marks the currently-open file
-    "verified for training" -- signal and rpeaks_ok are already in memory,
-    so this never needs to reopen or re-filter anything later.
+    Called immediately when the user adds the open recording to the
+    training examples (or updates it) -- signal and rpeaks_ok are already
+    in memory, so this never needs to reopen or re-filter anything later.
+
+    Besides features/labels the .npz keeps the corrected peaks themselves
+    (to tell later whether they were edited since), fs, the date added and
+    the recording's path (for the examples list). Older caches hold only
+    features/labels; every reader below treats those keys as optional.
 
     *progress_cb*, if given, is called with coarse (pct, message) stage
     checkpoints -- feature extraction has no natural per-item loop to
@@ -400,17 +418,85 @@ def save_training_sample(
     _prog(95, "Writing training cache…")
     TRAINING_DATA_DIR.mkdir(parents=True, exist_ok=True)
     out_path = TRAINING_DATA_DIR / f"{fingerprint}.npz"
-    np.savez(out_path, features=feats, labels=labels)
+    rp = np.sort(np.asarray(rpeaks_ok, dtype=np.int64))
+    np.savez(out_path, features=feats, labels=labels, rpeaks=rp,
+             fs=np.float64(fs),
+             added_at=np.str_(datetime.now().isoformat(timespec="seconds")),
+             source_path=np.str_(source_path or ""))
     log.info("ML training sample saved: %d candidates (%d positive) -> %s",
               len(candidates), int(labels.sum()), out_path)
     return int(len(candidates))
 
 
 def delete_training_sample(fingerprint: str) -> None:
-    """Remove a cached training sample (e.g. the user un-marks a file)."""
+    """Remove a cached training sample (the user removes the example)."""
     p = TRAINING_DATA_DIR / f"{fingerprint}.npz"
     if p.exists():
         p.unlink()
+
+
+def training_example_path(fingerprint: str) -> Path:
+    return TRAINING_DATA_DIR / f"{fingerprint}.npz"
+
+
+def _rate_bpm(rpeaks: "Optional[np.ndarray]", fs: "Optional[float]") -> "Optional[float]":
+    """Mean heart rate of an example (60000 / mean RR), None when unknown."""
+    if rpeaks is None or not fs or len(rpeaks) < 2:
+        return None
+    rr_ms = np.diff(np.sort(rpeaks)) / float(fs) * 1000.0
+    rr_ms = rr_ms[rr_ms > 0]
+    return float(60000.0 / rr_ms.mean()) if len(rr_ms) else None
+
+
+def _example_entry(f: Path) -> dict:
+    """Stats of one cached example; the keys newer caches add are optional."""
+    with np.load(f) as data:
+        labels = data["labels"]
+        keys = set(data.files)
+        rpeaks = data["rpeaks"] if "rpeaks" in keys else None
+        fs = float(data["fs"]) if "fs" in keys else None
+        added_at = str(data["added_at"]) if "added_at" in keys else ""
+        source = str(data["source_path"]) if "source_path" in keys else ""
+    mtime = f.stat().st_mtime
+    if not added_at:
+        added_at = datetime.fromtimestamp(mtime).isoformat(timespec="seconds")
+    return {
+        "fingerprint": f.stem,
+        "n_samples": int(len(labels)),
+        "n_positive": int(labels.sum()),
+        # Older caches: the positive candidates stand in for the peak count.
+        "n_peaks": int(len(rpeaks)) if rpeaks is not None else int(labels.sum()),
+        "rate_bpm": _rate_bpm(rpeaks, fs),
+        "added_at": added_at,
+        "source_path": source,
+        "mtime": mtime,
+    }
+
+
+def training_example_state(fingerprint: str, rpeaks: "Optional[np.ndarray]") -> str:
+    """Whether the recording *fingerprint* is a training example, and whether
+    *rpeaks* are still the peaks it was cached with:
+
+        "absent"   no example cached for it
+        "same"     cached with these very peaks (or *rpeaks* is None)
+        "changed"  cached, but the peaks were edited since
+        "unknown"  cached by an older version that did not keep the peaks
+    """
+    p = training_example_path(fingerprint)
+    if not p.exists():
+        return "absent"
+    try:
+        with np.load(p) as data:
+            if "rpeaks" not in data.files:
+                return "unknown"
+            cached = data["rpeaks"]
+    except Exception as exc:
+        log.warning("training_example_state: could not read %s: %s", p, exc)
+        return "unknown"
+    if rpeaks is None:
+        return "same"
+    current = np.sort(np.asarray(rpeaks, dtype=np.int64))
+    return "same" if np.array_equal(current, cached) else "changed"
 
 
 def training_data_summary() -> dict:
@@ -431,11 +517,12 @@ def training_data_summary() -> dict:
 
 
 def list_training_files() -> "list[dict]":
-    """Return per-file cached-sample stats, most recently cached first.
+    """Return per-example stats, most recently cached first.
 
-    Used by the training dialog's file list -- callers cross-reference
-    "fingerprint" against the sqlite registry to show a human-readable
-    filename (this module has no notion of filenames, only fingerprints).
+    Used by the training dialog's examples list: fingerprint, n_samples,
+    n_positive, n_peaks, rate_bpm (None when unknown), added_at (ISO),
+    source_path ("" for caches older than that key -- callers then
+    cross-reference the fingerprint against the sqlite registry) and mtime.
     """
     if not TRAINING_DATA_DIR.exists():
         return []
@@ -444,13 +531,7 @@ def list_training_files() -> "list[dict]":
                     key=lambda p: p.stat().st_mtime, reverse=True)
     for f in files:
         try:
-            with np.load(f) as data:
-                labels = data["labels"]
-                out.append({
-                    "fingerprint": f.stem,
-                    "n_samples": int(len(labels)),
-                    "n_positive": int(labels.sum()),
-                })
+            out.append(_example_entry(f))
         except Exception as exc:
             log.warning("list_training_files: could not read %s: %s", f, exc)
     return out
@@ -468,7 +549,8 @@ def _grouped_holdout_indices(
     from sklearn.model_selection import GroupShuffleSplit
 
     if len(np.unique(groups)) < 2:
-        raise ValueError("At least two verified recordings are required for hold-out validation.")
+        raise ValueError("At least two training examples (recordings) are required, "
+                         "so one can be held out to check the model.")
 
     splitter = GroupShuffleSplit(n_splits=100, test_size=0.2, random_state=0)
     for train_idx, test_idx in splitter.split(np.zeros(len(labels)), labels, groups):
@@ -476,7 +558,7 @@ def _grouped_holdout_indices(
             return train_idx, test_idx
     raise ValueError(
         "Could not create a recording-level hold-out set containing both classes. "
-        "Verify more recordings with positive and negative candidates.")
+        "Add more training examples.")
 
 def train_model(min_samples: int = 50) -> dict:
     """Train (or retrain) the classifier from every cached verified file.
@@ -488,8 +570,8 @@ def train_model(min_samples: int = 50) -> dict:
     files = list(TRAINING_DATA_DIR.glob("*.npz")) if TRAINING_DATA_DIR.exists() else []
     if not files:
         return {"ok": False, "message":
-                "No verified recordings yet. Mark at least one file "
-                "“Verified for training” first."}
+                "No training examples yet. Detect and correct the peaks of a "
+                "recording, then click “Add recording to training examples”."}
 
     X_parts: "list[np.ndarray]" = []
     y_parts: "list[np.ndarray]" = []
@@ -516,8 +598,8 @@ def train_model(min_samples: int = 50) -> dict:
 
     if len(y) < min_samples:
         return {"ok": False, "message":
-                f"Only {len(y)} labeled candidates across {len(files)} file(s) -- "
-                f"need at least {min_samples}. Verify a few more recordings."}
+                f"Only {len(y)} candidate peaks across {len(files)} training "
+                f"example(s) -- need at least {min_samples}. Add a few more recordings."}
     if len(np.unique(y)) < 2:
         return {"ok": False, "message":
                 "Training data has only one class (all peaks or all "
@@ -572,6 +654,8 @@ def train_model(min_samples: int = 50) -> dict:
         "trained_at": datetime.now().isoformat(),
         "n_training_files": n_training_files,
         "n_training_samples": int(len(y)),
+        # Which examples this model saw: the status says what changed since.
+        "training_fingerprints": sorted(str(g) for g in np.unique(groups)),
         "n_positive": int(y.sum()),
         "feature_names": FEATURE_NAMES,
         "model_type": "RandomForestClassifier",
@@ -586,7 +670,8 @@ def train_model(min_samples: int = 50) -> dict:
 
     result = {
         "ok": True,
-        "message": f"Trained on {len(y)} labeled candidates from {n_training_files} file(s).",
+        "message": (f"Trained on {n_training_files} training examples "
+                    f"({len(y):,} candidate peaks)."),
         "n_files": n_training_files, "n_samples": int(len(y)),
         "accuracy": accuracy, "f1": f1,
         "precision": precision, "recall": recall,

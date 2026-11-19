@@ -133,9 +133,11 @@ class StateProps:
         self.cb_freq_band:      "Optional[ctk.CTkComboBox]"  = None   # HRV band preset
         self.lbl_ml_status:     "Optional[ctk.CTkLabel]"     = None
         self.lbl_ml_inline_status: "Optional[ctk.CTkLabel]"  = None   # ML status mirrored next to the Method combobox
-        self.sw_verified_training: "Optional[ctk.CTkSwitch]" = None
+        self.lbl_ml_title:      "Optional[ctk.CTkLabel]"     = None   # "ML DETECTOR ▸/▾" (click: open/close)
+        self.lbl_ml_short:      "Optional[ctk.CTkLabel]"     = None   # ML section header's short status
+        self.btn_ml_example:    "Optional[ctk.CTkButton]"    = None   # Add / Remove / Update training example
+        self.btn_ml_remove:     "Optional[ctk.CTkButton]"    = None   # Remove, beside Update
         self.btn_train_ml:      "Optional[ctk.CTkButton]"    = None
-        self.btn_save_for_training: "Optional[ctk.CTkButton]" = None
         # Sidebar / detection tab widgets (forward-declared)
         self.lbl_npeaks:           "Optional[ctk.CTkLabel]"              = None
         self.btn_review_art:       "Optional[ctk.CTkButton]"             = None

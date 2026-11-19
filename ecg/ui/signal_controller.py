@@ -24,9 +24,10 @@ from ecg.core.detection import (
     fix_polarity, apply_threshold,
     detect_peaks_sg_derivative, detect_peaks_wavelet, detect_peaks_envelope_max,
 )
-from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel
-from ecg.io.loaders import load_mat_signal
-from ecg.io.db import _DB_AVAILABLE, get_notes, get_recording
+from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel, NoModelError
+from ecg.ui.ml_examples import NO_MODEL_STATUS
+from ecg.io.loaders import load_mat_signal, read_spike2_markers
+from ecg.io.db import _DB_AVAILABLE, get_notes
 from ecg.ui.app_async import recording_changed
 from ecg.ui.session_controller import pending_template_info_text
 from ecg.ui.theme import BLUE, GREEN, LIGHT, MUTED, ORANGE, RED, nk
@@ -281,6 +282,7 @@ class SignalController:
             else:
                 inverted = False
             detector_warning: Optional[str] = None
+            ml_no_model = False
 
             def _ml_prog(pct: int, msg: str) -> None:
                 # Rescale detect_peaks_ml's own 0-100 stage progress into the
@@ -293,8 +295,18 @@ class SignalController:
             try:
                 model = MLPeakModel.load()
                 peaks_ml, proms_ml, t_amp_ml = detect_peaks_ml(sig, fs, model, progress_cb=_ml_prog)
+            except NoModelError as exc:
+                # No trained model yet: the status bar points at the panel's
+                # ML section, which opens and says what to do (the whole
+                # NO_MODEL_MESSAGE does not fit the status bar).
+                log.warning("ML detector: %s", exc)
+                detector_warning = NO_MODEL_STATUS
+                ml_no_model = True
+                peaks_ml = np.array([], dtype=int)
+                proms_ml = np.array([])
+                t_amp_ml = 0.0
             except RuntimeError as exc:
-                # No trained model yet -- a clearly different situation from
+                # Degenerate signal -- a clearly different situation from
                 # "detection failed on this signal", surfaced distinctly so
                 # the user isn't left guessing why 0 peaks were found.
                 log.warning("ML detector: %s", exc)
@@ -317,6 +329,7 @@ class SignalController:
                 "all_proms":       proms_ml if len(proms_ml) else np.ones(len(peaks_ml)),
                 "inverted":        inverted,
                 "detector_warning": detector_warning,
+                "ml_no_model":     ml_no_model,
             }
 
         # ── Auto (NeuroKit2) pipeline — original path ─────────────────────
@@ -417,6 +430,8 @@ class SignalController:
         # relative to its start (disclosed as the "Signal crop" row).
         signal_crop = signal_crop_info(t0, t1, len(sig) / fs if fs else None)
         sig = sig[i0:i1]
+        # Spike2 marker channels in this signal's time base ({} otherwise).
+        markers = read_spike2_markers(self.app.signal.filepath, t0, t1)
 
         if sig.std() < 1e-10:
             raise ValueError("Signal is flat — wrong channel.")
@@ -438,6 +453,7 @@ class SignalController:
             "signal_raw_norm": signal_raw_norm,
             "dur_s":        dur_s,
             "signal_crop":  signal_crop,
+            "markers":      markers,
             "detected_ch":  detected_ch,
             "detected_fs":  detected_fs,
             "requested_ch": params["channel"],
@@ -474,6 +490,7 @@ class SignalController:
         self.app.signal.filter_text      = None
         self.app.signal.prepare_params   = None
         self.app.signal.crop             = bundle.get("signal_crop")
+        self.app.signal.markers          = bundle.get("markers") or {}
         self.app.signal.inverted  = False
         self.app.signal.raw_only_loaded  = True
         self.app.ui.nav_pos          = 0.0
@@ -626,6 +643,8 @@ class SignalController:
         # relative to its start (disclosed as the "Signal crop" row).
         signal_crop = signal_crop_info(t0, t1, len(sig) / fs if fs else None)
         sig = sig[i0:i1]
+        # Spike2 marker channels in this signal's time base ({} otherwise).
+        markers = read_spike2_markers(self.app.signal.filepath, t0, t1)
 
         if sig.std() < 1e-10:
             raise ValueError("Signal is flat — wrong channel.")
@@ -658,6 +677,7 @@ class SignalController:
             "signal_raw":      sig,
             "dur_s":           dur_s,
             "signal_crop":     signal_crop,
+            "markers":         markers,
             "detected_ch":     detected_ch,
             "detected_fs":     detected_fs,
             "requested_ch":    params["channel"],
@@ -725,6 +745,7 @@ class SignalController:
         self.app.signal.filter_text     = bundle.get("filter_text")
         self.app.signal.prepare_params  = bundle.get("prepare_params")
         self.app.signal.crop            = bundle.get("signal_crop")
+        self.app.signal.markers         = bundle.get("markers") or {}
         self.app.signal.inverted = bundle.get("inverted", False)
         self.app.signal.raw_only_loaded = False
         # recommended_min_rr_ms supprimé — ent_minrr non modifié automatiquement.
@@ -857,6 +878,13 @@ class SignalController:
                     text=pending_template_info_text(), text_color=MUTED)
         if detector_warning:
             self.app._set_status(detector_warning + edits_note, ORANGE)
+            if bundle.get("ml_no_model"):
+                expand = getattr(self.app, "_set_ml_expanded", None)
+                if expand is not None:
+                    expand(True)
+                refresh = getattr(self.app, "refresh_ml_status", None)
+                if refresh is not None and getattr(self.app, "lbl_ml_status", None) is not None:
+                    refresh()
         else:
             self.app._set_status(
                 f"Signal ready — {n} peaks  |  {dur:.0f} s  |  {fs} Hz  "
@@ -1110,11 +1138,10 @@ class SignalController:
         # Mirrors recording_notes above: the registry is the authoritative
         # source (also backs the ML training dialog's file list), the
         # session JSON is a fallback restored below when sqlite is unavailable.
-        if _DB_AVAILABLE:
-            _rec = get_recording(path)
-            self.app.session.verified_for_training = bool(_rec.get("verified_for_training")) if _rec else False
-        else:
-            self.app.session.verified_for_training = False
+        # "Is a training example" is the training cache's answer (the
+        # registry's verified_for_training flag mirrors it: older registries
+        # may hold the flag without a cached example).
+        self.app.session.verified_for_training = self.app.session_ctrl.is_training_example(path)
         self.app.session_ctrl.sync_verified_switch()
         self.app.lbl_file.configure(text=os.path.basename(path), text_color=GREEN)  # type: ignore[union-attr]
         self.app._add_recent(path)
@@ -1191,12 +1218,20 @@ class SignalController:
         self.app.ui.nav_pos              = 0.0
         self.app.signal.inverted      = False
         self.app.signal.channel       = None
+        self.app.signal.markers       = {}
         self.app.signal.raw_only_loaded      = False
         self.app.ui.thr_debounce_id      = None
         self.app.analysis.annotations          = []
         self.app.analysis.pacing_periods       = []
         self.app.ui.tsv_store            = {}
         self.app.analysis.wave_template        = None
+        # The Compare segments setup belongs to the previous recording: a
+        # setup waiting to be applied (restored session, tab not opened
+        # since) and the old tab's rows are never carried to this one. A
+        # session of the new file restores its own after the load.
+        self.app._compare_pending_setup = None
+        self.app._compare_setup_getter  = None
+        self.app._compare_setup_key     = None
         self.app.session.dirty        = False
         self.app.session.verified_for_training = False
         self.app._generation           = getattr(self.app, "_generation", 0) + 1  # invalidate async workers

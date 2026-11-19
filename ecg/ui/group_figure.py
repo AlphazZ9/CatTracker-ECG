@@ -13,6 +13,9 @@ The group figure of a Compare segments group table, for two segments A / B:
   metrics the paired tests are run on.
 
 Only the group table is needed: it holds each segment's mean RR, SD1 and SD2.
+
+All pairs (draw_all_pairs_figure): one before-after panel per pair of an
+all-pairs run (Mean HR by default), with the pair's Wilcoxon p.
 """
 from __future__ import annotations
 
@@ -101,4 +104,62 @@ def draw_group_figure(fig, df: "pd.DataFrame", a: str, b: str,
     fig.suptitle((title + "  ·  " if title else "")
                  + "thin: each animal (centre = mean RR, half-axes SD2 / SD1) · thick: group mean; "
                    "right: one line per animal, median thick", fontsize=8, color=muted)
+    return True
+
+
+MAIN_METRIC = "Mean HR (60000/mean NN) (bpm)"
+
+
+def _p_text(p: float) -> str:
+    if p is None or not np.isfinite(p):
+        return "—"
+    return f"{p:.3f}" if p >= 0.001 else f"{p:.1e}"
+
+
+def draw_all_pairs_figure(fig, res, metric: str = MAIN_METRIC, title: str = "",
+                          color: str = "#2563eb") -> bool:
+    """One panel per pair of an all-pairs run (ecg.io.group_stats.
+    AllPairsResult): one before → after line per animal for *metric* (Mean
+    HR by default), the median thick, the pair's Wilcoxon p (and its Holm p)
+    in the title; the panels share the y axis. False when no pair holds the
+    metric."""
+    muted = PLOT.get("muted", "#888")
+    pairs = [pr for pr in res.pairs if f"{metric} {pr.a}" in pr.used.columns
+             and f"{metric} {pr.b}" in pr.used.columns and len(pr.used)]
+    if not pairs:
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, f"No pair with '{metric}' for its two segments",
+                ha="center", va="center", transform=ax.transAxes, color=muted)
+        ax.set_axis_off()
+        return False
+    axes = fig.subplots(1, len(pairs), sharey=True, squeeze=False)[0]
+    holm_col = "Wilcoxon p (Holm, all pairs)" if res.holm_across else "Wilcoxon p (Holm)"
+    for ax, pr in zip(axes, pairs):
+        style_axes(ax)
+        g = pr.used
+        va = pd.to_numeric(g[f"{metric} {pr.a}"], errors="coerce").to_numpy(float)
+        vb = pd.to_numeric(g[f"{metric} {pr.b}"], errors="coerce").to_numpy(float)
+        ok = np.isfinite(va) & np.isfinite(vb)
+        ids = [str(s) for s in g["subject"]] if "subject" in g.columns else [""] * len(g)
+        for p0, p1, name in zip(va[ok], vb[ok], np.asarray(ids, dtype=object)[ok]):
+            ax.plot([0, 1], [p0, p1], "-o", color=muted, ms=3.5, lw=0.9, alpha=0.8)
+            ax.annotate(name, (1, p1), xytext=(4, 0), textcoords="offset points",
+                        fontsize=6.5, color=muted, va="center")
+        if ok.any():
+            ax.plot([0, 1], [np.median(va[ok]), np.median(vb[ok])], "-", color=color, lw=2.6)
+        ax.set_xticks([0, 1], [pr.name_a, pr.name_b], fontsize=8)
+        ax.set_xlim(-0.3, 1.35)
+        p = ph = float("nan")
+        if len(pr.stats) and metric in set(pr.stats["Metric"]):
+            r = pr.stats.set_index("Metric").loc[metric]
+            p = float(r["Wilcoxon p"])
+            ph = float(r.get(holm_col, float("nan")))
+        ax.set_title(f"{pr.title}\nn = {int(ok.sum())} · p = {_p_text(p)}"
+                     f" (Holm{' all' if res.holm_across else ''} {_p_text(ph)})", fontsize=9)
+    axes[0].set_ylabel(metric, fontsize=9)
+    for ax in axes[len(pairs):]:
+        ax.set_axis_off()
+    fig.suptitle((title + "  ·  " if title else "")
+                 + "one line per animal, median thick · two-sided Wilcoxon signed-rank across "
+                   "animals", fontsize=8, color=muted)
     return True

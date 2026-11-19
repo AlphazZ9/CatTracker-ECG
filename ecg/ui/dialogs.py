@@ -36,11 +36,17 @@ from ecg.ui.theme import (
     FONT_DIALOG_TITLE, FONT_MONO,
 )
 from ecg.ui.theme import combo_style, input_style
-from ecg.ui.theme import button_style
+from ecg.ui.theme import button_style, disabled_style
 from ecg.core.models import MouseECG
 from ecg.core.ml_detector import (
-    training_data_summary, list_training_files, delete_training_sample,
-    train_model, MLPeakModel,
+    list_training_files, delete_training_sample,
+    train_model, MLPeakModel, MIN_EXAMPLES_RECOMMENDED,
+)
+from ecg.io.session import _file_fingerprint
+from ecg.ui.ml_examples import BUSY_MESSAGE as ML_BUSY_MESSAGE
+from ecg.ui.ml_examples import (
+    status_text as ml_status_text, train_gate as ml_train_gate,
+    train_result_text as ml_train_result_text,
 )
 from ecg.io.db import (
     _DB_AVAILABLE, verified_recordings, set_verified,
@@ -1263,21 +1269,45 @@ class PacingPeriodManagerDialog(ctk.CTkToplevel):
 # ════════════════════════════════════════════════════════════════════════
 
 class MLTrainingDialog(ctk.CTkToplevel):
-    """Modal dialog: shows verified-recording stats and trains the ML detector.
+    """Modal dialog: how to train the ML detector, its training examples
+    (each removable) and the Train button, with the result in plain words.
 
     Operates only on the pooled ml_training/*.npz cache and the persisted
     model (ecg.core.ml_detector) -- independent of whichever recording (if
-    any) is currently open in the main window.
+    any) is currently open in the main window, except that removing the open
+    recording's example updates its button in the main window.
     """
 
     ROW_H = 30
+    HOW_TO = (
+        "1.  Detect the peaks with another method (SG + Derivative, Wavelet…) "
+        "and correct them (Edit Peaks, Review artifacts).",
+        "2.  Click “Add recording to training examples” (Signal quality panel, "
+        "ML DETECTOR).",
+        f"3.  Repeat for at least {MIN_EXAMPLES_RECOMMENDED} recordings, from "
+        "different animals / sessions.",
+        "4.  Click Train model below.",
+        "5.  For new recordings choose Method = ML Detector, and check its peaks "
+        "with Check agreement.",
+    )
 
     def __init__(self, parent):
         super().__init__(parent)
         self._app = parent
         self.title("ML R-Peak Detector")
-        self.geometry("560x620")
-        self.minsize(480, 440)
+        # 760 px tall where there is room; on a 768-px screen that pushed
+        # Train and Close under the taskbar. The list scrolls and the buttons
+        # are packed bottom-first, so a shorter window loses nothing.
+        try:
+            scaling = float(self._get_window_scaling())
+        except (AttributeError, TypeError, ValueError):
+            scaling = 1.0
+        scaling = max(scaling, 0.1)
+        screen_h = self.winfo_screenheight()           # pixels, like x / y
+        height = max(480, min(760, int(screen_h / scaling) - 100))   # unscaled
+        y = max(0, (screen_h - int(height * scaling) - 60) // 2)
+        self.geometry(f"620x{height}+{max(0, parent.winfo_rootx() + 40)}+{y}")
+        self.minsize(520, min(520, height))
         self.resizable(True, True)
         self.configure(fg_color=BG)
         self.grab_set()
@@ -1286,92 +1316,134 @@ class MLTrainingDialog(ctk.CTkToplevel):
         ctk.CTkLabel(self, text="🤖  ML R-Peak Detector", font=FONT_TITLE,
                      text_color=TEXT, anchor="w").pack(fill="x", padx=20, pady=(20, 4))
         ctk.CTkLabel(
-            self, text="Trains a classifier from recordings marked "
-                       "“Verified for training” (Signal quality panel, Method = ML Detector, "
-                       "saved with the session). Verify a few recordings "
-                       "with clean, corrected R-peaks, then train.",
+            self, text="The ML detector learns what an R-peak looks like from "
+                       "recordings whose peaks you corrected: the training examples.",
             font=FONT_SMALL, text_color=MUTED, anchor="w", justify="left",
-            wraplength=510).pack(fill="x", padx=20, pady=(0, 12))
+            wraplength=570).pack(fill="x", padx=20, pady=(0, 6))
+        howto = ctk.CTkFrame(self, fg_color=CARD, corner_radius=8,
+                             border_width=1, border_color=BORDER)
+        howto.pack(fill="x", padx=20, pady=(0, 10))
+        ctk.CTkLabel(howto, text="How to train", font=FONT_LABEL, text_color=TEXT,
+                     anchor="w").pack(fill="x", padx=14, pady=(10, 2))
+        for step in self.HOW_TO:
+            ctk.CTkLabel(howto, text=step, font=FONT_SMALL, text_color=TEXT,
+                         anchor="w", justify="left", wraplength=550
+                         ).pack(fill="x", padx=14, pady=0)
+        ctk.CTkFrame(howto, fg_color="transparent", height=8).pack()
 
-        stats_card = ctk.CTkFrame(self, fg_color=CARD, corner_radius=8,
-                                   border_width=1, border_color=BORDER)
-        stats_card.pack(fill="x", padx=20, pady=(0, 12))
         self._lbl_verified = ctk.CTkLabel(
-            stats_card, text="", font=FONT_LABEL, text_color=TEXT,
-            anchor="w", justify="left", wraplength=500)
-        self._lbl_verified.pack(fill="x", padx=14, pady=(12, 4))
+            self, text="", font=FONT_LABEL, text_color=TEXT,
+            anchor="w", justify="left", wraplength=570)
+        self._lbl_verified.pack(fill="x", padx=20, pady=(0, 2))
         self._lbl_model = ctk.CTkLabel(
-            stats_card, text="", font=FONT_SMALL, text_color=MUTED,
-            anchor="w", justify="left", wraplength=500)
-        self._lbl_model.pack(fill="x", padx=14, pady=(0, 12))
+            self, text="", font=FONT_SMALL, text_color=MUTED,
+            anchor="w", justify="left", wraplength=570)
+        self._lbl_model.pack(fill="x", padx=20, pady=(0, 8))
 
-        # ── Verified-file list ──────────────────────────────────────────
-        ctk.CTkLabel(self, text="Verified files", font=FONT_LABEL,
-                     text_color=TEXT, anchor="w").pack(fill="x", padx=20, pady=(0, 4))
-        self._list_frame = ctk.CTkScrollableFrame(self, fg_color=CARD)
-        self._list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 12))
-
+        # ── Close / Train, bottom first: they keep their room whatever the
+        # list's length ──────────────────────────────────────────────────
+        ctk.CTkButton(
+            self,
+            text="Close",
+            command=self.destroy,
+            **button_style("secondary"),
+        ).pack(side="bottom", fill="x", padx=20, pady=(0, 20))
+        self.btn_train = ctk.CTkButton(
+            self,
+            text="▶  Train model",
+            command=self._train,
+            **button_style("primary"),
+        )
+        self.btn_train.pack(side="bottom", fill="x", padx=20, pady=(0, 8))
+        self._lbl_gate = ctk.CTkLabel(
+            self, text="", font=FONT_SMALL, text_color=ORANGE,
+            anchor="w", justify="left", wraplength=570)
+        self._lbl_gate.pack(side="bottom", fill="x", padx=20, pady=(0, 4))
         self._lbl_result = ctk.CTkLabel(
             self, text="", font=FONT_SMALL, text_color=MUTED,
-            anchor="w", justify="left", wraplength=510)
-        self._lbl_result.pack(fill="x", padx=20, pady=(0, 8))
+            anchor="w", justify="left", wraplength=570)
+        self._lbl_result.pack(side="bottom", fill="x", padx=20, pady=(0, 6))
 
         # ── Hold-out confusion matrix (hidden until a trained model with
         # this data exists -- older models saved before this feature won't
         # have it in their meta) ──────────────────────────────────────────
         self._cm_frame = ctk.CTkFrame(self, fg_color=CARD, corner_radius=8,
                                        border_width=1, border_color=BORDER)
-        self._cm_fig = Figure(figsize=(2.6, 2.0), dpi=90,
+        self._cm_fig = Figure(figsize=(2.4, 1.8), dpi=90,
                               facecolor=PLOT["bg"], tight_layout=True)
         self._cm_canvas = FigureCanvasTkAgg(self._cm_fig, master=self._cm_frame)
         self._cm_canvas.get_tk_widget().pack(side="left", padx=(10, 4), pady=10)
         self._lbl_cm_metrics = ctk.CTkLabel(
             self._cm_frame, text="", font=FONT_SMALL, text_color=TEXT,
-            anchor="w", justify="left")
+            anchor="w", justify="left", wraplength=300)
         self._lbl_cm_metrics.pack(side="left", fill="x", expand=True,
                                    padx=(4, 10), pady=10)
         # Not packed yet -- _maybe_show_confusion_matrix() packs/unpacks it.
 
-        self.btn_train = ctk.CTkButton(
-            self,
-            text="▶  Train Model",
-            command=self._train,
-            **button_style("primary"),
-        )
-        self.btn_train.pack(fill="x", padx=20, pady=(0, 8))
-
-        ctk.CTkButton(
-            self,
-            text="Close",
-            command=self.destroy,
-            **button_style("secondary"),
-        ).pack(fill="x", padx=20, pady=(0, 20))
+        # ── Training examples ───────────────────────────────────────────
+        self._lbl_list = ctk.CTkLabel(self, text="Training examples", font=FONT_LABEL,
+                                      text_color=TEXT, anchor="w")
+        self._lbl_list.pack(fill="x", padx=20, pady=(0, 2))
+        cols = ctk.CTkFrame(self, fg_color="transparent")
+        cols.pack(fill="x", padx=22, pady=(0, 2))
+        for text, width, expand in (("Recording", 0, True), ("Added", 90, False),
+                                    ("Peaks", 60, False), ("Rate", 70, False),
+                                    ("", 70, False)):
+            ctk.CTkLabel(cols, text=text, font=FONT_HINT, text_color=MUTED,
+                         width=width, anchor="w").pack(side="left", padx=4,
+                                                       fill="x", expand=expand)
+        self._list_frame = ctk.CTkScrollableFrame(self, fg_color=CARD)
+        self._list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 8))
 
         self._refresh_stats()
 
+    # ── Data ────────────────────────────────────────────────────────────
+    def _examples(self) -> "list[dict]":
+        """list_training_files() with each example's file name and path: the
+        path cached with it, else the registry's row with its fingerprint."""
+        files = list_training_files()
+        by_fingerprint: "dict[str, dict]" = {}
+        if _DB_AVAILABLE and any(not e.get("source_path") for e in files):
+            for row in verified_recordings(limit=1000):
+                by_fingerprint[row.get("fingerprint", "")] = row
+        out = []
+        for e in files:
+            path = e.get("source_path") or (by_fingerprint.get(e["fingerprint"]) or {}).get("filepath")
+            name = Path(path).name if path else f"Unknown file ({e['fingerprint'][:12]}…)"
+            out.append({**e, "filepath": path or None, "name": name})
+        return out
+
     def _refresh_stats(self) -> None:
-        summary = training_data_summary()
-        self._lbl_verified.configure(
-            text=f"{summary['n_files']} verified recording(s)  —  "
-                 f"{summary['n_samples']} labeled candidates "
-                 f"({summary['n_positive']} R-peaks)")
+        examples = self._examples()
         model = MLPeakModel.load()
-        if model is not None:
-            meta = model.meta
+        meta = model.meta if model is not None else None
+        _short, full, tone = ml_status_text(examples, meta)
+        self._lbl_verified.configure(
+            text=full, text_color=GREEN if tone == "ok" else (ORANGE if tone == "warn" else TEXT))
+        if meta is not None:
+            acc = meta.get("holdout_accuracy")
+            acc_txt = (f" — {acc * 100:.0f} % of candidate peaks classified correctly on "
+                       "held-out data (recordings kept aside to check it)"
+                       if isinstance(acc, (int, float)) else "")
             self._lbl_model.configure(
-                text=f"Current model — trained {str(meta.get('trained_at', '?'))[:19]} on "
-                     f"{meta.get('n_training_files', '?')} file(s), "
-                     f"{meta.get('n_training_samples', '?')} samples.  "
-                     f"Hold-out accuracy={meta.get('holdout_accuracy', 0):.2f}, "
-                     f"F1={meta.get('holdout_f1', 0):.2f}")
+                text=f"Current model: trained {str(meta.get('trained_at', '?'))[:16].replace('T', ' ')} "
+                     f"on {meta.get('n_training_files', '?')} training examples{acc_txt}.")
             self._maybe_show_confusion_matrix(
                 meta.get("holdout_confusion_matrix"),
                 meta.get("holdout_precision", 0.0), meta.get("holdout_recall", 0.0),
                 meta.get("holdout_f1", 0.0), meta.get("holdout_n_test", 0))
         else:
-            self._lbl_model.configure(text="No model trained yet.")
+            # The status line above already says there is no model.
+            self._lbl_model.configure(text="")
             self._maybe_show_confusion_matrix(None, 0.0, 0.0, 0.0, 0)
-        self._refresh_file_list()
+        ok, gate = ml_train_gate(len(examples))
+        # Disabled: the shared disabled look, not a blue fill that reads
+        # as clickable.
+        self.btn_train.configure(state="normal" if ok else "disabled",
+                                 **(button_style("primary") if ok else disabled_style()))
+        self._lbl_gate.configure(text=gate, text_color=ORANGE if ok else RED)
+        self._lbl_list.configure(text=f"Training examples ({len(examples)})")
+        self._refresh_file_list(examples)
 
     def _maybe_show_confusion_matrix(
         self, cm: "Optional[list]", precision: float, recall: float,
@@ -1386,11 +1458,11 @@ class MLTrainingDialog(ctk.CTkToplevel):
         ax = self._cm_fig.axes[0] if self._cm_fig.axes else self._cm_fig.add_subplot(111)
         ax.clear()
         ax.imshow(cm_arr, cmap="Blues", vmin=0)
-        labels = ["Non-peak", "Peak"]
+        labels = ["Not a peak", "R-peak"]
         ax.set_xticks([0, 1]); ax.set_xticklabels(labels, fontsize=7)
         ax.set_yticks([0, 1]); ax.set_yticklabels(labels, fontsize=7)
-        ax.set_xlabel("Predicted", fontsize=7, color=PLOT.get("muted", MUTED))
-        ax.set_ylabel("Actual", fontsize=7, color=PLOT.get("muted", MUTED))
+        ax.set_xlabel("Model says", fontsize=7, color=PLOT.get("muted", MUTED))
+        ax.set_ylabel("Your peaks", fontsize=7, color=PLOT.get("muted", MUTED))
         vmax = max(cm_arr.max(), 1)
         for r in range(2):
             for c in range(2):
@@ -1400,105 +1472,106 @@ class MLTrainingDialog(ctk.CTkToplevel):
         ax.tick_params(colors=PLOT.get("muted", MUTED))
         for spine in ax.spines.values():
             spine.set_visible(False)
-        self._cm_fig.suptitle("Hold-out confusion matrix", fontsize=8,
+        self._cm_fig.suptitle("Check on held-out data", fontsize=8,
                               color=PLOT.get("text", TEXT))
         self._cm_canvas.draw()
 
         self._lbl_cm_metrics.configure(
-            text=f"Precision  {precision:.2f}\n"
-                 f"Recall      {recall:.2f}\n"
-                 f"F1          {f1:.2f}\n"
-                 f"n (hold-out)  {n_test}")
-        # before= is required: by the time this runs (end of __init__, or a
-        # later _refresh_stats() call), btn_train/Close are already packed,
-        # so a bare .pack() would append this AFTER them instead of in its
-        # intended spot between the result label and the Train button.
-        self._cm_frame.pack(fill="x", padx=20, pady=(0, 8), before=self.btn_train)
+            text=f"Found {recall * 100:.0f} % of your R-peaks.\n"
+                 f"{precision * 100:.0f} % of the peaks it marked are yours.\n"
+                 f"Checked on {n_test:,} candidate peaks of recordings kept aside.")
+        # before= keeps it above the examples list (packed after it, top-down).
+        self._cm_frame.pack(fill="x", padx=20, pady=(0, 8), before=self._lbl_list)
 
-    def _refresh_file_list(self) -> None:
-        """Repopulate the scrollable list of cached training files.
-
-        Cross-references each cached fingerprint against the sqlite
-        registry (if available) to show a filename instead of a hash --
-        the .npz cache itself has no notion of the original file path.
-        """
+    def _refresh_file_list(self, examples: "Optional[list[dict]]" = None) -> None:
+        """Repopulate the scrollable list of training examples: file name,
+        date added, number of peaks, mean rate, and a Remove button."""
         for w in self._list_frame.winfo_children():
             w.destroy()
-
-        files = list_training_files()
-        if not files:
-            ctk.CTkLabel(self._list_frame, text="No verified recordings yet.",
+        if examples is None:
+            examples = self._examples()
+        self._row_buttons: "list[ctk.CTkButton]" = []
+        if not examples:
+            ctk.CTkLabel(self._list_frame,
+                         text="No training examples yet — see step 2 above.",
                          text_color=MUTED).pack(padx=12, pady=16)
             return
 
-        by_fingerprint: "dict[str, dict]" = {}
-        if _DB_AVAILABLE:
-            for row in verified_recordings(limit=1000):
-                by_fingerprint[row.get("fingerprint", "")] = row
-
-        for i, entry in enumerate(files):
-            fp = entry["fingerprint"]
-            row_data = by_fingerprint.get(fp)
-            label = Path(row_data["filepath"]).name if row_data else f"Unknown file ({fp[:12]}…)"
-            filepath = row_data["filepath"] if row_data else None
-
+        for i, entry in enumerate(examples):
             row = ctk.CTkFrame(self._list_frame,
                                fg_color=CARD if i % 2 == 0 else BG,
                                height=self.ROW_H, corner_radius=0)
             row.pack(fill="x", padx=2, pady=1)
-            ctk.CTkLabel(row, text=label, font=FONT_SMALL, text_color=TEXT,
+            ctk.CTkLabel(row, text=entry["name"], font=FONT_SMALL, text_color=TEXT,
                          anchor="w").pack(side="left", padx=(6, 4), fill="x", expand=True)
-            ctk.CTkLabel(row, text=f"{entry['n_samples']} samples "
-                                    f"({entry['n_positive']} peaks)",
-                         font=FONT_HINT, text_color=MUTED, width=140,
-                         anchor="e").pack(side="left", padx=4)
-            ctk.CTkButton(
+            added = str(entry.get("added_at", ""))[:10]
+            rate = entry.get("rate_bpm")
+            for text, width in ((added, 90), (f"{entry.get('n_peaks', 0):,}", 60),
+                                (f"{rate:.0f} bpm" if rate else "—", 70)):
+                ctk.CTkLabel(row, text=text, font=FONT_HINT, text_color=MUTED,
+                             width=width, anchor="w").pack(side="left", padx=4)
+            btn = ctk.CTkButton(
                 row,
-                text="🗑",
-                width=28,
-                command=lambda fp=fp, filepath=filepath: self._remove_file(fp, filepath),
+                text="Remove",
+                width=70,
+                command=lambda e=entry: self._remove_file(e["fingerprint"], e["filepath"],
+                                                          e["name"]),
                 **button_style("danger"),
-            ).pack(side="left", padx=(4, 6))
+            )
+            btn.pack(side="left", padx=(4, 6))
+            self._row_buttons.append(btn)
 
-    def _remove_file(self, fingerprint: str, filepath: "Optional[str]") -> None:
-        """Un-verify one cached recording: drop its .npz cache and DB flag.
+    def _remove_file(self, fingerprint: str, filepath: "Optional[str]",
+                     name: str = "", confirm: bool = True) -> bool:
+        """Take one recording out of the training examples (after a
+        confirmation): drop its .npz cache and registry flag.
 
-        Does not retrain automatically -- the removed file simply won't be
-        included next time "Train Model" is clicked.
+        Does not retrain automatically -- the model changes the next time
+        Train model is clicked (the status then suggests a retrain).
         """
+        if self._main_window_busy():
+            return False
+        if confirm and not messagebox.askyesno(
+                "Remove training example",
+                f"Remove {name or 'this recording'} from the training examples?\n\n"
+                "The model changes only when you train it again.",
+                icon="warning", parent=self):
+            return False
         delete_training_sample(fingerprint)
         if filepath and _DB_AVAILABLE:
             set_verified(filepath, False)
-        # If the removed file happens to be the one currently open in the
-        # main window, keep its sidebar switch in sync too.
+        # The open recording: its example button follows.
         app = self._app
-        if filepath and getattr(app, "signal", None) is not None and app.signal.filepath == filepath:
+        open_path = getattr(getattr(app, "signal", None), "filepath", None)
+        if open_path and (open_path == filepath or _file_fingerprint(open_path) == fingerprint):
             app.session.verified_for_training = False
             app.session_ctrl.sync_verified_switch()
         self._refresh_stats()
+        return True
+
+    def _main_window_busy(self) -> bool:
+        """A job of the main window (Add / Update an example, Save Session)
+        may be writing a training example: removing it now would be undone
+        by that job, and training would read it half written. Says so in the
+        dialog, which is where the user is looking."""
+        if not getattr(self._app, "_async_busy", False):
+            return False
+        self._lbl_result.configure(
+            text=f"{ML_BUSY_MESSAGE}: an operation of the main window is still running.",
+            text_color=ORANGE)
+        return True
 
     def _train(self) -> None:
+        if self._main_window_busy():
+            return
         self.btn_train.configure(state="disabled", text="Training…")  # type: ignore[union-attr]
         self.update_idletasks()
         try:
             result = train_model()
         finally:
-            self.btn_train.configure(state="normal", text="▶  Train Model")  # type: ignore[union-attr]
-        if result.get("ok"):
-            prev_acc, prev_f1 = result.get("previous_accuracy"), result.get("previous_f1")
-            if prev_acc is not None:
-                # A previous model existed and was just overwritten (kept as
-                # a .bak on disk, see MLPeakModel.save) -- show the delta so
-                # a regression is visible immediately.
-                stats = (f"(accuracy {prev_acc:.2f}→{result['accuracy']:.2f}, "
-                         f"F1 {prev_f1:.2f}→{result['f1']:.2f} vs. previous model)")
-            else:
-                stats = f"(accuracy={result['accuracy']:.2f}, F1={result['f1']:.2f})"
-            self._lbl_result.configure(
-                text=f"✓ {result['message']}  {stats}",
-                text_color=GREEN)
-        else:
-            self._lbl_result.configure(text=f"✗ {result['message']}", text_color=ORANGE)
+            self.btn_train.configure(state="normal", text="▶  Train model")  # type: ignore[union-attr]
+        self._lbl_result.configure(text=ml_train_result_text(result),
+                                   text_color=GREEN if result.get("ok") else ORANGE)
         self._refresh_stats()
 
 

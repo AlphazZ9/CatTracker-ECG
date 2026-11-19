@@ -67,12 +67,14 @@ def _rebuilt_app(*, edit_mode=False, free=False, verified=False, preview=False):
         # Freshly rebuilt widgets: all in their default OFF look.
         btn_edit_mode=_Button("Edit Peaks"), lbl_edit_hint=_Label(),
         btn_free_placement=_Button("Free Placement"),
-        sw_verified_training=_Switch(False), sw_filter_preview=_Switch(False),
+        sw_filter_preview=_Switch(False),
         sw_permissive=_Switch(False),
         sl_thr=None, cb_clean=None, cb_det_method=None, tabs=None,
         analysis_ctrl=SimpleNamespace(apply_autonomic_params=lambda p: None),
     )
     app._toggle_edit_mode = lambda: toggles.append(1)
+    app.ml_example_refreshes = []
+    app._refresh_ml_example = lambda force=False: app.ml_example_refreshes.append(force)
     return app, toggles
 
 
@@ -94,10 +96,12 @@ def test_edit_mode_off_stays_off_after_rebuild():
     assert app.btn_free_placement.text == "Free Placement"
 
 
-def test_verified_and_filter_preview_follow_the_state():
+def test_training_example_button_and_filter_preview_follow_the_state():
     app, _ = _rebuilt_app(verified=True, preview=True)
     SessionController(app).restore_ui_state({})
-    assert app.sw_verified_training.on
+    # The rebuilt training-example button is redrawn from the training cache
+    # (forced: the new widget has no memory of what it showed).
+    assert app.ml_example_refreshes == [True]
     assert app.sw_filter_preview.on
     # Syncing the widget must not change the state it mirrors.
     assert app.session.verified_for_training is True

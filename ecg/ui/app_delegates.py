@@ -204,12 +204,13 @@ class DelegatesMixin:
         """Show/hide SG options frame based on selected detection method."""
         self.detection_ctrl.on_det_method_change(choice)
 
-    # ── ML detector: verified-for-training switch ────────────
-    def _on_verified_training_toggle(self: ECGApp) -> None:
-        self.session_ctrl.on_verified_training_toggle()
+    # ── ML detector: training examples ───────────────────────
+    def _add_training_example(self: ECGApp) -> None:
+        """Add (or update) the open recording as a training example, now."""
+        self.session_ctrl.add_training_example()
 
-    def _save_for_training_only(self: ECGApp) -> None:
-        self.session_ctrl.save_for_training_only()
+    def _remove_training_example(self: ECGApp) -> None:
+        self.session_ctrl.remove_training_example()
 
     def _open_ml_training_dialog(self: ECGApp) -> None:
         """Open the Train/Retrain dialog for the ML R-peak detector."""
@@ -219,36 +220,40 @@ class DelegatesMixin:
         self.refresh_ml_status()
 
     def refresh_ml_status(self: ECGApp) -> None:
-        """Update the ML-detector sidebar status label.
+        """Update the ML DETECTOR section's status (its header's short form
+        and the full line under it) and its training-example button.
 
-        Shows verified-file/sample counts and, if a model is trained, its
-        hold-out accuracy/F1 from the metadata sidecar. Called on startup,
-        after Save Session, and after the training dialog closes.
+        Plain words (ml_examples.status_text): how many training examples,
+        what the model was trained on and how often it was right on held-out
+        data, and whether a retrain is suggested. Called on startup, after
+        adding / removing an example, after Save Session, on Method change
+        and after the training dialog closes.
         """
         if self.lbl_ml_status is None:
             return
-        from ecg.core.ml_detector import training_data_summary, MLPeakModel
-        summary = training_data_summary()
+        from ecg.core.ml_detector import list_training_files, MLPeakModel
+        from ecg.ui.ml_examples import panel_text, status_text, TONE_OK, TONE_WARN
         model = MLPeakModel.load()
-        if model is not None:
-            meta = model.meta
-            text = (f"Model trained on {meta.get('n_training_files', '?')} file(s), "
-                    f"{meta.get('n_training_samples', '?')} samples — "
-                    f"acc={meta.get('holdout_accuracy', 0):.2f} "
-                    f"f1={meta.get('holdout_f1', 0):.2f}\n"
-                    f"{summary['n_files']} file(s) currently verified.")
-            color = GREEN
-        else:
-            text = (f"No trained model yet. {summary['n_files']} file(s) verified "
-                    f"({summary['n_samples']} samples).")
-            color = MUTED
-        self.lbl_ml_status.configure(text=text, text_color=color)  # type: ignore[union-attr]
-        # A second copy beside the Method combobox, when a layout has one
-        # (none now: lbl_ml_status sits in the quality panel's ML section,
-        # shown with Method = ML Detector).
-        inline = getattr(self, "lbl_ml_inline_status", None)
-        if inline is not None:
-            inline.configure(text=text, text_color=color)
+        cb = getattr(self, "cb_det_method", None)
+        ml_selected = cb is not None and cb.get() == "ML Detector"
+        # Method = ML Detector without a model: the status line says what to
+        # do (the status bar is too narrow for it on a laptop screen).
+        self._ml_no_model_note = ml_selected and model is None
+        examples = list_training_files()
+        meta = model.meta if model is not None else None
+        short, full, tone = status_text(examples, meta, ml_selected=ml_selected)
+        color = GREEN if tone == TONE_OK else (ORANGE if tone == TONE_WARN else MUTED)
+        # The section's line is the one-line form; the full status is its
+        # tooltip (and the training dialog's status line).
+        self._ml_status_full = full
+        self.lbl_ml_status.configure(  # type: ignore[union-attr]
+            text=panel_text(examples, meta, ml_selected=ml_selected), text_color=color)
+        short_lbl = getattr(self, "lbl_ml_short", None)
+        if short_lbl is not None:
+            short_lbl.configure(text=short, text_color=color)
+        refresh = getattr(self, "_refresh_ml_example", None)
+        if refresh is not None:
+            refresh(force=True)
 
     # ── Filtering master toggle ───────────────────────────────
 
@@ -413,7 +418,8 @@ class DelegatesMixin:
     def _open_file(self: ECGApp) -> None:
         path = filedialog.askopenfilename(
             title="Open Spike2 .mat",
-            filetypes=[("MATLAB files", "*.mat"), ("All", "*.*")],
+            filetypes=[("ECG recordings", "*.mat *.smr"), ("MATLAB files", "*.mat"),
+                       ("Spike2 files", "*.smr"), ("All", "*.*")],
         )
         if path:
             self._load_path(path)
