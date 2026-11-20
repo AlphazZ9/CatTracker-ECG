@@ -94,6 +94,27 @@ choice does to the display.
 Opening a file immediately shows the raw trace with no processing. Nothing
 is filtered, detected, or analyzed until you click **Detect Peaks**.
 
+**Subject and sex from the file name.** Opening a file fills **Subject ID**
+and **Sex** (M / F, beside it in the Recording sheet) from its name:
+"Stim BNST - 1146 F.smr" gives 1146 and F, "Baseline_STIM_BNST_206.mat" gives
+206 and no sex. The sex is a standalone M or F (separated by a space, _ or -,
+or glued to the number: "1146F", "F1146", "M_206"; never a letter of a word
+such as the F of "FIELD"; a lower case m after a number, as in "10 m", is
+read as minutes). The subject is the number right before (else after) that
+M / F, but not one glued to a word ("Ch6_F" and "Exp4_F" are a channel and an
+experiment); otherwise the last number of two digits or more that is not a
+date or a time (2026-11-19, 20261119, 173903), preferring one without a unit
+("100Hz", "10 min"). Each field is filled only while it holds what the app
+put there (empty, the "subject_01" placeholder, or the value read from the
+previous file's name, which the next file replaces or clears): a value you
+typed is never replaced (the status line says so when the file name points to
+another animal), and a saved session restores its own. A session saved by an
+older version may hold the channel's digits as subject (2066 for channel
+"Baseline_STIM_BNST_206_Ch6"); the file name's subject replaces that value. The sex goes to the group table (column *sex*) and its exports
+(Excel report: *Rows checked* and *Paired values*; Prism: row titles
+"1146 (F)" and the animals by sex in the project notes); the statistics still
+use every animal, whatever its sex.
+
 ---
 
 ## R-peak detection
@@ -380,14 +401,15 @@ sample for display only). **Export** (the Results card, once ▶ Compare has run
 workbook (Comparison with Δ % against the first segment, Quality, Summary with
 the windows and bands, Blocks, then the RR series and Poincaré pairs
 of each segment), or the metric table alone as **.csv**; **Prism…** a GraphPad
-file (the metric table with one column per segment, the HR block means, the RR
-series and Poincaré pairs, the windows and quality in the project notes);
+file (the metric table, one table per metric, the HR block means, the RR
+series and Poincaré pairs, the windows and quality in the project notes), or
+fills a Prism template (see *GraphPad Prism: tables and templates* below);
 **Copy table** puts the metric table on the clipboard for Excel or Prism;
 **Figures…** saves the tachograms and the Poincaré plots (300 dpi PNG, or vector
 PDF / SVG). The Report tab's Excel, ZIP and Prism exports include the last
 comparison too ("Seg …" sheets, "Segments — …" tables), as long as the
 recording and its peaks are those it was computed on. **➕ Add to group table…** adds this recording to an
-.xlsx with one row per recording (subject, file, template — empty now, then per segment its
+.xlsx with one row per recording (subject, sex, file, template — empty now, then per segment its
 times, valid RR %, pairs, QC and every metric, columns named after the segment
 labels; the same recording again replaces its row): use the same windows and
 labels for every animal and the columns line up for a paired test (2 segments: Wilcoxon
@@ -433,6 +455,8 @@ then saves one workbook: a Summary sheet (pair × metric: n, median Δ,
 Wilcoxon p, Holm p) and one sheet per pair with the single-pair report
 (Statistics, About, Rows checked, Paired values); **Figure…** one Mean HR
 panel per pair (one line per animal, the median thick, the pair's p).
+**Prism…** writes the group table for GraphPad Prism (next section), without
+the rows the last ▶ Run left out (the project notes say which and why).
 
 Click **▶ Compare**: the table shows every metric for every segment, with the same definitions
 as the main panels. Each segment is also cut into **non-overlapping blocks**
@@ -447,6 +471,53 @@ statistics / cohort tools. The Excel export adds a **Blocks** sheet (one row
 per block) and the note. Earlier versions ran a Mann-Whitney U test on the
 beat-level RR intervals (hundreds of autocorrelated values), which made
 almost any two segments "significant".
+
+### GraphPad Prism: tables and templates
+
+Both **Prism…** buttons (the Results card: this recording; the Group card: the
+group table) write **one Column table per metric**, titled as in the
+comparison table ("SDNN (ms)"): one row per animal (row titles = subjects, with the sex when known: "1146 (F)"), one
+column per segment, named by its label. That is the layout of a paired t /
+Wilcoxon / RM ANOVA and of a before-after or bars-and-points graph. In Pairs
+mode (Results card, *Δ % against: Pairs*) and in *All pairs* (Group card) it is
+one table per pair and metric instead, the reference first:
+"SDNN (ms) · Post Stim 1min vs Pre Stim 1min" — with the tags,
+"(B vs A)", when segments share a label. The same protocol gives the same
+titles in every file. With only 2 segments a recording's tables are always
+"SDNN (ms)" (all segments), even in Pairs mode: to fill a template made from
+such an export with the group, use the Group card's *One pair* mode, whose
+tables have the same titles (*All pairs* gives "SDNN (ms) · B vs A"). The recording's export also keeps its comparison table,
+HR block means, RR series and Poincaré pairs.
+
+**New Prism file…** writes a fresh .pzfx. **Fill a Prism template…** pours the
+new data into graphs and tests you made once:
+
+1. Export once (**Prism… > New Prism file…**) and open the file in Prism.
+2. Make your graphs (before-after, bars and points…) and analyses (paired t,
+   Wilcoxon, RM ANOVA) on its tables. You can delete the tables you do not
+   need, but each fill adds them back at the end as plain tables (no graph).
+3. **File > Save As > Prism XML (.pzfx)** — a .prism file (Prism 10 and
+   later) cannot be read: the app asks for the .pzfx.
+4. Next time: **Prism… > Fill a Prism template…**, choose that .pzfx, then
+   where to save (default: *<name>_<template>.pzfx* next to it; the template
+   itself is never overwritten). The app remembers the last template.
+
+Each template table whose title matches one of the tables (case and spacing
+do not count) gets the new rows and columns: columns are matched by title,
+else by position (the template's titles and column widths are kept); an extra
+segment becomes an extra column, a template column without data is emptied,
+not removed (X values too, Prism's *XAdvancedColumn* copy included). Tables
+the template does not have are added at the end (no graph). A template table
+the app makes but has no data for this time (a pair whose animals were all
+left out, a recording's Comparison / RR / Poincaré table filled from the
+group) is **emptied** — never left with the previous animals — and the status
+turns orange to say so; any other template table (your own) is left as it
+was. A template that is not valid XML is refused: open it in Prism and save
+it again as .pzfx. Everything else — graphs,
+analyses, layouts, your info sheets — is copied as it is: Prism redraws the
+graphs and recomputes the tests when it opens the file. The status line and
+the project notes (sheet *ECG Analysis export*) say what was filled, added or
+left alone.
 
 ---
 

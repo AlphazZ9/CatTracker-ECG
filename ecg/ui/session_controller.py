@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,6 +29,7 @@ from ecg.io.loaders import (
     load_mat_signal, read_spike2_markers, _serialise_results, _deserialise_results,
 )
 from ecg.io.session import load_session, save_session, delete_session
+from ecg.io.subject_name import is_default_subject
 from ecg.io.db import _DB_AVAILABLE, upsert_recording, set_verified
 from ecg.core.ml_detector import (
     save_training_sample, delete_training_sample, training_example_state,
@@ -906,7 +908,11 @@ class SessionController:
     # Settings of the Recording sheet / Filters popover that FilterParams
     # does not hold (it holds the ones the signal and the peaks depend on).
     # Absent from sessions saved before: the widgets then keep their values.
-    _RECORDING_ENTRIES = (("subject", "ent_subject"), ("sg_window_ms", "ent_sg_window_ms"))
+    _RECORDING_ENTRIES = (("subject", "ent_subject"), ("sex", "ent_sex"),
+                          ("sg_window_ms", "ent_sg_window_ms"))
+    # Entries the file name fills (SignalController.autofill_subject_from_name)
+    # -> the app attribute holding the value it put there.
+    _AUTOFILL_MARKERS = {"ent_subject": "_subject_autofill", "ent_sex": "_sex_autofill"}
 
     def recording_fields(self) -> dict:
         out: dict = {}
@@ -922,6 +928,21 @@ class SessionController:
             out["project_name"] = ent.get()
         return out
 
+    def _channel_digits(self) -> "str | None":
+        """The digits of the open channel's name, as the old subject-from-
+        channel rule joined them (SignalController.on_preview_done)."""
+        ch = getattr(getattr(self.app, "signal", None), "channel", None)
+        if not ch:
+            ent = getattr(self.app, "ent_channel", None)
+            try:
+                ch = ent.get() if ent is not None else None
+            except Exception:
+                ch = None
+        if not ch:
+            return None
+        name = re.sub(r"\[\d+\]$", "", str(ch))
+        return "".join(c for c in name if c.isdigit()) or None
+
     def apply_recording_fields(self, fields: object) -> None:
         """Write recording_fields() back; anything missing or unreadable keeps
         the widget's current value."""
@@ -932,9 +953,32 @@ class SessionController:
             val = fields.get(key)
             if w is None or not isinstance(val, str):
                 continue
+            marker = self._AUTOFILL_MARKERS.get(attr)
             try:
+                if marker is not None:
+                    cur = w.get().strip()
+                    auto = getattr(self.app, marker, None)
+                    # A session saved with the placeholder (or no sex) does
+                    # not erase what the file name just gave.
+                    empty = (not val.strip() or (attr == "ent_subject"
+                                                 and is_default_subject(val)))
+                    if empty and auto and cur == auto:
+                        continue
+                    # Sessions saved before the file-name rule may hold the
+                    # channel's digits ("Baseline_STIM_BNST_206_Ch6" ->
+                    # 2066), which the old channel rule put there: the
+                    # subject the file name just gave wins over them.
+                    if (attr == "ent_subject" and auto and cur == auto
+                            and val.strip() != auto
+                            and val.strip() == self._channel_digits()):
+                        continue
                 w.delete(0, "end")
-                w.insert(0, val)
+                if val:
+                    w.insert(0, val)
+                if marker is not None:
+                    # The recording's own value: the next file opened may
+                    # replace it, as one read from the file name.
+                    setattr(self.app, marker, val.strip() or None)
             except Exception as exc:
                 log.debug("restore %s failed: %s", attr, exc, exc_info=True)
         sw = getattr(self.app, "sw_show_raw", None)
@@ -1341,7 +1385,7 @@ class SessionController:
     # they live: Recording sheet, detection bar, Filters popover, context
     # strip (analysis window), quality panel, tabs.
     _SNAPSHOT_ENTRIES = (
-        "ent_project_name", "ent_channel", "ent_subject", "ent_fs", "ent_t_start",
+        "ent_project_name", "ent_channel", "ent_subject", "ent_sex", "ent_fs", "ent_t_start",
         "ent_t_end", "ent_lp", "ent_hp", "ent_minrr", "ent_maxrr",
         "ent_epoch", "ent_overlap", "ent_roll_win", "ent_roll_step",
         "ent_thr", "ent_window", "ent_analysis_t0", "ent_analysis_t1",

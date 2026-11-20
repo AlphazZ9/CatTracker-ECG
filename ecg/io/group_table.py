@@ -3,7 +3,7 @@
 ecg.io.group_table
 ------------------
 A group table of Compare segments results: one row per recording (subject,
-file, template, then per segment its times, quality and every metric), so
+sex, file, template, then per segment its times, quality and every metric), so
 that comparing the segments across animals is a paired / repeated-measures
 test on columns (Prism: a paired column table or one-way RM ANOVA; R /
 Python: one row per subject). The columns are tagged with the segment
@@ -22,7 +22,11 @@ import numpy as np
 import pandas as pd
 
 from ecg.core.segment_plan import segment_quality, unique_tags
+from ecg.io.subject_name import normalise_sex
 
+# The columns every group table has (the key of a row: subject and file).
+# "sex" comes right after "subject" in tables made since the Sex field; an
+# older table without it still opens, and gets it at its next row.
 ID_COLUMNS = ("subject", "file")
 
 
@@ -36,14 +40,15 @@ def _num(v) -> "Optional[float]":
 
 def group_row(subject: str, filepath: "Optional[str]", segs: "Sequence[dict]",
               metrics: "Iterable[tuple[str, str, str]]", template: str = "",
-              flags: "Optional[Sequence[Sequence[str]]]" = None) -> dict:
-    """The row of one recording: subject, file, template, then per segment
+              flags: "Optional[Sequence[Sequence[str]]]" = None, sex: str = "") -> dict:
+    """The row of one recording: subject, sex (M / F / '', a description of
+    the animal: never a metric), file, template, then per segment
     (tagged by its label) start, end, valid RR %, Poincaré pairs, QC flags
     and the label as typed, then each (key, label, unit) of *metrics*."""
     # Inner spacing does not make another segment ("Pre  5min" is "Pre 5min").
     tags = [" ".join(t.split()) for t in unique_tags([s.get("label", "") for s in segs])]
-    row = {"subject": subject or "", "file": os.path.basename(filepath or ""),
-           "template": template or ""}
+    row = {"subject": subject or "", "sex": normalise_sex(sex),
+           "file": os.path.basename(filepath or ""), "template": template or ""}
     for i, (tag, seg) in enumerate(zip(tags, segs)):
         q = segment_quality(seg)
         row[f"start (s) {tag}"] = _num(seg.get("t_lo"))
@@ -119,6 +124,11 @@ def append_group_row(path: str, row: dict) -> "tuple[int, bool]":
         df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
     else:
         df, replaced = pd.DataFrame([row]), False
+    # A table made before the Sex field gets it beside the subject.
+    if "sex" in df.columns and list(df.columns).index("sex") != 1:
+        cols = [c for c in df.columns if c != "sex"]
+        cols.insert(cols.index("subject") + 1, "sex")
+        df = df[cols]
     df = df.sort_values(["subject", "file"], kind="stable").reset_index(drop=True)
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
         df.to_excel(xw, sheet_name="Group", index=False)

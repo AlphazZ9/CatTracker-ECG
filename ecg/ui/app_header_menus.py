@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 import customtkinter as ctk  # type: ignore[import-untyped]
 
 from ecg.core.models import MouseECG
+from ecg.io.subject_name import normalise_sex
 from ecg.ui.popover import Popover, menu_button
 from ecg.ui.theme import (
     BG, BORDER, BORDER2, TEXT, MUTED, LIGHT, BLUE, SPACE_XS, SPACE_S, SPACE_M,
@@ -119,9 +120,23 @@ class HeaderMenusMixin:
             anchor="w", justify="left", wraplength=_SHEET_ENTRY_W)
         self.lbl_fs_source.pack(fill="x")
 
-        self._sheet_entry(g, 1, 0, "Subject ID", "subject", "subject_01")
+        # Subject ID with the animal's sex (M / F / empty) beside it, both
+        # filled from the file name while they hold what the app put there
+        # (SignalController.autofill_subject_from_name).
+        sub = self._sheet_entry(g, 1, 0, "Subject ID  ·  Sex (M / F)", "subject", "subject_01")
+        sub.pack_configure(side="left", fill="x", expand=True)
+        sub.configure(width=_SHEET_ENTRY_W - 60)
+        # No placeholder text: CTkEntry does not show it again after a
+        # delete, so an emptied field would look unlike a fresh one.
+        self.ent_sex = ctk.CTkEntry(sub.master, width=54, **input_style())
+        self.ent_sex.pack(side="left", padx=(SPACE_XS, 0))
+        self._bind_hover_tip(
+            self.ent_sex, "Sex of the animal: M (male), F (female) or empty. Read from the "
+            "file name (a standalone M or F next to the number: '1146 F', 'M_206') "
+            "unless typed here; written to the group table.")
         for seq in ("<FocusOut>", "<Return>"):      # the file chip shows it
             self.ent_subject.bind(seq, lambda _e: self._update_topbar_filename())  # type: ignore[union-attr]
+            self.ent_sex.bind(seq, lambda _e: self._normalise_sex_entry())
         # Project name: a label spanning the whole working session (many
         # recordings), not per-recording metadata like Subject ID --
         # reset_for_new_file() never touches it, so it survives opening a
@@ -153,6 +168,19 @@ class HeaderMenusMixin:
         self.lbl_session_info.pack(fill="x")
         ctk.CTkLabel(b, text="Clear session cache: ⋯ menu", font=FONT_KPI_LABEL,
                      text_color=LIGHT, anchor="w").pack(fill="x")
+
+    def _normalise_sex_entry(self: ECGApp) -> None:
+        """'f', 'female', 'femelle'... typed in the Sex entry become 'F' (and
+        the same for M); anything else is left as typed."""
+        ent = getattr(self, "ent_sex", None)
+        if ent is None:
+            return
+        text = ent.get()
+        norm = normalise_sex(text)
+        if norm != text:
+            ent.delete(0, "end")
+            if norm:
+                ent.insert(0, norm)
 
     def _toggle_recording_sheet(self: ECGApp) -> None:
         self.recording_sheet.toggle(self.file_chip)

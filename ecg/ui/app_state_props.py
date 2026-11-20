@@ -99,6 +99,13 @@ class StateProps:
         self.lbl_ivl_status:    "Optional[ctk.CTkLabel]"   = None
         # Filter / signal controls (widgets used in _collect_session_state)
         self.ent_channel:       "Optional[ctk.CTkEntry]"   = None
+        # Sex of the animal (M / F / empty), beside the Subject ID in the
+        # Recording sheet; both are filled from the file name when they
+        # still hold what the app put there (signal_controller.
+        # autofill_subject_from_name): the values it last wrote.
+        self.ent_sex:           "Optional[ctk.CTkEntry]"   = None
+        self._subject_autofill: "Optional[str]"            = None
+        self._sex_autofill:     "Optional[str]"            = None
         self.ent_t_start:       "Optional[ctk.CTkEntry]"   = None
         self.ent_t_end:         "Optional[ctk.CTkEntry]"   = None
         self.ent_analysis_t0:   "Optional[ctk.CTkEntry]"   = None

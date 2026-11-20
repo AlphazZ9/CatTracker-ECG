@@ -29,10 +29,15 @@ from typing import Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from ecg.io.subject_name import normalise_sex
+
 # Per-segment columns of the group table that are not metrics.
 META_PREFIXES = ("start (s)", "end (s)", "valid RR (%)", "Poincaré pairs (n)",
                  "abrupt RR jumps (n)", "QC", "label", "index")
-ID_COLUMNS = ("subject", "file", "template")
+# Per-recording columns that are not metrics either; "sex" (M / F / empty,
+# from the Recording sheet) is absent from tables made before it. The
+# statistics run on every animal whatever its sex.
+ID_COLUMNS = ("subject", "sex", "file", "template")
 DURATION_TOL = 0.02          # durations within 2 % of the group's median
 
 # Metrics tested by default: one per distinct question, so that the Holm
@@ -90,6 +95,7 @@ class RowCheck:
     subject: str
     file: str
     problems: "list[str]" = field(default_factory=list)
+    sex: str = ""               # M / F / '' (shown in the reports, never tested)
 
     @property
     def ok(self) -> bool:
@@ -104,6 +110,11 @@ def subject_text(v: object) -> str:
         return str(int(v))
     s = str(v).strip()
     return "" if s.lower() == "nan" else s
+
+
+def sex_text(v: object) -> str:
+    """A sex cell as text: 'M', 'F', '' for an empty cell, else as written."""
+    return normalise_sex(subject_text(v))
 
 
 def check_rows(df: "pd.DataFrame", a: str, b: str) -> "list[RowCheck]":
@@ -135,7 +146,8 @@ def check_rows(df: "pd.DataFrame", a: str, b: str) -> "list[RowCheck]":
     durs = {tag: dur(tag) for tag in (a, b)}
     med = {tag: float(np.nanmedian(d)) if d.notna().any() else math.nan for tag, d in durs.items()}
     for i, row in df.iterrows():
-        rc = RowCheck(subject_text(row.get("subject")), subject_text(row.get("file")))
+        rc = RowCheck(subject_text(row.get("subject")), subject_text(row.get("file")),
+                      sex=sex_text(row.get("sex")))
         if not rc.subject:
             rc.problems.append("no subject")
         elif dup.iloc[i]:
@@ -255,18 +267,27 @@ def _report_frames(df: "pd.DataFrame", a: str, b: str, stats: "pd.DataFrame",
     info.append(("Metrics tested", ", ".join(stats["Metric"]) if len(stats) else "none"))
     if note:
         info.append(("Note", note))
+    # The sex beside the subject when the table has it (tables made before
+    # the Sex field have none: the columns are then as before).
+    has_sex = "sex" in df.columns
     paired = []
     for name in stats["Metric"] if len(stats) else []:
         for _i, r in df.iterrows():
-            paired.append({"Metric": name, "subject": r.get("subject"), "file": r.get("file"),
-                           a: r.get(f"{name} {a}"), b: r.get(f"{name} {b}")})
+            row = {"Metric": name, "subject": r.get("subject")}
+            if has_sex:
+                row["sex"] = sex_text(r.get("sex"))
+            row.update({"file": r.get("file"), a: r.get(f"{name} {a}"),
+                        b: r.get(f"{name} {b}")})
+            paired.append(row)
+    checked_cols = ["subject"] + (["sex"] if has_sex else []) + ["file", "status", "problems"]
     return {
         "Statistics": stats,
         "About": pd.DataFrame(info, columns=["Item", "Value"]),
         "Rows checked": pd.DataFrame(
-            [{"subject": c.subject, "file": c.file, "status": "ok" if c.ok else "check",
+            [{"subject": c.subject, "sex": c.sex, "file": c.file,
+              "status": "ok" if c.ok else "check",
               "problems": "; ".join(c.problems)} for c in checks],
-            columns=["subject", "file", "status", "problems"]),
+            columns=checked_cols),
         "Paired values": pd.DataFrame(paired),
     }
 
@@ -523,9 +544,15 @@ class PairResult:
         """'Post Stim 1min vs Pre Stim 1min'; with the tags when they are not
         the labels ('Post vs Pre (B vs A)'), as repeated labels would give
         every pair the same name."""
-        names = f"{self.name_b} vs {self.name_a}"
-        tags = f"{self.b} vs {self.a}"
-        return names if names == tags else f"{names} ({tags})"
+        return pair_title(self.a, self.b, self.label_a, self.label_b)
+
+
+def pair_title(a: str, b: str, label_a: str = "", label_b: str = "") -> str:
+    """The name of the pair B vs A (PairResult.title): its labels, with the
+    tags when they are not the labels."""
+    names = f"{label_b or b} vs {label_a or a}"
+    tags = f"{b} vs {a}"
+    return names if names == tags else f"{names} ({tags})"
 
 
 @dataclass

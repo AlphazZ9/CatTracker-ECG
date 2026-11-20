@@ -11,7 +11,8 @@ per-block HR means, the RR series and the Poincaré pairs, as
   (``add_sheets``);
 * a CSV of the metric table (``write_csv``) or tab-separated text for the
   clipboard (``comparison_tsv``);
-* a GraphPad Prism file (``write_pzfx``), or tables for the main Prism file
+* a GraphPad Prism file (``write_pzfx``: these tables and one Column table
+  per metric, see ecg.io.prism_template), or tables for the main Prism file
   (``prism_tables``).
 
 Nothing here may import from ecg.ui.
@@ -20,7 +21,6 @@ from __future__ import annotations
 
 import math
 import os
-import warnings
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
@@ -333,25 +333,21 @@ def prism_tables(res: ComparisonResult, prefix: str = ""
     return out
 
 
-def write_pzfx(res: ComparisonResult, path: str, exported_at: str = "") -> int:
-    """The comparison as a GraphPad Prism file (``prism_tables``), its
-    summary and quality in the project notes. Returns the tables written.
-    Raises RuntimeError when the pzfx package is missing."""
-    try:
-        from pzfx import write_pzfx as _write
-    except ImportError as exc:
-        raise RuntimeError("The 'pzfx' package is required for GraphPad Prism export.\n"
-                           "Install it with: pip install pzfx") from exc
-    specs = prism_tables(res)
-    tables = {name: df for name, df, _x, _r in specs}
-    notes_rows = summary_rows(res, exported_at)
+def pzfx_notes(res: ComparisonResult, exported_at: str = "") -> "list[tuple[str, str]]":
+    """The project notes of the comparison's Prism file: its summary rows,
+    then the quality of each segment."""
+    rows = summary_rows(res, exported_at)
     for _i, q in quality_frame(res).iterrows():
-        notes_rows.append((f"QC {q['Segment']}", str(q["QC"])))
-    notes = pd.DataFrame(notes_rows, columns=["Name", "Value"])
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        _write(tables, str(path),
-               row_names=[r for _n, _d, _x, r in specs],
-               x_col=[x for _n, _d, x, _r in specs],
-               n_digits=4, notes={"Project Info": notes})
-    return len(tables)
+        rows.append((f"QC {q['Segment']}", str(q["QC"])))
+    return rows
+
+
+def write_pzfx(res: ComparisonResult, path: str, exported_at: str = "") -> int:
+    """The comparison as a GraphPad Prism file: the comparison table, one
+    Column table per metric (ecg.io.prism_template.result_tables: one column
+    per segment, or one table per pair in Pairs mode), the HR block means,
+    the RR series and the Poincaré pairs (``prism_tables``); its summary and
+    quality in the project notes. Returns the tables written."""
+    from ecg.io.prism_template import recording_tables, write_metric_pzfx
+    return write_metric_pzfx(recording_tables(res), str(path),
+                             notes=pzfx_notes(res, exported_at))
