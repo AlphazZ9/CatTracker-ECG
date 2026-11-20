@@ -28,6 +28,9 @@ from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel, NoModelError
 from ecg.ui.ml_examples import NO_MODEL_STATUS
 from ecg.io.loaders import load_mat_signal, read_spike2_markers
 from ecg.io.db import _DB_AVAILABLE, get_notes
+from ecg.io.subject_name import (
+    DEFAULT_SUBJECT, is_default_subject, subject_from_filename,
+)
 from ecg.ui.app_async import recording_changed
 from ecg.ui.session_controller import pending_template_info_text
 from ecg.ui.theme import BLUE, GREEN, LIGHT, MUTED, ORANGE, RED, nk
@@ -558,9 +561,13 @@ class SignalController:
                 text="  Not run yet", text_color=LIGHT)
 
         dur = bundle["dur_s"]
+        # The "Kept as typed" note first: the status line is narrow.
+        kept = self._take_subject_kept_note()
+        kept = f"{kept[5:]}  ·  " if kept else ""
         self.app._set_status(
-            f"Raw signal loaded — {dur:.0f} s  |  {fs} Hz  "
-            "→ click Detect Peaks to filter and find R-peaks.", BLUE)
+            f"{kept}Raw signal loaded — {dur:.0f} s  |  {fs} Hz  "
+            "→ click Detect Peaks to filter and find R-peaks.",
+            ORANGE if kept else BLUE)
         self.app.tabs.set(TAB_DETECTION)
         self.app._update_ann_count()
         self.app._update_pacing_count()
@@ -831,10 +838,14 @@ class SignalController:
             if self.app.ent_subject is not None:
                 subject_id = _subject_from_channel(bundle["detected_ch"])
                 current_subject = self.app.ent_subject.get().strip()
-                if subject_id and (not current_subject or current_subject.lower().startswith("subject")):
+                # Only over the placeholder: a subject read from the file
+                # name (autofill_subject_from_name) or typed is kept.
+                if subject_id and (not current_subject or is_default_subject(current_subject)):
                     try:
                         self.app.ent_subject.delete(0, "end")
                         self.app.ent_subject.insert(0, subject_id)
+                        # Put there by the app: the next file may replace it.
+                        self.app._subject_autofill = subject_id
                     except Exception as _exc:
                         log.debug("Could not update subject entry: %s", _exc)
 
@@ -876,6 +887,8 @@ class SignalController:
             if getattr(self.app, "lbl_template_info", None) is not None:
                 self.app.lbl_template_info.configure(  # type: ignore[union-attr]
                     text=pending_template_info_text(), text_color=MUTED)
+        kept = self._take_subject_kept_note()
+        edits_note += kept
         if detector_warning:
             self.app._set_status(detector_warning + edits_note, ORANGE)
             if bundle.get("ml_no_model"):
@@ -888,7 +901,8 @@ class SignalController:
         else:
             self.app._set_status(
                 f"Signal ready — {n} peaks  |  {dur:.0f} s  |  {fs} Hz  "
-                f"→ adjust threshold then click Analyze.{edits_note}", GREEN)
+                f"→ adjust threshold then click Analyze.{edits_note}",
+                ORANGE if kept else GREEN)
         self.app.tabs.set(TAB_DETECTION)
         self.app._update_ann_count()   # refresh count (annotations persist across re-detect)
         self.app._update_pacing_count()
@@ -1144,6 +1158,9 @@ class SignalController:
         self.app.session.verified_for_training = self.app.session_ctrl.is_training_example(path)
         self.app.session_ctrl.sync_verified_switch()
         self.app.lbl_file.configure(text=os.path.basename(path), text_color=GREEN)  # type: ignore[union-attr]
+        # Subject and sex from the file name; a saved session of the file
+        # then restores its own (apply_recording_fields).
+        self.autofill_subject_from_name(path)
         self.app._add_recent(path)
         # ── Try to restore a previously saved session ───────────────
         # Fully async now (including the session-file check itself) --
@@ -1151,6 +1168,74 @@ class SignalController:
         # whether to restore or fall through to load_raw_only(); there's no
         # synchronous answer to branch on here any more.
         self.app._try_restore_session(path)
+
+    def _take_subject_kept_note(self) -> str:
+        """The "Kept as typed" note of autofill_subject_from_name, once (the
+        loading status lines replace the one it set), as a status suffix."""
+        note = getattr(self.app, "_subject_kept_note", "") or ""
+        self.app._subject_kept_note = ""
+        return f"  ·  {note}" if note else ""
+
+    def autofill_subject_from_name(self, path: str) -> None:
+        """Fill the Subject ID and Sex entries from the name of *path*
+        (ecg.io.subject_name: "Stim BNST - 1146 F.smr" gives 1146 and F),
+        each one only while it holds what the app put there: empty, the
+        placeholder ("subject_01"), or the value auto-filled for the
+        previous file (app._subject_autofill / _sex_autofill). A value typed
+        by the user is never replaced. An auto-filled subject the new name
+        does not give goes back to the placeholder, an auto-filled sex to
+        empty: they belonged to the previous file."""
+        app = self.app
+        subject, sex = subject_from_filename(path)
+        kept: "list[str]" = []      # typed values the name contradicts
+        ent = getattr(app, "ent_subject", None)
+        if ent is not None:
+            try:
+                cur = ent.get().strip()
+                auto = getattr(app, "_subject_autofill", None)
+                was_auto = bool(auto) and cur == auto
+                if not cur or is_default_subject(cur) or was_auto:
+                    new = subject or (DEFAULT_SUBJECT if was_auto else cur)
+                    if new != cur:
+                        ent.delete(0, "end")
+                        ent.insert(0, new)
+                    app._subject_autofill = subject
+                elif subject and cur != subject:
+                    kept.append(f"subject {cur} (the file name says {subject})")
+            except Exception as exc:
+                log.debug("Could not fill the subject from the file name: %s", exc)
+        ent = getattr(app, "ent_sex", None)
+        if ent is not None:
+            try:
+                cur = ent.get().strip()
+                auto = getattr(app, "_sex_autofill", None)
+                if not cur or (bool(auto) and cur == auto):
+                    new = sex or ""
+                    if new != cur:
+                        ent.delete(0, "end")
+                        if new:
+                            ent.insert(0, new)
+                    app._sex_autofill = sex
+                elif sex and cur.upper() != sex:
+                    kept.append(f"sex {cur} (the file name says {sex})")
+            except Exception as exc:
+                log.debug("Could not fill the sex from the file name: %s", exc)
+        app._subject_kept_note = ""
+        if kept:
+            # The typed value stays, but say so: it may belong to the
+            # previous animal.
+            note = "Kept as typed: " + "; ".join(kept) + "."
+            app._subject_kept_note = note
+            set_status = getattr(app, "_set_status", None)
+            if callable(set_status):
+                try:
+                    set_status(note, ORANGE)
+                except Exception as exc:
+                    log.debug("subject-kept status failed: %s", exc)
+        try:
+            app._update_topbar_filename()
+        except Exception as exc:
+            log.debug("topbar filename refresh failed: %s", exc)
 
     def reset_for_new_file(self) -> None:
         """Reset ALL analysis state and UI to the startup blank slate.

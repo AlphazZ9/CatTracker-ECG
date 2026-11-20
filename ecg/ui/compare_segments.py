@@ -37,6 +37,7 @@ import tkinter as tk
 from ecg.ui.theme import button_style, disabled_style, toggle_style
 from ecg.ui.poincare_figure import draw_poincare_set
 from ecg.io.group_table import append_group_row, group_row
+from ecg.io.subject_name import normalise_sex
 from ecg.io.group_stats import (
     DEFAULT_METRICS_NOTE, HOLM_ALL, all_pairs_stats, check_rows,
     paired_stats, read_group_table, segment_tags, smallest_wilcoxon_p,
@@ -53,7 +54,12 @@ def all_pairs_figsize(n_pairs: int) -> "tuple[float, float]":
     """The saved all-pairs figure: about 3.3 in per pair panel."""
     return (max(5.0, 3.3 * max(1, n_pairs)), 4.6)
 from ecg.io.segment_export import (
-    ComparisonResult, comparison_tsv, write_csv, write_pzfx, write_xlsx,
+    ComparisonResult, comparison_tsv, pzfx_notes, write_csv, write_pzfx, write_xlsx,
+)
+from ecg.io import prism_template
+from ecg.io.prism_template import (
+    PrismTemplateError, fill_template, group_tables, left_out_notes, pair_tables, sex_notes,
+    recording_tables, write_metric_pzfx,
 )
 from ecg.core import segment_plan
 from ecg.core.segment_plan import (
@@ -91,6 +97,75 @@ def ask_config_name(parent: "Any", initial: str = "") -> "Optional[str]":
     return simpledialog.askstring("Save configuration",
                                   "Name of this configuration:",
                                   initialvalue=initial, parent=parent)
+
+
+# ── GraphPad Prism: a new file, or a template filled ─────────────────────
+
+PRISM_NEW = "New Prism file…"
+PRISM_FILL = "Fill a Prism template…"
+PRISM_TIP = ("Fill a Prism template…: make your graphs and tests once in Prism on an "
+             "exported file and save it as .pzfx; the app then pours new data into it "
+             "(tables matched by title) and Prism redraws the graphs and recomputes the tests.")
+
+
+def prism_tip(app: "Any", widget: "Any", text: str) -> None:
+    """The Prism… buttons' explanation, too long for the status bar: in the
+    floating tooltip, the template workflow first."""
+    bind = getattr(app, "_bind_float_tip", None) or app._bind_hover_tip
+    bind(widget, PRISM_TIP + "\n\n" + text)
+
+
+def prism_menu(parent: "Any", button: "Any", new_cmd: "Any", fill_cmd: "Any") -> "tk.Menu":
+    """The Prism… menu under *button*: a new file or a template filled."""
+    menu = tk.Menu(parent, tearoff=0)
+    menu.add_command(label=PRISM_NEW, command=new_cmd)
+    menu.add_command(label=PRISM_FILL, command=fill_cmd)
+    try:
+        menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+    finally:
+        menu.grab_release()
+    return menu
+
+
+def last_prism_template(app: "Any") -> str:
+    """The template filled last: this session's, else the one remembered."""
+    path = getattr(app, "_prism_template_path", "") or ""
+    if path and os.path.exists(path):
+        return path
+    return prism_template.load_last_template(prism_template.PREFS_PATH)
+
+
+def ask_prism_template(app: "Any", parent: "Any") -> "Optional[str]":
+    """The template to fill (a .pzfx saved from Prism), the last one offered."""
+    last = last_prism_template(app)
+    path = filedialog.askopenfilename(
+        parent=parent, title="Choose the Prism template (.pzfx saved from Prism)",
+        initialdir=os.path.dirname(last) if last else None,
+        initialfile=os.path.basename(last) if last else None,
+        filetypes=[("GraphPad Prism XML", "*.pzfx"), ("All files", "*.*")])
+    if not path:
+        return None
+    app._prism_template_path = path
+    prism_template.save_last_template(path, prism_template.PREFS_PATH)
+    return path
+
+
+def ask_filled_path(parent: "Any", template: str, base: str) -> "Optional[str]":
+    """Where to write the filled template: '<base>_<template>.pzfx' next to
+    the template by default, never the template itself."""
+    stem = os.path.splitext(os.path.basename(template))[0]
+    while True:
+        path = filedialog.asksaveasfilename(
+            parent=parent, title="Save the filled Prism file (the template is not changed)",
+            defaultextension=".pzfx", initialdir=os.path.dirname(template) or None,
+            initialfile=f"{base}_{stem}.pzfx",
+            filetypes=[("GraphPad Prism", "*.pzfx"), ("All files", "*.*")])
+        if not path:
+            return None
+        if os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(template)):
+            return path
+        messagebox.showwarning("Prism template", "Choose another name: the template itself "
+                               "is never overwritten.", parent=parent)
 
 
 def _recording_key(app: "Any") -> "Optional[tuple]":
@@ -421,6 +496,11 @@ class CompareSegmentsMixin:
         def _subject() -> str:
             """The Subject ID as it is now (it may be typed after the tab was built)."""
             return self.ent_subject.get().strip() if self.ent_subject else ""
+
+        def _sex() -> str:
+            """The Sex entry as it is now (M / F / '')."""
+            ent = getattr(self, "ent_sex", None)
+            return normalise_sex(ent.get()) if ent is not None else ""
 
         def _section(title: str, note: str = "", first: bool = False
                      ) -> "tuple[ctk.CTkFrame, ctk.CTkFrame]":
@@ -1251,10 +1331,11 @@ class CompareSegmentsMixin:
         def _base_name() -> str:
             return f"{_subject() or 'subject'}_segments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        def _done(text: str, ok: bool = True) -> None:
+        def _done(text: str, ok: bool = True, warn: bool = False) -> None:
             if not lbl_exp.winfo_manager():      # shown from the first export on
                 lbl_exp.pack(fill="x", pady=(0, SPACE_XS), before=lbl_mw)
-            lbl_exp.configure(text=("✓  " if ok else "⚠  ") + text, text_color=GREEN if ok else RED)
+            lbl_exp.configure(text=("✓  " if ok and not warn else "⚠  ") + text,
+                              text_color=RED if not ok else ORANGE if warn else GREEN)
 
         def _export_excel() -> None:
             res_ = _result()
@@ -1280,6 +1361,32 @@ class CompareSegmentsMixin:
             _done(f"saved → {os.path.basename(path)}")
 
         def _export_prism() -> None:
+            prism_menu(win, _prism_btn[0], _export_prism_new, _export_prism_template)
+
+        def _export_prism_template() -> None:
+            res_ = _result()
+            if res_ is None:
+                return
+            tpl = ask_prism_template(self, win)
+            if not tpl:
+                return
+            out = ask_filled_path(win, tpl, _base_name())
+            if not out:
+                return
+            try:
+                report = fill_template(tpl, recording_tables(res_), out,
+                                       notes=pzfx_notes(res_, _stamp())
+                                       + [("Prism template", os.path.basename(tpl))])
+            except Exception as exc:
+                if not isinstance(exc, PrismTemplateError):
+                    log.exception("comparison Prism template")
+                messagebox.showerror("Prism template", str(exc), parent=win)
+                _done(f"Prism template: {exc}", ok=False)
+                return
+            _done(f"Prism template {os.path.basename(tpl)}: {report.summary()} → "
+                  f"{os.path.basename(out)}", warn=report.warn)
+
+        def _export_prism_new() -> None:
             res_ = _result()
             if res_ is None:
                 return
@@ -1362,7 +1469,7 @@ class CompareSegmentsMixin:
             try:
                 n, replaced = append_group_row(path, group_row(
                     res_.subject, res_.filepath, res_.segs, res_.metrics,
-                    template=res_.template, flags=res_.flags))
+                    template=res_.template, flags=res_.flags, sex=_sex()))
             except Exception as exc:
                 messagebox.showerror("Group table", str(exc), parent=win)
                 return
@@ -1381,10 +1488,11 @@ class CompareSegmentsMixin:
         lbl_exp = ctk.CTkLabel(res, text="", font=FONT_SMALL, text_color=MUTED,
                                anchor="w", justify="left")
         _export_btns: "list[ctk.CTkButton]" = []
+        _prism_btn: "list[ctk.CTkButton]" = []
         # Right to left: the header packs them from its right edge.
         for text, cmd, tiptext in (
                 ("➕  Add to group table…", _add_to_group,
-                 "One row per recording (subject, file, every metric and the "
+                 "One row per recording (subject, sex, file, every metric and the "
                  "quality of each segment): the table for a paired / repeated-measures "
                  "test across animals. Every segment is stored, whatever the Δ % "
                  "reference; the pair tested is chosen in the Group card below (the "
@@ -1396,9 +1504,9 @@ class CompareSegmentsMixin:
                 ("📋  Copy table", _copy_table,
                  "The metric table as tab-separated text: paste it into Excel or Prism"),
                 ("Prism…", _export_prism,
-                 "GraphPad Prism file: the metric table (one column per segment), the "
-                 "HR block means, the RR series and the Poincaré pairs of each segment; "
-                 "the windows and quality in the project notes"),
+                 "GraphPad Prism: the metric table, one table per metric (a column per "
+                 "segment; per pair in Pairs mode), the HR block means, the RR series and "
+                 "the Poincaré pairs; the windows and quality in the project notes."),
                 ("📊  Excel…", _export_excel,
                  "Workbook: Comparison (Δ % against the reference chosen above the table), "
                  "Quality, Summary, "
@@ -1407,7 +1515,11 @@ class CompareSegmentsMixin:
             b = ctk.CTkButton(res_hdr, text=text, width=0, command=cmd, state="disabled",
                               **{**button_style("secondary"), **disabled_style()})
             b.pack(side="right", padx=(SPACE_S, 0))
-            tip(b, tiptext)
+            if cmd is _export_prism:
+                prism_tip(self, b, tiptext)
+                _prism_btn.append(b)
+            else:
+                tip(b, tiptext)
             _export_btns.append(b)
         ctk.CTkLabel(res_hdr, text="Export:", font=FONT_SMALL,
                      text_color=MUTED).pack(side="right", padx=(0, SPACE_XS))
@@ -1572,7 +1684,15 @@ class CompareSegmentsMixin:
         lbl_status = ctk.CTkLabel(body, text="", font=FONT_SMALL, text_color=MUTED,
                                   anchor="w", justify="left")
         lbl_status.pack(fill="x")
-        body.bind("<Configure>", lambda e: lbl_status.configure(wraplength=max(200, e.width - 8)))
+        # The Prism export's result: a line of its own, under the analysis
+        # message (whose warnings stay in view).
+        lbl_prism = ctk.CTkLabel(body, text="", font=FONT_SMALL, text_color=MUTED,
+                                 anchor="w", justify="left")
+
+        def _wrap(e: "Any") -> None:
+            for lbl in (lbl_status, lbl_prism):
+                lbl.configure(wraplength=max(200, e.width - 8))
+        body.bind("<Configure>", _wrap)
         _scale = THEME.font_scale
         _fsize = -int(round(12 * _scale))
         txt = tk.Text(body, bg=CARD, fg=TEXT, bd=0, highlightthickness=0, wrap="none",
@@ -1607,6 +1727,16 @@ class CompareSegmentsMixin:
                 return fail(f"{os.path.basename(path)} holds fewer than two segments.")
             res_state["df"] = df
             st["path"] = path
+            # The last run's results belong to the table it read: none until
+            # the next Run (else Statistics… / Prism… would write the old
+            # rows under the new file's name).
+            res_state.update(used=None, all=None, stats=None, checks=None, keep=None,
+                             left_out=[], path=None)
+            for btn_ in (btn_xlsx, btn_fig, btn_prism):
+                self._set_btn_enabled(btn_, False, "secondary")
+            lbl_prism.configure(text="")
+            if lbl_prism.winfo_manager():
+                lbl_prism.pack_forget()
             cb_a.configure(values=tags)
             cb_b.configure(values=tags)
             # The two most filled segments by default, or the ones chosen before.
@@ -1760,7 +1890,7 @@ class CompareSegmentsMixin:
                 lbl_status.configure(text="⚠  the table holds fewer than two segments",
                                      text_color=RED)
                 return
-            res_state.update(mode=MODE_ALL, all=res, used=None, stats=None)
+            res_state.update(mode=MODE_ALL, all=res, used=None, stats=None, path=st["path"])
             left = sorted({s for pr in res.pairs for s in pr.left_out})
             ns = [len(pr.used) for pr in res.pairs]
             # Animals of the table missing from a pair (no such segment).
@@ -1783,7 +1913,7 @@ class CompareSegmentsMixin:
                                  text_color=ORANGE if warn else GREEN)
             _show_all(res)
             slot.update(lambda fig: draw_all_pairs_figure(fig, res))
-            for btn_ in (btn_xlsx, btn_fig):
+            for btn_ in (btn_xlsx, btn_fig, btn_prism):
                 self._set_btn_enabled(btn_, True, "secondary")
 
         def _run() -> None:
@@ -1818,7 +1948,7 @@ class CompareSegmentsMixin:
             left_out = [c.subject or c.file for c, k in zip(checks, keep) if not k]
             stats = paired_stats(used, a, b, "all" if st["all"] else None)
             res_state.update(used=used, stats=stats, checks=checks, left_out=left_out, keep=keep,
-                             mode=MODE_ONE, all=None)
+                             mode=MODE_ONE, all=None, path=st["path"])
             n = len(used)
             n_test = int(stats["n tested (Δ ≠ 0)"].max()) if len(stats) else 0
             names = (st["name_a"] or a, st["name_b"] or b)
@@ -1833,7 +1963,7 @@ class CompareSegmentsMixin:
                                  text_color=ORANGE if left_out or weak else GREEN)
             _show(stats, checks, a, b, left_out)
             slot.update(lambda fig: draw_group_figure(fig, used, a, b, names))
-            for btn_ in (btn_xlsx, btn_fig):
+            for btn_ in (btn_xlsx, btn_fig, btn_prism):
                 self._set_btn_enabled(btn_, True, "secondary")
 
         run_btn.configure(command=_run)
@@ -1928,6 +2058,105 @@ class CompareSegmentsMixin:
                 plt.close(fig)
             lbl_status.configure(text=f"✓  figure → {os.path.basename(path)}", text_color=GREEN)
 
+        def _prism_data() -> "Optional[tuple[list, list[tuple[str, str]], list[str]]]":
+            """The tables of the last run (the rows it left out not written),
+            the notes saying which rows and why, and the warnings (pairs
+            without any row)."""
+            name = os.path.basename(res_state.get("path") or st["path"] or "")
+            if res_state.get("mode") == MODE_ALL and res_state.get("all") is not None:
+                res = res_state["all"]
+                notes = [("Group table", name), ("Analysis", MODE_ALL),
+                         ("Rows to check", "left out" if st["exclude"] else "kept (listed)")]
+                for pr in res.pairs:
+                    notes.append((f"Rows written — {pr.title}", str(len(pr.used))))
+                    notes += left_out_notes(pr.checks, pr.keep, pr.title)
+                notes += [("Note", n) for n in res.notes]
+                used_all = [pr.used for pr in res.pairs if pr.used is not None and len(pr.used)]
+                notes += sex_notes(pd.concat(used_all, ignore_index=True) if used_all else None)
+                empty = [pr.title for pr in res.pairs if pr.used is not None and not len(pr.used)]
+                warns = ([f"no animal in pair {', '.join(empty)}: its tables are empty"]
+                         if empty else [])
+                return pair_tables(res), notes, warns
+            used, df = res_state.get("used"), res_state.get("df")
+            if used is None or df is None:
+                return None
+            notes = [("Group table", name),
+                     ("Analysis", f"{MODE_ONE}: {st['a']} vs {st['b']}; every segment written"),
+                     ("Rows to check", "left out" if st["exclude"] else "kept (listed)"),
+                     ("Rows written", str(len(used)))]
+            notes += left_out_notes(res_state["checks"], res_state["keep"])
+            notes += sex_notes(used)
+            warns = [] if len(used) else ["no animal kept: the tables are empty"]
+            return group_tables(used, tags=segment_tags(df)), notes, warns
+
+        def _group_base() -> str:
+            path = res_state.get("path") or st["path"] or ""
+            return os.path.splitext(os.path.basename(path))[0] or "group"
+
+        def _prism_said(text: str, ok: bool = True, warn: bool = False) -> None:
+            """The Prism result on its own line (the analysis message stays)."""
+            if not lbl_prism.winfo_manager():
+                lbl_prism.pack(fill="x", after=lbl_status)
+            lbl_prism.configure(text=("✓  " if ok and not warn else "⚠  ") + text,
+                                text_color=RED if not ok else ORANGE if warn else GREEN)
+
+        def _prism_new() -> None:
+            got = _prism_data()
+            if got is None:
+                return
+            tables, notes, warns = got
+            path = filedialog.asksaveasfilename(
+                parent=win, title="Export the group table to GraphPad Prism",
+                defaultextension=".pzfx", initialfile=f"{_group_base()}.pzfx",
+                initialdir=os.path.dirname(st["path"]) or None,
+                filetypes=[("GraphPad Prism", "*.pzfx"), ("All files", "*.*")])
+            if not path:
+                return
+            try:
+                n = write_metric_pzfx(tables, path, notes=notes)
+            except Exception as exc:
+                log.exception("group Prism export")
+                messagebox.showerror("Prism export", str(exc), parent=win)
+                _prism_said(f"Prism export failed: {exc}", ok=False)
+                return
+            _prism_said(f"Prism: {n} tables → {os.path.basename(path)}"
+                        + "".join(f"  ·  {w}" for w in warns), warn=bool(warns))
+
+        def _prism_fill() -> None:
+            got = _prism_data()
+            if got is None:
+                return
+            tables, notes, warns = got
+            tpl = ask_prism_template(self, win)
+            if not tpl:
+                return
+            out = ask_filled_path(win, tpl, _group_base())
+            if not out:
+                return
+            try:
+                report = fill_template(tpl, tables, out,
+                                       notes=notes + [("Prism template", os.path.basename(tpl))])
+            except Exception as exc:
+                if not isinstance(exc, PrismTemplateError):
+                    log.exception("group Prism template")
+                messagebox.showerror("Prism template", str(exc), parent=win)
+                _prism_said(f"Prism template: {exc}", ok=False)
+                return
+            _prism_said(f"Prism template {os.path.basename(tpl)}: {report.summary()} → "
+                        f"{os.path.basename(out)}" + "".join(f"  ·  {w}" for w in warns),
+                        warn=report.warn or bool(warns))
+
+        def _prism_export() -> None:
+            prism_menu(win, btn_prism, _prism_new, _prism_fill)
+
+        btn_prism = ctk.CTkButton(hdr, text="Prism…", width=0, command=_prism_export,
+                                  state="disabled",
+                                  **{**button_style("secondary"), **disabled_style()})
+        btn_prism.pack(side="right", padx=(SPACE_S, 0))
+        prism_tip(self, btn_prism,
+                  "GraphPad Prism: one table per metric, one row per animal and one column "
+                  "per segment (all pairs: one table per pair × metric); the rows left out "
+                  "by this analysis are not written (the notes say which and why).")
         btn_fig = ctk.CTkButton(hdr, text="Figure…", width=0, command=_save_figure,
                                 state="disabled", **{**button_style("secondary"), **disabled_style()})
         btn_fig.pack(side="right", padx=(SPACE_S, 0))

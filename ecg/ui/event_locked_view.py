@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 import textwrap
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -48,6 +47,7 @@ from ecg.core.event_locked import (
     aggregate, calibrate_gain, event_locked_traces, event_window_means,
     group_summary, knee_point, paired_tests, sign_stretches,
 )
+from ecg.io.subject_name import is_default_subject as _is_default_subject
 from ecg.ui import theme as _theme
 from ecg.ui.autonomic_view import (
     _band_text, _fmt, _to_bool, _to_float, is_rat_calibration, spwvd_ok,
@@ -176,8 +176,6 @@ DEFAULT_SUBJECT_NOTE = (
 # be offered (core.knee_point min_rank_steps).
 MIN_RANK_STEPS = 3
 
-# The sidebar's untouched Subject ID ("subject_01") and the like.
-_DEFAULT_SUBJECT_RE = re.compile(r"^subject[\s_-]*\d*$", re.IGNORECASE)
 
 EVENT_PARAM_KEYS = ("label", "pre_s", "post_s", "zscore")
 
@@ -781,8 +779,9 @@ _REGISTRY_PARAM_KEYS = (
 
 def is_default_subject(subject: Any) -> bool:
     """True for the Recording sheet's untouched Subject ID ("subject_01") and the
-    like ("Subject 2", "subject") -- a placeholder rather than an animal."""
-    return bool(_DEFAULT_SUBJECT_RE.match(str(subject or "").strip()))
+    like ("Subject 2", "subject") -- a placeholder rather than an animal
+    (ecg.io.subject_name, where the file-name auto-fill uses it too)."""
+    return _is_default_subject(subject)
 
 
 def subject_warning(subject: str, filepath: str, project: str,

@@ -101,7 +101,8 @@ def test_prism_file_reads_back(tmp_path):
     n = se.write_pzfx(res, str(path), exported_at="x")
     tables = pzfx.read_pzfx(str(path))
     names = list(tables) if isinstance(tables, dict) else None
-    assert n == len(se.prism_tables(res))
+    from ecg.io.prism_template import recording_tables
+    assert n == len(recording_tables(res)) == len(se.prism_tables(res)) + len(METRICS)
     if names is not None:
         assert "Comparison" in names and "HR block means (bpm)" in names
         assert "RR Late" in names and "Poincaré Before" in names
