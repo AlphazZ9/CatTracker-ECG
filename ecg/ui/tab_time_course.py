@@ -28,7 +28,7 @@ from ecg.ui.freshness import UP_TO_DATE, stale_banner_text
 from ecg.ui.plots import CanvasSlot
 from ecg.ui.tab_keys import (
     MODE_AUTONOMIC, MODE_EPOCHS, MODE_EVENT_LOCKED, MODE_MODULES, MODE_SLIDING,
-    TAB_COMPARE, TAB_REPORT, TAB_TIME_COURSE, TIME_COURSE_MODES, time_course_mode,
+    TAB_COMPARE, TAB_GROUP, TAB_REPORT, TAB_TIME_COURSE, TIME_COURSE_MODES, time_course_mode,
 )
 from ecg.ui.theme import (
     THEME, BG, PANEL, CARD, BORDER, BORDER2, TEXT, MUTED, BLUE, GREEN, ORANGE,
@@ -151,6 +151,10 @@ class TabTimeCourseMixin:
         after_idle = getattr(self, "after_idle", None)
         if after_idle is not None:
             after_idle(self._flush_shown_slots)
+        pending = getattr(self, "_grouptab_pending_load", None)
+        if pending is not None and self.tabs.get() == TAB_GROUP:
+            self._grouptab_pending_load = None
+            pending()
         if self.tabs.get() == TAB_TIME_COURSE:
             self._show_time_mode(self.ui.time_course_mode)
         elif self.tabs.get() == TAB_COMPARE:

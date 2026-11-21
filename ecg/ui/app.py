@@ -68,6 +68,7 @@ from ecg.ui.tab_morphology import TabMorphologyMixin
 from ecg.ui.tab_report import TabReportMixin
 from ecg.ui.tab_group import TabGroupMixin
 from ecg.ui.tab_keys import TAB_ORDER
+from ecg.ui.plots import CanvasSlot
 from ecg.ui.tabbar import TabBar
 from ecg.ui.context_strip import ContextStripMixin
 
@@ -202,6 +203,16 @@ class ECGApp(
             self.tabs.add(name)
         self._build_status_label(self.tabs.bar)
 
+        CanvasSlot.building = True
+        try:
+            self._build_tabs_content()
+        finally:
+            CanvasSlot.building = False
+        # The tab shown draws its placeholders now; the others when opened.
+        self.after_idle(self._flush_shown_slots)
+        self._bind_tab_state_hints()
+
+    def _build_tabs_content(self) -> None:
         self._build_tab_detection()
         self._build_tab_hrv_unified()
         self._build_tab_time_course()
@@ -210,7 +221,6 @@ class ECGApp(
         self._build_tab_arrhythmias()
         self._build_tab_group()
         self._build_tab_report()
-        self._bind_tab_state_hints()
 
     # ════════════════════════════════════════════════════════
     #  APPEARANCE / THEME

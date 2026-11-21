@@ -958,4 +958,10 @@ class TabGroupMixin:
         _refresh_animals()
         self._grouptab_reload = _reload
         if st["path"] and os.path.exists(st["path"]):
-            _load(st["path"], quiet=True)
+            # In the app, the remembered table is read when the tab is first
+            # opened, not at start-up (a big table took 1.5 s to read).
+            tabs = getattr(self, "tabs", None)
+            if tabs is not None and getattr(tabs, "get", lambda: None)() != TAB_GROUP:
+                self._grouptab_pending_load = lambda: _load(st["path"], quiet=True)
+            else:
+                _load(st["path"], quiet=True)

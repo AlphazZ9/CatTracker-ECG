@@ -312,7 +312,11 @@ class CanvasSlot:
         self._set_cl_pads()
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self._cv_frame)
-        self.canvas.draw()
+        # No draw of the empty figure here: the placeholder below draws it
+        # (or waits for the tab to be shown). A slot used to be drawn twice
+        # at start-up, ~30 renders of nothing. The Tk canvas takes the plot
+        # background meanwhile, so nothing white shows before the first draw.
+        self.canvas.get_tk_widget().configure(bg=PLOT["bg"], highlightthickness=0)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
         # ── Matplotlib toolbar (below canvas) ──────────────────────────────
@@ -468,6 +472,12 @@ class CanvasSlot:
     # reading .fig). With the window itself not shown (start-up, tests) it
     # draws at once, as before.
 
+    # Set by the app while it builds its tabs: a placeholder of a tab not
+    # shown then waits for the tab (some 35 renders of "Click Analyze to
+    # display" at start-up otherwise, ~1 s), drawn by the size check or the
+    # tab change once shown. A real figure is never held back by it.
+    building: bool = False
+
     def _hidden(self) -> bool:
         try:
             return (bool(self.frame.winfo_toplevel().winfo_viewable())
@@ -533,7 +543,7 @@ class CanvasSlot:
             self._drawn_px = None
 
     def _show_placeholder(self, force: bool = False) -> None:
-        if not force and self._hidden():
+        if not force and (self._hidden() or CanvasSlot.building):
             self._defer("placeholder")
             return
         self._pending = None
