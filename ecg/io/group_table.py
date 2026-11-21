@@ -110,8 +110,15 @@ def append_group_row(path: str, row: dict) -> "tuple[int, bool]":
     exist), replacing the row of the same subject and file. Returns (rows in
     the table, whether a row was replaced). Columns new to the table are
     added; the order of the existing ones is kept."""
-    if os.path.exists(path):
-        df = pd.read_excel(path, sheet_name="Group")
+    every = pd.read_excel(path, sheet_name=None) if os.path.exists(path) else {}
+    # The other sheets of the table (ecg.io.group_data: Animals, Whole,
+    # TimeCourse...) are written back as they were.
+    others = {k: v for k, v in every.items() if k != "Group"}
+    if every and "Group" not in every and not set(every) & {
+            "Animals", "Whole", "TimeCourse", "Annotations", "Events"}:
+        raise ValueError(f"{os.path.basename(path)} is not a group table (no 'Group' sheet)")
+    if "Group" in every:
+        df = every["Group"]
         for c in ID_COLUMNS:
             if c not in df.columns:
                 raise ValueError(f"{os.path.basename(path)} is not a group table "
@@ -131,5 +138,11 @@ def append_group_row(path: str, row: dict) -> "tuple[int, bool]":
         df = df[cols]
     df = df.sort_values(["subject", "file"], kind="stable").reset_index(drop=True)
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
+        for name, other in others.items():
+            if name == "Animals":
+                other.to_excel(xw, sheet_name=name, index=False)
         df.to_excel(xw, sheet_name="Group", index=False)
+        for name, other in others.items():
+            if name != "Animals":
+                other.to_excel(xw, sheet_name=name, index=False)
     return len(df), replaced

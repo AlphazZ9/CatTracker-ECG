@@ -1466,10 +1466,23 @@ class CompareSegmentsMixin:
                 confirmoverwrite=False, filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
             if not path:
                 return
+            add_all = getattr(self, "_add_open_recording_to_group_table", None)
+            extra = ""
             try:
-                n, replaced = append_group_row(path, group_row(
-                    res_.subject, res_.filepath, res_.segs, res_.metrics,
-                    template=res_.template, flags=res_.flags, sex=_sex()))
+                if callable(add_all) and getattr(getattr(self, "signal", None), "filepath", None):
+                    # The whole experiment's table (Group tab): the segments
+                    # with the whole recording, time course and events.
+                    n, replaced, what = add_all(path, comparison=res_)
+                    extra = f" — {what.split(': ', 1)[-1]}"
+                    reload_ = getattr(self, "_grouptab_reload", None)
+                    gts = getattr(self, "_grouptab_state", None) or {}
+                    if callable(reload_) and gts.get("path") and os.path.normcase(
+                            os.path.abspath(gts["path"])) == os.path.normcase(os.path.abspath(path)):
+                        reload_()
+                else:
+                    n, replaced = append_group_row(path, group_row(
+                        res_.subject, res_.filepath, res_.segs, res_.metrics,
+                        template=res_.template, flags=res_.flags, sex=_sex()))
             except Exception as exc:
                 messagebox.showerror("Group table", str(exc), parent=win)
                 return
@@ -1482,7 +1495,7 @@ class CompareSegmentsMixin:
                 j, k = res_.pairs[0]
                 gst["a"], gst["b"] = res_.tags[j], res_.tags[k]
             _done(f"{res_.subject or 'recording'} {'updated in' if replaced else 'added to'} "
-                  f"{os.path.basename(path)} ({n} recording{'s' if n != 1 else ''})")
+                  f"{os.path.basename(path)} ({n} recording{'s' if n != 1 else ''}){extra}")
 
         run_btn.configure(command=_run_compare)
         lbl_exp = ctk.CTkLabel(res, text="", font=FONT_SMALL, text_color=MUTED,
@@ -1498,7 +1511,9 @@ class CompareSegmentsMixin:
                  "reference; the pair tested is chosen in the Group card below (the "
                  "reference vs the first segment compared with it, until you change it). "
                  "Columns are named after the segment labels: use "
-                 "the same labels and windows for every animal. A recording already in it is replaced."),
+                 "the same labels and windows for every animal. A recording already in it is replaced. "
+                 "Its whole-recording metrics, time course, annotations and event-locked "
+                 "results go to the same table, for the Group tab."),
                 ("Figures…", _export_figures,
                  "The tachograms and the Poincaré plots, 300 dpi PNG or vector PDF / SVG"),
                 ("📋  Copy table", _copy_table,
