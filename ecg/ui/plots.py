@@ -440,6 +440,13 @@ class CanvasSlot:
         new_w = px_w / dpi
         new_h = px_h / dpi
         cur_w, cur_h = self.fig.get_size_inches()
+        if self._pending is not None and not self._hidden():
+            # Shown with a draw still waiting (its tab opened: <Map> does not
+            # always reach a slot nested in a page that was only hidden).
+            if abs(new_w - cur_w) * dpi >= 3 or abs(new_h - cur_h) * dpi >= 3:
+                self.fig.set_size_inches(new_w, new_h, forward=True)
+            self.flush()
+            return
         drawn = getattr(self, "_drawn_px", None)
         if (abs(new_w - cur_w) * dpi < 3 and abs(new_h - cur_h) * dpi < 3
                 and (drawn is None or (abs(drawn[0] - px_w) < 3 and abs(drawn[1] - px_h) < 3))):

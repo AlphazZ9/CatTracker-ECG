@@ -121,3 +121,25 @@ def test_compare_tab_is_not_rebuilt_without_a_recording(root):
     CompareSegmentsMixin._refresh_compare_tab(app)
     CompareSegmentsMixin._refresh_compare_tab(app)
     assert len(built) == 1
+
+
+def test_a_waiting_draw_is_made_when_its_scrolling_page_is_shown_again(root):
+    """A slot inside a CTkScrollableFrame gets no <Map> when its tab comes
+    back: the size check that follows draws what was deferred."""
+    tab = ctk.CTkFrame(root)
+    tab.pack(fill="both", expand=True)
+    page = ctk.CTkScrollableFrame(tab)
+    page.pack(fill="both", expand=True)
+    holder = tk.Frame(page, width=600, height=250)
+    holder.pack(fill="x")
+    holder.pack_propagate(False)
+    slot = CanvasSlot(holder, 6, 2.5, toolbar=False)
+    _pump(root)
+    tab.pack_forget()
+    _pump(root, 0.2)
+    slot.update(lambda fig: fig.add_subplot(111).set_title("drawn"))
+    assert slot._pending == "draw"
+    tab.pack(fill="both", expand=True)
+    _pump(root, 1.0)
+    slot._fit()
+    assert slot._pending is None and slot.fig.axes[0].get_title() == "drawn"
