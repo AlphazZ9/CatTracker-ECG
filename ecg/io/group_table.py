@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from ecg.core.segment_plan import segment_quality, unique_tags
+from ecg.io.group_stats import subject_text
 from ecg.io.subject_name import normalise_sex
 
 # The columns every group table has (the key of a row: subject and file).
@@ -123,8 +124,11 @@ def append_group_row(path: str, row: dict) -> "tuple[int, bool]":
             if c not in df.columns:
                 raise ValueError(f"{os.path.basename(path)} is not a group table "
                                  f"(no '{c}' column)")
-        same = ((df["subject"].astype(str) == str(row["subject"]))
-                & (df["file"].astype(str) == str(row["file"])))
+        # As text the way the table shows it: a subject read back as 243.0
+        # (a column with an empty cell is float) is "243", not "243.0", else
+        # the recording would come in a second time instead of replacing.
+        same = ((df["subject"].map(subject_text) == subject_text(row["subject"]))
+                & (df["file"].map(subject_text) == subject_text(row["file"])))
         replaced = bool(same.any())
         row = match_existing_tags(row, list(df.columns))
         df = df.loc[~same]

@@ -188,3 +188,15 @@ def test_a_sheet_past_excels_limit_is_refused_clearly(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="TimeCourse.*Excel"):
         gd.add_recording(p, "2", "F", "b.smr", _lines(seed=1))
     assert open(p, "rb").read() == before                      # nothing written
+
+
+def test_a_numeric_subject_read_back_as_float_replaces_its_row(tmp_path):
+    """A subject column with an empty cell is read back as float (243.0):
+    Add to group table must still replace the row of subject 243."""
+    p = str(tmp_path / "g.xlsx")
+    segs = [{"label": "Pre", "t_lo": 0.0, "t_hi": 60.0, "hr_mean": 500.0}]
+    metrics = [("hr_mean", "Mean HR", "bpm")]
+    append_group_row(p, group_row("243", "a.smr", segs, metrics))
+    append_group_row(p, group_row("", "b.smr", segs, metrics))       # an empty subject
+    n, replaced = append_group_row(p, group_row("243", "a.smr", segs, metrics))
+    assert (n, replaced) == (2, True)
