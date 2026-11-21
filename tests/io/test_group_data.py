@@ -152,3 +152,39 @@ def test_onsets_and_labels():
     assert gd.onset_of(on[("1", "a")], "Stim", 1) == 30.0
     assert gd.onset_of(on[("2", "b")], "Stim") is None
     assert gd.annotation_labels(annot)[0] in ("Stim", "stim")
+
+
+def test_the_users_own_sheets_are_kept(tmp_path):
+    """Audit: a sheet the user added (notes...) survived Compare segments but
+    not the Group tab's saves."""
+    p = str(tmp_path / "g.xlsx")
+    gd.add_recording(p, "1", "F", "a.smr", _lines())
+    sh = gd.read_sheets(p)
+    sh["My notes"] = pd.DataFrame({"note": ["dose 2 mg/kg"]})
+    gd.write_sheets(p, sh)
+    gd.save_animals(p, gd.animals_frame(gd.read_sheets(p)))
+    gd.add_recording(p, "2", "M", "b.smr", _lines(seed=1))
+    notes = pd.read_excel(p, sheet_name="My notes")
+    assert notes["note"].tolist() == ["dose 2 mg/kg"]
+
+
+def test_a_sex_set_in_the_tab_stays_when_none_is_given(tmp_path):
+    p = str(tmp_path / "g.xlsx")
+    gd.add_recording(p, "1", "", "a.smr", _lines())
+    an = gd.animals_frame(gd.read_sheets(p))
+    an.loc[0, "sex"] = "F"
+    gd.save_animals(p, an)
+    gd.add_recording(p, "1", "", "a.smr", _lines())
+    assert gd.animals_frame(gd.read_sheets(p)).iloc[0]["sex"] == "F"
+    gd.add_recording(p, "1", "M", "a.smr", _lines())           # a sex given wins
+    assert gd.animals_frame(gd.read_sheets(p)).iloc[0]["sex"] == "M"
+
+
+def test_a_sheet_past_excels_limit_is_refused_clearly(tmp_path, monkeypatch):
+    p = str(tmp_path / "g.xlsx")
+    gd.add_recording(p, "1", "F", "a.smr", _lines())
+    before = open(p, "rb").read()
+    monkeypatch.setattr(gd, "EXCEL_MAX_ROWS", 50)
+    with pytest.raises(ValueError, match="TimeCourse.*Excel"):
+        gd.add_recording(p, "2", "F", "b.smr", _lines(seed=1))
+    assert open(p, "rb").read() == before                      # nothing written

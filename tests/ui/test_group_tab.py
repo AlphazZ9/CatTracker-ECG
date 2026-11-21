@@ -153,7 +153,8 @@ def test_recording_lines_with_a_comparison():
     lines = recording_lines(None, [], [], [], cmp_, "M")
     seg = lines[gd.SHEET_SEGMENTS]
     assert "subject" not in seg.columns and seg.iloc[0]["Mean HR (bpm) Post"] == 520.0
-    assert lines[gd.SHEET_TIME] is None and lines[gd.SHEET_WHOLE] is None
+    # Not computed this time: left out, so an earlier add's lines stay.
+    assert gd.SHEET_TIME not in lines and gd.SHEET_WHOLE not in lines
 
 
 def test_the_last_table_is_remembered(root, tmp_path):
@@ -164,3 +165,28 @@ def test_the_last_table_is_remembered(root, tmp_path):
     frame = ctk.CTkFrame(root)
     TabGroupMixin._build_group_page(app, frame)
     assert app._grouptab_state["path"] == p
+
+
+def test_the_comparison_subject_keys_the_row(tmp_path, monkeypatch):
+    """Audit: Add to group table keyed the row on the Subject entry, not on the
+    subject the comparison ran under: the same file came in twice."""
+    app = _open_recording(tmp_path, monkeypatch)
+    app.ent_subject = NS(get=lambda: "")
+    segs = [{"label": "Pre", "t_lo": 0.0, "t_hi": 60.0, "hr_mean": 500.0}]
+    cmp_ = NS(subject="243", filepath=app.signal.filepath, segs=segs,
+              metrics=[("hr_mean", "Mean HR", "bpm")], template="", flags=[[]])
+    p = str(tmp_path / "g.xlsx")
+    TabGroupMixin._add_open_recording_to_group_table(app, p, comparison=cmp_)
+    assert list(gd.animals_frame(gd.read_sheets(p))["subject"]) == ["243"]
+
+
+def test_add_open_asks_where_when_the_remembered_table_did_not_open(root, tmp_path, monkeypatch):
+    """Audit: a remembered table that no longer opens is not written to silently."""
+    gone = tmp_path / "moved.xlsx"
+    asked = []
+    monkeypatch.setattr(tg.filedialog, "asksaveasfilename",
+                        lambda *a, **k: asked.append(k) or "")
+    app, frame = _page(root, {"path": str(gone)})
+    app._add_open_recording_to_group_table = lambda *a, **k: pytest.fail("written")
+    _button(frame, "➕  Add open recording…").invoke()
+    assert asked and not gone.exists()

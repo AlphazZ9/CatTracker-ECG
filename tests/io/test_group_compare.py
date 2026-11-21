@@ -228,3 +228,27 @@ def test_events_use_each_metrics_own_validity():
     res = gc.analyse_events(sheets, an, gc.BY_NONE, metrics=["HR", "rCSI"])
     assert res.figure["values"]["HR"] == {("1", "1.smr"): (500.0, 520.0)}
     assert res.figure["values"]["rCSI"] == {("1", "1.smr"): (1.0, 2.0)}
+
+
+
+def test_no_group_set_says_so(tmp_path):
+    p = _table(tmp_path, n=4)
+    sh = gd.read_sheets(p)
+    an = gd.animals_frame(sh)
+    an["group"] = ""
+    with pytest.raises(ValueError, match="No animal has a group"):
+        gc.analyse_time(sh, an, gc.BY_GROUP, "Stim", start_min=-4, end_min=8, window_min=(0, 2))
+
+
+def test_two_recordings_of_one_subject_draw_two_curves(tmp_path):
+    p = _table(tmp_path, n=4)
+    sh = gd.read_sheets(p)
+    for name in (gd.SHEET_TIME, gd.SHEET_ANNOT):
+        df = sh[name]
+        sh[name] = df.assign(subject=df["subject"].replace({"101": "100"}))
+    an = gd.animals_frame(sh)
+    res = gc.analyse_time(sh, an, gc.BY_NONE, "Stim", bin_s=60, start_min=-4, end_min=8,
+                          window_min=(0, 2))
+    curves = res.figure["curves"][gc.ALL_LABEL]
+    assert curves["n"] == 4 and len(curves["animals"]) == 4
+    assert {"100 (100.smr)", "100 (101.smr)"} <= set(curves["animals"])

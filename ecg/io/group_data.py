@@ -48,6 +48,7 @@ SHEET_EVENTS = "Events"
 # The order of the sheets in the workbook.
 SHEETS = (SHEET_ANIMALS, SHEET_SEGMENTS, SHEET_WHOLE, SHEET_TIME, SHEET_ANNOT, SHEET_EVENTS)
 KEY = ("subject", "file")
+EXCEL_MAX_ROWS = 1_048_576          # rows of an Excel sheet, header included
 
 # Fine bin of the TimeCourse sheet (s): a coarse bin of the Group tab takes
 # the fine bins whose centre falls in it (an error of TC_BIN_S / 2 at most).
@@ -73,8 +74,10 @@ def _key_text(df: "pd.DataFrame") -> "pd.DataFrame":
 
 
 def read_sheets(path: str) -> "dict[str, pd.DataFrame]":
-    """Every sheet of the group table at *path* (the known ones; missing ones
-    absent). A workbook without a subject / file column anywhere is refused."""
+    """Every sheet of the group table at *path*: the known ones (SHEETS) with
+    subject and file as text, and any other sheet the user added (notes, a
+    Prism import...) as it is, written back by write_sheets. A workbook
+    without a subject / file column in a known sheet is refused."""
     xl = pd.read_excel(path, sheet_name=None)
     out = {name: _key_text(df) for name, df in xl.items() if name in SHEETS}
     if not out or not any(all(c in df.columns for c in KEY) for df in out.values()):
@@ -84,6 +87,7 @@ def read_sheets(path: str) -> "dict[str, pd.DataFrame]":
         for c in KEY:
             if c not in df.columns:
                 raise ValueError(f"{os.path.basename(path)}: sheet {name} has no '{c}' column")
+    out.update({name: df for name, df in xl.items() if name not in SHEETS})
     return out
 
 
@@ -168,7 +172,15 @@ def _ordered(df: "pd.DataFrame") -> "pd.DataFrame":
 
 
 def write_sheets(path: str, sheets: "Mapping[str, pd.DataFrame]") -> None:
-    """Write *sheets* (every sheet of the table) to *path*, in SHEETS order."""
+    """Write *sheets* (every sheet of the table) to *path*: the known ones in
+    SHEETS order, then the user's own sheets as they were. Refused, with
+    nothing written, when a sheet is past Excel's row limit (a TimeCourse of
+    many day-long recordings)."""
+    for name, df in sheets.items():
+        if df is not None and len(df) >= EXCEL_MAX_ROWS:
+            raise ValueError(
+                f"The {name} sheet would have {len(df):,} rows, past Excel's limit "
+                f"({EXCEL_MAX_ROWS - 1:,}): split the experiment into several group tables.")
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
         for name in SHEETS:
             df = sheets.get(name)
@@ -178,6 +190,9 @@ def write_sheets(path: str, sheets: "Mapping[str, pd.DataFrame]") -> None:
             sort = [c for c in ("subject", "file", "t_s", "onset_s", "t_start") if c in df.columns]
             df = df.sort_values(sort, kind="stable").reset_index(drop=True)
             df.to_excel(xw, sheet_name=name, index=False)
+        for name, df in sheets.items():
+            if name not in SHEETS and df is not None:
+                df.to_excel(xw, sheet_name=name, index=False)
 
 
 def replace_recording(sheets: "dict[str, pd.DataFrame]", subject: str, file: str,
@@ -190,7 +205,7 @@ def replace_recording(sheets: "dict[str, pd.DataFrame]", subject: str, file: str
     subject, file = subject_text(subject), str(file)
     was = False
     for name, old in sheets.items():
-        if old is not None and len(old):
+        if name in SHEETS and old is not None and len(old):
             was = was or bool(((old["subject"].astype(str) == subject)
                                & (old["file"].astype(str) == file)).any())
     for name, add in new.items():
@@ -211,20 +226,24 @@ def replace_recording(sheets: "dict[str, pd.DataFrame]", subject: str, file: str
 def add_recording(path: str, subject: str, sex: str, file: str,
                   new: "Mapping[str, Optional[pd.DataFrame]]") -> "tuple[int, bool]":
     """Add one recording to the group table at *path* (created if it does not
-    exist): its lines in each sheet of *new* replace the older ones, and the
-    Animals sheet gets it (its group and use kept when it was there). Returns
+    exist): its lines in each sheet of *new* replace the older ones (a sheet
+    given as None loses them), and the Animals sheet gets it (its group and
+    use kept when it was there, and its sex when *sex* is empty). Returns
     (animals in the table, whether the recording was replaced)."""
     sheets = read_sheets(path) if os.path.exists(path) else {}
     subject = subject_text(subject)
     file = os.path.basename(file or "")
     an = sheets.get(SHEET_ANIMALS)
     group, use = "", True
+    sex = normalise_sex(sex)
     if an is not None and len(an):
         same = (an["subject"] == subject) & (an["file"] == file)
         if same.any():
             r = an.loc[same].iloc[0]
             group = subject_text(r.get("group", ""))
             use = _bool(r.get("use", True))
+            # A sex set in the Group tab stays when none is given this time.
+            sex = sex or sex_text(r.get("sex", ""))
     seg = new.get(SHEET_SEGMENTS)
     old_seg = sheets.get(SHEET_SEGMENTS)
     if seg is not None and len(seg) and old_seg is not None and len(old_seg):
@@ -235,7 +254,7 @@ def add_recording(path: str, subject: str, sex: str, file: str,
     # An older table: the animals of its other sheets enter the Animals sheet.
     animals = animals_frame(sheets) if sheets else pd.DataFrame(columns=list(KEY))
     replaced = replace_recording(sheets, subject, file, new)
-    row = pd.DataFrame([{"subject": subject, "sex": normalise_sex(sex), "group": group,
+    row = pd.DataFrame([{"subject": subject, "sex": sex, "group": group,
                          "use": use, "file": file}])
     base = (animals[["subject", "sex", "group", "use", "file"]] if len(animals)
             else pd.DataFrame(columns=["subject", "sex", "group", "use", "file"]))

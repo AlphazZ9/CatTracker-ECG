@@ -62,21 +62,27 @@ def recording_lines(results: "Optional[dict]", metric_rows: "Any", annotations: 
     """The group-table lines of the recording open ({sheet: frame}): its
     whole-recording metrics and time course (after Analyze), annotations,
     event-locked results (the event registry) and, with *comparison* (a
-    Compare segments result), its segments. A sheet without data this time
-    is None (its older lines are removed)."""
+    Compare segments result), its segments. A kind without data this time
+    is left out, so the recording's lines from an earlier add stay (Add to
+    group table from Compare segments without Analyze must not drop its
+    whole-recording and time-course lines)."""
     from ecg.core.analysis import rr_timeseries
     from ecg.io.group_table import group_row
     out: "dict[str, Optional[pd.DataFrame]]" = {}
     whole = gd.whole_frame(metric_rows or [])
-    out[gd.SHEET_WHOLE] = whole if len(whole) else None
+    if len(whole):
+        out[gd.SHEET_WHOLE] = whole
     ts = rr_timeseries(results) if results else None
     tc = (gd.time_frame(ts["Time_s"], ts["RR_ms"], ts["valid"])
           if ts is not None and len(ts) else None)
-    out[gd.SHEET_TIME] = tc if tc is not None and len(tc) else None
+    if tc is not None and len(tc):
+        out[gd.SHEET_TIME] = tc
     an = gd.annotations_frame(annotations or [])
-    out[gd.SHEET_ANNOT] = an if len(an) else None
+    if len(an):
+        out[gd.SHEET_ANNOT] = an
     ev = gd.events_frame(event_rows or [])
-    out[gd.SHEET_EVENTS] = ev if len(ev) else None
+    if len(ev):
+        out[gd.SHEET_EVENTS] = ev
     if comparison is not None:
         row = group_row(comparison.subject, comparison.filepath, comparison.segs,
                         comparison.metrics, template=comparison.template,
@@ -148,6 +154,11 @@ class TabGroupMixin:
             comparison = cur() if callable(cur) else None
         lines = recording_lines(results, rows, getattr(analysis, "annotations", None),
                                 events, comparison, sex)
+        # The subject the comparison was run under keys the row, as the
+        # Compare segments group row always did (else the same file could
+        # come in twice, under two subjects).
+        cmp_subject = str(getattr(comparison, "subject", "") or "").strip()
+        subject = cmp_subject or subject
         return subject or os.path.splitext(os.path.basename(filepath))[0], sex, filepath, lines
 
     def _add_open_recording_to_group_table(self: ECGApp, path: str,
@@ -321,6 +332,11 @@ class TabGroupMixin:
         plot_card.pack_propagate(False)
         slot = CanvasSlot(plot_card, FIG_SIZE[0], FIG_SIZE[1], toolbar=False,
                           placeholder="Open a group table")
+        # Listed with the app's figures, so that a draw deferred while the tab
+        # was hidden is made when it is shown (_flush_shown_slots).
+        slots = getattr(self, "_slots", None)
+        if isinstance(slots, dict):
+            slots["group_tab"] = slot
 
         # ── Results ──
         hdr_r, r_body = _card("Results")
@@ -506,7 +522,9 @@ class TabGroupMixin:
                 _load(st["path"])
 
         def _add_open() -> None:
-            path = st["path"]
+            # Only the table shown: a remembered one that did not open (moved,
+            # deleted) is not written to without asking.
+            path = st["path"] if data["sheets"] is not None else ""
             if not path:
                 path = filedialog.asksaveasfilename(
                     parent=win, title="Group table: add the recording open (created if new)",
@@ -520,7 +538,8 @@ class TabGroupMixin:
             except Exception as exc:
                 messagebox.showerror("Group table", str(exc), parent=win)
                 return
-            _load(path)
+            if not _load(path):
+                return
             _say(f"✓  {what} — {'updated in' if replaced else 'added to'} "
                  f"{os.path.basename(path)} ({n} animals)", GREEN)
 

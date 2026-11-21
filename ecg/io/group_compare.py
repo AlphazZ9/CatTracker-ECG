@@ -102,6 +102,17 @@ def _num(v: Any) -> float:
     return f if math.isfinite(f) else math.nan
 
 
+def _need_animals(gmap: "Mapping", by: str) -> None:
+    """No animal left once grouped: say why (rather than "no data")."""
+    if gmap:
+        return
+    if by == BY_GROUP:
+        raise ValueError("No animal has a group: type one in Animals, or choose No groups.")
+    if by == BY_SEX:
+        raise ValueError("No animal has a sex (M / F): set it in Animals, or choose No groups.")
+    raise ValueError("No animal is ticked in Animals.")
+
+
 def describe(v: "Sequence[float]") -> "tuple[float, float, int]":
     """(mean, SEM, n) of the finite values of *v*."""
     a = np.asarray(v, dtype=float)
@@ -432,6 +443,7 @@ def analyse_segments(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFram
     if a not in tags or b not in tags or a == b:
         raise ValueError("Choose two different segments of the table.")
     gmap, order, notes = animal_groups(animals, by)
+    _need_animals(gmap, by)
     available = metric_names(df, a, b)
     if metrics is None:
         names_m = [m for m in DEFAULT_METRICS if m in available] or available
@@ -478,6 +490,7 @@ def analyse_whole(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame",
         raise ValueError("The group table has no whole-recording metrics "
                          "(Group tab → Add open recording, after Analyze).")
     gmap, order, notes = animal_groups(animals, by)
+    _need_animals(gmap, by)
     available = whole_metrics(sheets)
     if metrics is None:
         names_m = [m for m in DEFAULT_METRICS if m in available] or available[:8]
@@ -589,6 +602,7 @@ def analyse_events(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame"
         raise ValueError("The group table has no event-locked results (save them to the event "
                          "registry in Time course → Autonomic, then Add open recording).")
     gmap, order, notes = animal_groups(animals, by)
+    _need_animals(gmap, by)
     ev = df
     configs = event_configs(sheets)
     config = config if config in configs else configs[0]
@@ -654,6 +668,7 @@ def analyse_time(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame", 
     if not (w1 > w0):
         raise ValueError("The test window must end after it starts.")
     gmap, order, notes = animal_groups(animals, by)
+    _need_animals(gmap, by)
     onsets = stim_onsets(sheets.get(SHEET_ANNOT))
     sexes = _sexes(animals)
     unit = TC_METRICS[metric]
@@ -704,8 +719,13 @@ def analyse_time(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame", 
             cnt = np.sum(np.isfinite(mat), axis=0) if len(ks) else np.zeros(len(starts))
             sd = np.nanstd(mat, axis=0, ddof=1) if len(ks) > 1 else np.full(len(starts), np.nan)
         sem = np.where(cnt > 1, sd / np.sqrt(np.maximum(cnt, 1)), np.nan)
-        curves[g] = {"mean": mean, "sem": sem, "n": len(ks),
-                     "animals": {k[0]: series[k] for k in ks}}
+        # One curve per recording (a subject with two files keeps both), and
+        # n the animals that add at least one value to the mean.
+        subjects = [k[0] for k in ks]
+        names = {k: (k[0] if subjects.count(k[0]) == 1 else f"{k[0]} ({k[1]})") for k in ks}
+        curves[g] = {"mean": mean, "sem": sem,
+                     "n": int(sum(bool(np.isfinite(series[k]).any()) for k in ks)),
+                     "animals": {names[k]: series[k] for k in ks}}
         b = [base_v[k] for k in ks]
         w = [win_v[k] for k in ks]
         d = [y - x for x, y in zip(b, w)]
