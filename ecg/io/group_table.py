@@ -21,6 +21,8 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from ecg.io.safe_write import replacing
+
 from ecg.core.segment_plan import segment_quality, unique_tags
 from ecg.io.group_stats import subject_text
 from ecg.io.subject_name import normalise_sex
@@ -141,7 +143,8 @@ def append_group_row(path: str, row: dict) -> "tuple[int, bool]":
         cols.insert(cols.index("subject") + 1, "sex")
         df = df[cols]
     df = df.sort_values(["subject", "file"], kind="stable").reset_index(drop=True)
-    with pd.ExcelWriter(path, engine="openpyxl") as xw:
+    with replacing(path, backup=True) as tmp, \
+            pd.ExcelWriter(tmp, engine="openpyxl") as xw:
         for name, other in others.items():
             if name == "Animals":
                 other.to_excel(xw, sheet_name=name, index=False)

@@ -27,6 +27,8 @@ from typing import Any, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from ecg.io.safe_write import replacing
+
 from ecg.core.segment_plan import (
     PAIRS, PAIRWISE, comparators_caption, comparators_reference, comparison_pairs,
     resolve_comparators, segment_quality, unique_tags,
@@ -263,7 +265,8 @@ def write_xlsx(res: ComparisonResult, path: str, exported_at: str = "") -> None:
     """The whole comparison as a workbook: Comparison, Quality, Summary,
     Blocks, then the RR series and the Poincaré pairs of each segment."""
     used: "set[str]" = set()
-    with pd.ExcelWriter(path, engine="openpyxl") as xw:
+    with replacing(path) as tmp, \
+            pd.ExcelWriter(tmp, engine="openpyxl") as xw:
         for title, df in _sheets(res, exported_at):
             df.to_excel(xw, sheet_name=_sheet_name(title, used), index=False)
         for ws in xw.book.worksheets:

@@ -650,7 +650,9 @@ class ExportController:
         if not path:
             return
         try:
-            self.write_excel(path)
+            from ecg.io.safe_write import replacing
+            with replacing(path) as tmp:       # never a half-written file
+                self.write_excel(tmp)
         except Exception as exc:
             messagebox.showerror("Export failed", str(exc))
             return

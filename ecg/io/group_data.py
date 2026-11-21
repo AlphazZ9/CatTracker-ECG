@@ -35,6 +35,8 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from ecg.io.safe_write import replacing
+
 from ecg.io.group_stats import sex_text, subject_text
 from ecg.io.group_table import match_existing_tags
 from ecg.io.subject_name import normalise_sex
@@ -181,7 +183,8 @@ def write_sheets(path: str, sheets: "Mapping[str, pd.DataFrame]") -> None:
             raise ValueError(
                 f"The {name} sheet would have {len(df):,} rows, past Excel's limit "
                 f"({EXCEL_MAX_ROWS - 1:,}): split the experiment into several group tables.")
-    with pd.ExcelWriter(path, engine="openpyxl") as xw:
+    with replacing(path, backup=True) as tmp, \
+            pd.ExcelWriter(tmp, engine="openpyxl") as xw:
         for name in SHEETS:
             df = sheets.get(name)
             if df is None:

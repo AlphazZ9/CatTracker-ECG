@@ -31,6 +31,8 @@ from typing import Any, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from ecg.io.safe_write import replacing
+
 from ecg.io.group_data import (
     SHEET_EVENTS, SHEET_SEGMENTS, SHEET_TIME, SHEET_WHOLE, TC_METRICS, KEY, binned_series,
     onset_of, stim_onsets, window_value, SHEET_ANNOT,
@@ -987,7 +989,8 @@ def write_results(path: str, res: GroupResult, table_name: str = "") -> None:
     settings = [("Group table", table_name)] + list(res.settings) + \
         [("Groups", ", ".join(res.groups)), ("Animals", res.n_animals)] + \
         [("Note", n) for n in res.notes]
-    with pd.ExcelWriter(path, engine="openpyxl") as xw:
+    with replacing(path) as tmp, \
+            pd.ExcelWriter(tmp, engine="openpyxl") as xw:
         res.display.drop(columns=["_p"], errors="ignore").to_excel(xw, sheet_name="Results",
                                                                    index=False)
         res.stats.to_excel(xw, sheet_name="Statistics", index=False)
