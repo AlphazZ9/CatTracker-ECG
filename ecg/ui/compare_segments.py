@@ -413,6 +413,12 @@ class CompareSegmentsMixin:
         sig = self._compare_signature()
         if sig is not None and sig == self._compare_built_for:
             return
+        # Built already for no recording: opening the tab again must not
+        # destroy and rebuild it (a visible flash, and the group card's
+        # table read again each time).
+        if (sig is None and getattr(self, "_compare_built_empty", False)
+                and self._compare_built_for is None and holder.winfo_children()):
+            return
         # The rows typed for this recording survive a rebuild for its new
         # peaks (not the comparison: it rests on the old ones), unless a
         # session / UI rebuild left a setup to apply instead.
@@ -432,6 +438,7 @@ class CompareSegmentsMixin:
         for child in holder.winfo_children():
             child.destroy()
         self._compare_built_for = sig
+        self._compare_built_empty = sig is None
         if sig is None:
             ctk.CTkLabel(holder, text="Open a file and detect the peaks to compare segments "
                                       "(the group card below works without one).",
@@ -827,10 +834,13 @@ class CompareSegmentsMixin:
         lbl_status = ctk.CTkLabel(seg_card, text="", font=FONT_SMALL, text_color=MUTED,
                                   anchor="w", justify="left")
         lbl_status.pack(fill="x", pady=(SPACE_S, 0))
-        progress_bar = ctk.CTkProgressBar(ctrl, height=8, mode="indeterminate",
+        # A slot of fixed size always in the row: the bar shows and hides in
+        # it without moving the controls.
+        progress_slot = ctk.CTkFrame(ctrl, fg_color="transparent", width=200, height=8)
+        progress_slot.pack(side="right", padx=(SPACE_M, 0))
+        progress_slot.pack_propagate(False)
+        progress_bar = ctk.CTkProgressBar(progress_slot, height=8, mode="indeterminate",
                                           progress_color=TEAL)
-        progress_bar.pack(side="right", padx=(SPACE_M, 0))
-        progress_bar.pack_forget()
         run_btn = ctk.CTkButton(ctrl, text="▶  Compare", **button_style("primary"))
         run_btn.pack(side="left")
         # Length of the non-overlapping blocks each segment is summarised by
@@ -1230,7 +1240,7 @@ class CompareSegmentsMixin:
                                            for l, lo, hi in windows],
                                   "block_s": float(block_s)}
             run_btn.configure(state="disabled")
-            progress_bar.pack(side="right", padx=(SPACE_M, 0))
+            progress_bar.place(relx=0, rely=0, relwidth=1, relheight=1)
             progress_bar.start()
             lbl_status.configure(text="  Computing…", text_color=ORANGE)
             # HRV inputs read on the main thread: the user's RR bounds and
@@ -1260,7 +1270,7 @@ class CompareSegmentsMixin:
                 return
             _state["inflight"] = None
             run_btn.configure(state="normal")
-            progress_bar.stop(); progress_bar.pack_forget()
+            progress_bar.stop(); progress_bar.place_forget()
             lbl_status.configure(text=f"⚠  Comparison failed — {exc}", text_color=RED)
 
         def _on_done(segs: "list[dict]", windows: "list[tuple[str, float, float]]",
@@ -1269,7 +1279,7 @@ class CompareSegmentsMixin:
                 return
             _state["inflight"] = None
             run_btn.configure(state="normal")
-            progress_bar.stop(); progress_bar.pack_forget()
+            progress_bar.stop(); progress_bar.place_forget()
             # The reference as it is NOW (the selector stays usable while
             # the worker runs), kept when it still exists for these
             # segments; then the cheap block-mean comparison of each
