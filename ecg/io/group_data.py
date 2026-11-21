@@ -336,8 +336,10 @@ def annotations_frame(annotations: "Iterable[Mapping[str, Any]]") -> "pd.DataFra
 
 def events_frame(event_rows: "Iterable[Mapping[str, Any]]") -> "pd.DataFrame":
     """One line per event of ``ecg.io.db.list_event_rows`` (one recording):
-    label, onset_s, pre_s, post_s, method, window_s, valid, then per metric
-    ``<metric> pre``, ``<metric> post``, ``<metric> Δ``."""
+    label, onset_s, pre_s, post_s, method, window_s, valid (the event's, set
+    by the CSI family), then per metric ``<metric> pre``, ``<metric> post``,
+    ``<metric> Δ`` and ``<metric> valid`` (that series' own validity: an
+    event can be unusable for the CSI and fine for HR)."""
     rows = []
     for e in event_rows or []:
         row: "dict[str, Any]" = {
@@ -352,6 +354,7 @@ def events_frame(event_rows: "Iterable[Mapping[str, Any]]") -> "pd.DataFrame":
                 v = m.get(part)
                 row[f"{k} {suffix}"] = float(v) if isinstance(v, (int, float)) and \
                     math.isfinite(float(v)) else math.nan
+            row[f"{k} valid"] = bool(m.get("valid", row["valid"]))
         rows.append(row)
     return pd.DataFrame(rows)
 

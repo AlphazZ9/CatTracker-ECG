@@ -186,3 +186,45 @@ def test_an_unticked_animal_is_left_out(tmp_path):
     an.loc[0, "use"] = False
     res = gc.analyse_whole(sh, an, gc.BY_NONE)
     assert res.n_animals == len(an) - 1
+
+
+def _event_sheets(rows):
+    ev = pd.concat([gd.events_frame([r]).assign(subject=s, file=f"{s}.smr")
+                    for s, r in rows], ignore_index=True)
+    an = pd.DataFrame([{"subject": s, "sex": "", "group": "", "use": True, "file": f"{s}.smr"}
+                       for s in sorted({s for s, _ in rows})])
+    return {gd.SHEET_EVENTS: ev}, an
+
+
+def _event(onset, method, window, hr_post, valid=True, hr_valid=True):
+    return {"label": "Stim", "onset_s": onset, "method": method, "window_s": window,
+            "valid": valid, "metrics": {"HR": {"pre": 500.0, "post": hr_post, "valid": hr_valid},
+                                        "rCSI": {"pre": 1.0, "post": 2.0, "valid": valid}}}
+
+
+def test_events_keep_one_configuration():
+    """Codex review: the same event saved with two methods / windows must not
+    be pooled (counted twice, weighted by configuration)."""
+    sheets, an = _event_sheets([
+        ("1", _event(100.0, "robust", 15.0, 520.0)),
+        ("1", _event(100.0, "classic", 30.0, 600.0)),
+        ("2", _event(90.0, "robust", 15.0, 530.0)),
+    ])
+    assert gc.event_configs(sheets) == ["robust · 15 s", "classic · 30 s"]
+    res = gc.analyse_events(sheets, an, gc.BY_NONE, metrics=["HR"])
+    vals = res.figure["values"]["HR"]
+    assert vals[("1", "1.smr")] == (500.0, 520.0) and vals[("2", "2.smr")] == (500.0, 530.0)
+    assert any("classic · 30 s" in n for n in res.notes)
+    other = gc.analyse_events(sheets, an, gc.BY_NONE, metrics=["HR"], config="classic · 30 s")
+    assert other.figure["values"]["HR"] == {("1", "1.smr"): (500.0, 600.0)}
+
+
+def test_events_use_each_metrics_own_validity():
+    """Codex review: an event unusable for the CSI family can be fine for HR."""
+    sheets, an = _event_sheets([
+        ("1", _event(100.0, "robust", 15.0, 520.0, valid=False, hr_valid=True)),
+        ("1", _event(200.0, "robust", 15.0, 540.0, valid=True, hr_valid=False)),
+    ])
+    res = gc.analyse_events(sheets, an, gc.BY_NONE, metrics=["HR", "rCSI"])
+    assert res.figure["values"]["HR"] == {("1", "1.smr"): (500.0, 520.0)}
+    assert res.figure["values"]["rCSI"] == {("1", "1.smr"): (1.0, 2.0)}

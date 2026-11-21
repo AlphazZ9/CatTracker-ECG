@@ -180,7 +180,7 @@ class TabGroupMixin:
         for k, v in (("path", ""), ("by", gc.BY_GROUP), ("analysis", gc.AN_SEGMENTS),
                      ("a", ""), ("b", ""), ("stim", ""), ("tc_metric", "HR"), ("bin", "60"),
                      ("from", "-10"), ("to", "30"), ("w0", "0"), ("w1", "5"), ("delta", True),
-                     ("lines", False), ("all", False), ("event", ALL_EVENTS), ("fig_metric", "")):
+                     ("lines", False), ("all", False), ("event", ALL_EVENTS), ("ev_config", ""), ("fig_metric", "")):
             st.setdefault(k, v)
         tip = getattr(self, "_bind_hover_tip", lambda *a, **k: None)
         data: "dict[str, Any]" = {"sheets": None, "animals": None, "res": None}
@@ -305,6 +305,10 @@ class TabGroupMixin:
         o_ev = ctk.CTkFrame(opts, fg_color="transparent")
         _lbl(o_ev, "Events")
         cb_ev = _combo(o_ev, "event", 170)
+        _lbl(o_ev, "Configuration")
+        cb_cfg = _combo(o_ev, "ev_config", 170)
+        tip(cb_cfg, "The method and window the events were analysed with: one at a time, "
+                    "the same event saved with two configurations is never counted twice")
         chk_all_ev = _check(o_ev, "All metrics", "all")
         frames = {gc.AN_SEGMENTS: o_seg, gc.AN_TIME: o_tc, gc.AN_WHOLE: o_wh, gc.AN_EVENTS: o_ev}
 
@@ -485,6 +489,9 @@ class TabGroupMixin:
             evs = [ALL_EVENTS] + gc.event_labels(sheets)
             cb_ev.configure(values=evs)
             cb_ev.set(st["event"] if st["event"] in evs else ALL_EVENTS)
+            cfgs = gc.event_configs(sheets)
+            cb_cfg.configure(values=cfgs or [""])
+            cb_cfg.set(st["ev_config"] if st["ev_config"] in cfgs else (cfgs[0] if cfgs else ""))
 
         def _open() -> None:
             path = filedialog.askopenfilename(
@@ -543,6 +550,7 @@ class TabGroupMixin:
             st["delta"] = bool(chk_delta.get())
             st["lines"] = bool(chk_lines.get())
             st["event"] = cb_ev.get()
+            st["ev_config"] = cb_cfg.get()
             src = {gc.AN_SEGMENTS: chk_all_seg, gc.AN_WHOLE: chk_all_wh,
                    gc.AN_EVENTS: chk_all_ev}.get(st["analysis"])
             if src is not None:
@@ -577,7 +585,8 @@ class TabGroupMixin:
                 return gc.analyse_whole(sheets, an, st["by"], metrics)
             if mode == gc.AN_EVENTS:
                 ev = "" if st["event"] == ALL_EVENTS else st["event"]
-                return gc.analyse_events(sheets, an, st["by"], ev, metrics)
+                return gc.analyse_events(sheets, an, st["by"], ev, metrics,
+                                         config=st["ev_config"] or None)
             if not st["stim"]:
                 raise ValueError("No annotation in the table to align on: annotate the "
                                  "stimulation in each recording, then Add open recording.")

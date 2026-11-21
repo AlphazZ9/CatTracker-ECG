@@ -549,19 +549,54 @@ def event_metrics(sheets: "Mapping[str, pd.DataFrame]") -> "list[str]":
     return [c[:-4] for c in df.columns if str(c).endswith(" pre") and f"{c[:-4]} post" in df.columns]
 
 
+def _truthy(v: Any) -> bool:
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "0", "no", "")
+    if isinstance(v, float) and not math.isfinite(v):
+        return False
+    return bool(v)
+
+
+def _config_text(method: Any, window: Any) -> str:
+    m = "" if method is None or (isinstance(method, float) and not math.isfinite(method)) \
+        else str(method).strip()
+    w = _num(window)
+    return " · ".join(p for p in (m or "default", f"{w:g} s" if math.isfinite(w) else "") if p)
+
+
+def event_configs(sheets: "Mapping[str, pd.DataFrame]") -> "list[str]":
+    """The event-locked configurations of the table ("robust · 15 s"), the
+    most used first: one recording can hold the same events analysed with
+    several methods or windows, which must not be pooled."""
+    df = sheets.get(SHEET_EVENTS)
+    if df is None or df.empty:
+        return []
+    texts = [_config_text(m, w) for m, w in zip(df.get("method", [None] * len(df)),
+                                                 df.get("window_s", [None] * len(df)))]
+    counts = pd.Series(texts).value_counts()
+    return sorted(counts.index, key=lambda t: (-int(counts[t]), t))
+
+
 def analyse_events(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame", by: str,
-                   label: str = "", metrics: "Optional[Sequence[str]]" = None) -> GroupResult:
-    """Event-locked: per animal the mean of its valid events named *label*
-    ('' : all), post vs pre within each group and Δ between groups."""
+                   label: str = "", metrics: "Optional[Sequence[str]]" = None,
+                   config: "Optional[str]" = None) -> GroupResult:
+    """Event-locked: per animal the mean of its events named *label* ('' :
+    all) that are valid for each metric, in one configuration (*config*, one
+    of event_configs(); None: the most used), post vs pre within each group
+    and Δ between groups."""
     df = sheets.get(SHEET_EVENTS)
     if df is None or df.empty:
         raise ValueError("The group table has no event-locked results (save them to the event "
                          "registry in Time course → Autonomic, then Add open recording).")
     gmap, order, notes = animal_groups(animals, by)
     ev = df
-    if "valid" in ev.columns:
-        ev = ev.loc[[bool(v) if not isinstance(v, str) else v.lower() not in ("false", "0")
-                     for v in ev["valid"]]]
+    configs = event_configs(sheets)
+    config = config if config in configs else configs[0]
+    ev = ev.loc[[_config_text(m, w) == config for m, w in
+                 zip(ev.get("method", [None] * len(ev)), ev.get("window_s", [None] * len(ev)))]]
+    if len(configs) > 1:
+        notes.append(f"Configuration {config} only (the table also holds "
+                     f"{', '.join(c for c in configs if c != config)})")
     if label:
         ev = ev.loc[ev["label"].astype(str) == label]
     available = event_metrics(sheets)
@@ -579,7 +614,11 @@ def analyse_events(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame"
                 continue
             pre = pd.to_numeric(sub[f"{m} pre"], errors="coerce").to_numpy(float)
             post = pd.to_numeric(sub[f"{m} post"], errors="coerce").to_numpy(float)
-            ok = np.isfinite(pre) & np.isfinite(post)
+            # The series' own validity (tables made before it: the event's).
+            vcol = f"{m} valid" if f"{m} valid" in sub.columns else "valid"
+            valid = (np.array([_truthy(v) for v in sub[vcol]], dtype=bool)
+                     if vcol in sub.columns else np.ones(len(sub), bool))
+            ok = np.isfinite(pre) & np.isfinite(post) & valid
             if ok.any():
                 vals[key] = (float(pre[ok].mean()), float(post[ok].mean()))
         values[m] = vals
@@ -588,7 +627,8 @@ def analyse_events(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame"
                          notes, {}, within="Pre/post")
     res.figure = {"kind": "paired", "values": values, "gmap": gmap, "names": ("pre", "post"),
                   "metric": names_m[0] if names_m else ""}
-    res.settings = [("Analysis", AN_EVENTS), ("By", by), ("Events", label or "all")]
+    res.settings = [("Analysis", AN_EVENTS), ("By", by), ("Events", label or "all"),
+                    ("Configuration", config)]
     return res
 
 
