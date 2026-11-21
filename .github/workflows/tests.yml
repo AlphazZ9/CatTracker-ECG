@@ -70,6 +70,18 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run -a -s "-screen 0 1600x1200x24" python -m pytest -q -p no:cacheprovider -rf
 
+      # The runner's screen is 1024 x 768: a window cannot be wider, so the
+      # tests that resize one (Poincaré columns, the tab bar at 1400 px)
+      # would test the runner's screen, not the app. A desktop's size instead.
+      - name: Screen size (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          try { Set-DisplayResolution -Width 1920 -Height 1080 -Force } catch { Write-Host "::warning::Set-DisplayResolution: $_" }
+          Add-Type -AssemblyName System.Windows.Forms
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          Write-Host "Screen: $($b.Width) x $($b.Height)"
+
       - name: Run the tests (Windows)
         if: runner.os == 'Windows'
         run: python -m pytest -q -p no:cacheprovider -rf

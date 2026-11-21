@@ -30,6 +30,9 @@ LEGEND_ORDER = (UP_TO_DATE, OUT_OF_DATE, NOT_COMPUTED)
 # belongs to a head and selects its tab.
 HEAD_PAD = 16
 HEAD_GAP = 4
+# The heads' side padding when a window is too narrow for the mockup's 16 px
+# (eight tabs on a 1280 px screen).
+HEAD_PAD_TIGHT = 10
 
 
 def state_color(state: str) -> str:
@@ -86,11 +89,18 @@ class TabBar(ctk.CTkFrame):
 
         legend = ctk.CTkFrame(self._bar, fg_color="transparent")
         legend.pack(side="right", padx=(SPACE_S, 24))
+        # (glyph, its text): the texts give way when the heads need the room.
+        self._legend: "list[tuple[ctk.CTkLabel, ctk.CTkLabel]]" = []
         for state in LEGEND_ORDER:
-            ctk.CTkLabel(legend, text=STATE_GLYPHS[state], font=FONT_HINT, width=0,
-                         text_color=state_color(state)).pack(side="left", padx=(SPACE_S, SPACE_XS))
-            ctk.CTkLabel(legend, text=state, font=FONT_HINT, text_color=MUTED,
-                         width=0).pack(side="left")
+            glyph = ctk.CTkLabel(legend, text=STATE_GLYPHS[state], font=FONT_HINT, width=0,
+                                 text_color=state_color(state))
+            glyph.pack(side="left", padx=(SPACE_S, SPACE_XS))
+            text = ctk.CTkLabel(legend, text=state, font=FONT_HINT, text_color=MUTED, width=0)
+            text.pack(side="left")
+            self._legend.append((glyph, text))
+        self._legend_compact = False
+        self._head_pad = HEAD_PAD
+        self._bar.bind("<Configure>", lambda _e: self._fit_legend(), add="+")
 
     # ── CTkTabview API ───────────────────────────────────────────────────
 
@@ -135,11 +145,13 @@ class TabBar(ctk.CTkFrame):
         # underline starts after the gap, as when the gap sat between heads.
         line = ctk.CTkFrame(head, width=1, height=3, fg_color=PANEL, corner_radius=0)
         line.pack(side="bottom", fill="x", padx=(gap, 0))
-        self._heads[name] = {"head": head, "glyph": glyph, "label": label, "line": line,
+        self._heads[name] = {"head": head, "row": row, "gap": gap,
+                             "glyph": glyph, "label": label, "line": line,
                              "state": NOT_COMPUTED, "reasons": ()}
         self._bind_head(name)
         if self._current is None:
             self.set(name)
+        self.after_idle(self._fit_legend)          # one head more to fit
         return self._frames[name]
 
     def tab(self, name: str) -> ctk.CTkFrame:
@@ -220,6 +232,51 @@ class TabBar(ctk.CTkFrame):
                 pass
         if self._command is not None:
             self._command()
+
+    # ── the legend gives the heads the room ──────────────────────────────
+
+    # What the status readout keeps at least beside the heads (px).
+    STATUS_MIN_W = 120
+
+    def _fit_legend(self) -> None:
+        """The legend is packed before the heads (it docks right), so on a
+        narrow window it took the heads' room and squeezed the last tabs.
+        First its texts go (the glyphs stay, and each head's hint says its
+        state in words), then the heads' padding narrows from 16 to 10 px;
+        both come back when the window is wide again. This changes only on a
+        window resize (or a tab added), never while working."""
+        try:
+            width = self._bar.winfo_width()
+            if width <= 1 or not self._heads:
+                return
+            n = len(self._heads)
+            content = sum(h["head"].winfo_reqwidth() for h in self._heads.values()) \
+                - 2 * n * self._head_pad + HEAD_PAD
+            glyphs = sum(g.winfo_reqwidth() + SPACE_S + SPACE_XS for g, _t in self._legend) + 24
+            texts = sum(t.winfo_reqwidth() for _g, t in self._legend)
+
+            def fits(pad: int, with_texts: bool) -> bool:
+                return (content + 2 * n * pad + glyphs + (texts if with_texts else 0)
+                        + self.STATUS_MIN_W) <= width
+            if fits(HEAD_PAD, True):
+                compact, pad = False, HEAD_PAD
+            elif fits(HEAD_PAD, False):
+                compact, pad = True, HEAD_PAD
+            else:
+                compact, pad = True, HEAD_PAD_TIGHT
+            if compact != self._legend_compact:
+                self._legend_compact = compact
+                for glyph, text in self._legend:
+                    if compact:
+                        text.pack_forget()
+                    else:
+                        text.pack(side="left", after=glyph)
+            if pad != self._head_pad:
+                self._head_pad = pad
+                for h in self._heads.values():
+                    h["row"].pack_configure(padx=(h["gap"] + pad, pad))
+        except tk.TclError:
+            pass
 
     # ── states ───────────────────────────────────────────────────────────
 
