@@ -468,6 +468,34 @@ def delete_recording(filepath: str) -> bool:
         return False
 
 
+def project_names() -> "list[str]":
+    """The project names of the saved recordings (Recording sheet), the most
+    recently saved first; blank ones left out."""
+    try:
+        with _open() as con:
+            rows = con.execute(
+                "SELECT project_name, MAX(saved_at) AS last FROM recordings "
+                "WHERE TRIM(COALESCE(project_name, '')) != '' "
+                "GROUP BY project_name ORDER BY last DESC").fetchall()
+            return [str(r["project_name"]) for r in rows]
+    except Exception as exc:
+        log.debug("db.project_names: %s", exc)
+        return []
+
+
+def project_recordings(project_name: str) -> "list[dict]":
+    """The saved recordings of *project_name* (exact name), by file name."""
+    try:
+        with _open() as con:
+            rows = con.execute(
+                "SELECT * FROM recordings WHERE project_name=? ORDER BY stem COLLATE NOCASE",
+                (project_name,)).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as exc:
+        log.debug("db.project_recordings: %s", exc)
+        return []
+
+
 def search_recordings(query: str, limit: int = 50) -> "list[dict]":
     """Full-text search on stem + notes."""
     q = f"%{query}%"

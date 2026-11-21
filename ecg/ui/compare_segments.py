@@ -38,29 +38,12 @@ from ecg.ui.theme import button_style, disabled_style, toggle_style
 from ecg.ui.poincare_figure import draw_poincare_set
 from ecg.io.group_table import append_group_row, group_row
 from ecg.io.subject_name import normalise_sex
-from ecg.io.group_stats import (
-    DEFAULT_METRICS_NOTE, HOLM_ALL, all_pairs_stats, check_rows,
-    paired_stats, read_group_table, segment_tags, smallest_wilcoxon_p,
-    write_all_pairs_report, write_group_report,
-)
-from ecg.ui.group_figure import MAIN_METRIC, draw_all_pairs_figure, draw_group_figure
 
-# Group card analysis modes.
-MODE_ONE = "One pair (A vs B)"
-MODE_ALL = "All pairs (B vs A, D vs C, F vs E)"
-
-
-def all_pairs_figsize(n_pairs: int) -> "tuple[float, float]":
-    """The saved all-pairs figure: about 3.3 in per pair panel."""
-    return (max(5.0, 3.3 * max(1, n_pairs)), 4.6)
 from ecg.io.segment_export import (
     ComparisonResult, comparison_tsv, pzfx_notes, write_csv, write_pzfx, write_xlsx,
 )
 from ecg.io import prism_template
-from ecg.io.prism_template import (
-    PrismTemplateError, fill_template, group_tables, left_out_notes, pair_tables, sex_notes,
-    recording_tables, write_metric_pzfx,
-)
+from ecg.io.prism_template import PrismTemplateError, fill_template, recording_tables
 from ecg.core import segment_plan
 from ecg.core.segment_plan import (
     MAX_SEGMENTS, PAIRS, PAIRWISE, apply_config, comparators_caption, comparators_reference,
@@ -413,6 +396,12 @@ class CompareSegmentsMixin:
         sig = self._compare_signature()
         if sig is not None and sig == self._compare_built_for:
             return
+        # Built already for no recording: opening the tab again must not
+        # destroy and rebuild it (a visible flash, and the group card's
+        # table read again each time).
+        if (sig is None and getattr(self, "_compare_built_empty", False)
+                and self._compare_built_for is None and holder.winfo_children()):
+            return
         # The rows typed for this recording survive a rebuild for its new
         # peaks (not the comparison: it rests on the old ones), unless a
         # session / UI rebuild left a setup to apply instead.
@@ -432,13 +421,14 @@ class CompareSegmentsMixin:
         for child in holder.winfo_children():
             child.destroy()
         self._compare_built_for = sig
+        self._compare_built_empty = sig is None
         if sig is None:
             ctk.CTkLabel(holder, text="Open a file and detect the peaks to compare segments "
-                                      "(the group card below works without one).",
+                                      "(the Group tab works without one).",
                          font=FONT_LABEL, text_color=MUTED).pack(pady=(60, 40))
         else:
             self._build_compare_segments(holder)
-        self._build_group_card(holder)
+        self._build_group_pointer(holder)
 
     def _compare_setup_snapshot(self: ECGApp) -> "Optional[dict]":
         """The Compare segments setup of the current recording, for Save
@@ -827,10 +817,13 @@ class CompareSegmentsMixin:
         lbl_status = ctk.CTkLabel(seg_card, text="", font=FONT_SMALL, text_color=MUTED,
                                   anchor="w", justify="left")
         lbl_status.pack(fill="x", pady=(SPACE_S, 0))
-        progress_bar = ctk.CTkProgressBar(ctrl, height=8, mode="indeterminate",
+        # A slot of fixed size always in the row: the bar shows and hides in
+        # it without moving the controls.
+        progress_slot = ctk.CTkFrame(ctrl, fg_color="transparent", width=200, height=8)
+        progress_slot.pack(side="right", padx=(SPACE_M, 0))
+        progress_slot.pack_propagate(False)
+        progress_bar = ctk.CTkProgressBar(progress_slot, height=8, mode="indeterminate",
                                           progress_color=TEAL)
-        progress_bar.pack(side="right", padx=(SPACE_M, 0))
-        progress_bar.pack_forget()
         run_btn = ctk.CTkButton(ctrl, text="▶  Compare", **button_style("primary"))
         run_btn.pack(side="left")
         # Length of the non-overlapping blocks each segment is summarised by
@@ -1230,7 +1223,7 @@ class CompareSegmentsMixin:
                                            for l, lo, hi in windows],
                                   "block_s": float(block_s)}
             run_btn.configure(state="disabled")
-            progress_bar.pack(side="right", padx=(SPACE_M, 0))
+            progress_bar.place(relx=0, rely=0, relwidth=1, relheight=1)
             progress_bar.start()
             lbl_status.configure(text="  Computing…", text_color=ORANGE)
             # HRV inputs read on the main thread: the user's RR bounds and
@@ -1260,7 +1253,7 @@ class CompareSegmentsMixin:
                 return
             _state["inflight"] = None
             run_btn.configure(state="normal")
-            progress_bar.stop(); progress_bar.pack_forget()
+            progress_bar.stop(); progress_bar.place_forget()
             lbl_status.configure(text=f"⚠  Comparison failed — {exc}", text_color=RED)
 
         def _on_done(segs: "list[dict]", windows: "list[tuple[str, float, float]]",
@@ -1269,7 +1262,7 @@ class CompareSegmentsMixin:
                 return
             _state["inflight"] = None
             run_btn.configure(state="normal")
-            progress_bar.stop(); progress_bar.pack_forget()
+            progress_bar.stop(); progress_bar.place_forget()
             # The reference as it is NOW (the selector stays usable while
             # the worker runs), kept when it still exists for these
             # segments; then the cheap block-mean comparison of each
@@ -1466,23 +1459,36 @@ class CompareSegmentsMixin:
                 confirmoverwrite=False, filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
             if not path:
                 return
+            add_all = getattr(self, "_add_open_recording_to_group_table", None)
+            extra = ""
             try:
-                n, replaced = append_group_row(path, group_row(
-                    res_.subject, res_.filepath, res_.segs, res_.metrics,
-                    template=res_.template, flags=res_.flags, sex=_sex()))
+                if callable(add_all) and getattr(getattr(self, "signal", None), "filepath", None):
+                    # The whole experiment's table (Group tab): the segments
+                    # with the whole recording, time course and events.
+                    n, replaced, what = add_all(path, comparison=res_)
+                    extra = f" — {what.split(': ', 1)[-1]}"
+                    reload_ = getattr(self, "_grouptab_reload", None)
+                    gts = getattr(self, "_grouptab_state", None) or {}
+                    if callable(reload_) and gts.get("path") and os.path.normcase(
+                            os.path.abspath(gts["path"])) == os.path.normcase(os.path.abspath(path)):
+                        reload_()
+                else:
+                    n, replaced = append_group_row(path, group_row(
+                        res_.subject, res_.filepath, res_.segs, res_.metrics,
+                        template=res_.template, flags=res_.flags, sex=_sex()))
             except Exception as exc:
                 messagebox.showerror("Group table", str(exc), parent=win)
                 return
-            # The Group card tests one pair A vs B: unless one was chosen
+            # The Group tab tests one pair A vs B: unless one was chosen
             # there, start from this comparison's reference vs the first
             # segment compared with it (the group table's tags are the same
             # unique_tags as res_.tags).
-            gst = getattr(self, "_group_state", None)
+            gst = getattr(self, "_grouptab_state", None)
             if gst is not None and not (gst.get("a") and gst.get("b")) and res_.pairs:
                 j, k = res_.pairs[0]
                 gst["a"], gst["b"] = res_.tags[j], res_.tags[k]
             _done(f"{res_.subject or 'recording'} {'updated in' if replaced else 'added to'} "
-                  f"{os.path.basename(path)} ({n} recording{'s' if n != 1 else ''})")
+                  f"{os.path.basename(path)} ({n} recording{'s' if n != 1 else ''}){extra}")
 
         run_btn.configure(command=_run_compare)
         lbl_exp = ctk.CTkLabel(res, text="", font=FONT_SMALL, text_color=MUTED,
@@ -1498,7 +1504,9 @@ class CompareSegmentsMixin:
                  "reference; the pair tested is chosen in the Group card below (the "
                  "reference vs the first segment compared with it, until you change it). "
                  "Columns are named after the segment labels: use "
-                 "the same labels and windows for every animal. A recording already in it is replaced."),
+                 "the same labels and windows for every animal. A recording already in it is replaced. "
+                 "Its whole-recording metrics, time course, annotations and event-locked "
+                 "results go to the same table, for the Group tab."),
                 ("Figures…", _export_figures,
                  "The tachograms and the Poincaré plots, 300 dpi PNG or vector PDF / SVG"),
                 ("📋  Copy table", _copy_table,
@@ -1583,596 +1591,24 @@ class CompareSegmentsMixin:
             except Exception as exc:
                 log.warning("Compare segments setup not restored: %s", exc, exc_info=True)
 
-    # ── Group: the group table across animals ────────────────────────────
+    # ── Group: moved to the Group tab ───────────────────────────────────
 
-    def _build_group_card(self: ECGApp, win) -> None:
-        """GROUP card: open a group table (one row per recording), choose two
-        segments, check the rows, run the paired tests across animals and
-        draw the group figure; save both. Independent of the recording open
-        (its choices survive a rebuild of the tab, in _group_state)."""
-        st = getattr(self, "_group_state", None)
-        if st is None:
-            st = self._group_state = {"path": "", "a": "", "b": "", "exclude": True,
-                                      "name_a": "", "name_b": ""}
-        st.setdefault("mode", MODE_ONE)
-        st.setdefault("holm_all", False)
-        tip = self._bind_hover_tip
+    def _build_group_pointer(self: ECGApp, win) -> None:
+        """Where the group statistics went: the Group tab (the table, the
+        animals, every analysis and its exports)."""
         card = ctk.CTkFrame(win, **card_style())
         card.pack(fill="x", padx=PAGE_PAD_X, pady=(0, PAGE_GAP))
         body = ctk.CTkFrame(card, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=CARD_PAD, pady=(CARD_PAD - 4, CARD_PAD))
-        hdr = ctk.CTkFrame(body, fg_color="transparent")
-        hdr.pack(fill="x", pady=(0, SPACE_M))
-        ctk.CTkLabel(hdr, text="GROUP — ALL ANIMALS", font=FONT_SECTION_HDR,
+        body.pack(fill="x", padx=CARD_PAD, pady=CARD_PAD - 4)
+        ctk.CTkLabel(body, text="GROUP — ALL ANIMALS", font=FONT_SECTION_HDR,
                      text_color=MUTED).pack(side="left")
-        ctk.CTkLabel(hdr, text="paired tests across animals on a group table",
-                     font=FONT_SMALL, text_color=MUTED).pack(side="left", padx=(SPACE_M, 0))
-
-        row1 = ctk.CTkFrame(body, fg_color="transparent")
-        row1.pack(fill="x", pady=(0, SPACE_S))
-        lbl_file = ctk.CTkLabel(row1, text="", font=FONT_SMALL, text_color=MUTED, anchor="w")
-        row_mode = ctk.CTkFrame(body, fg_color="transparent")
-        row_mode.pack(fill="x", pady=(0, SPACE_S))
-        ctk.CTkLabel(row_mode, text="Analysis:", font=FONT_SMALL,
-                     text_color=MUTED).pack(side="left")
-        cb_mode = ctk.CTkComboBox(row_mode, width=290, values=[MODE_ONE, MODE_ALL],
-                                  state="readonly", **combo_style())
-        cb_mode.set(st["mode"] if st["mode"] in (MODE_ONE, MODE_ALL) else MODE_ONE)
-        cb_mode.pack(side="left", padx=(4, SPACE_M))
-        tip(cb_mode, "One pair: the two segments chosen below. All pairs: every consecutive pair "
-                     "of segments of the table (B vs A, D vs C, F vs E: Pre / Post 1, 5, 10 min), "
-                     "the same paired tests for each, Holm within each pair; an odd last "
-                     "segment is left out. A row whose segment label is not the group's is a "
-                     "row to check.")
-        chk_holm_all = ctk.CTkCheckBox(row_mode, text="Holm across all pairs × metrics",
-                                       font=FONT_SMALL, text_color=MUTED, fg_color=BLUE,
-                                       checkmark_color="white", border_color=BORDER2, width=16)
-        if st["holm_all"]:
-            chk_holm_all.select()
-        chk_holm_all.pack(side="left", padx=(0, SPACE_M))
-        tip(chk_holm_all, "All pairs only. Off: Holm within each pair, over its metrics (as for "
-                          "one pair). On: also one Holm correction over every pair × metric "
-                          "tested, when the pairs answer one question together.")
-        row2 = ctk.CTkFrame(body, fg_color="transparent")
-        row2.pack(fill="x", pady=(0, SPACE_S))
-        ctk.CTkLabel(row2, text="Compare:", font=FONT_SMALL, text_color=MUTED).pack(side="left")
-        cb_a = ctk.CTkComboBox(row2, width=170, values=[""], state="readonly", **combo_style())
-        cb_a.pack(side="left", padx=(4, SPACE_S))
-        ctk.CTkLabel(row2, text="vs", font=FONT_SMALL, text_color=MUTED).pack(side="left")
-        cb_b = ctk.CTkComboBox(row2, width=170, values=[""], state="readonly", **combo_style())
-        cb_b.pack(side="left", padx=(4, SPACE_M))
-        ctk.CTkLabel(row2, text="Names on the figure:", font=FONT_SMALL,
-                     text_color=MUTED).pack(side="left")
-        ent_na = ctk.CTkEntry(row2, width=110, placeholder_text="A", **input_style())
-        ent_na.pack(side="left", padx=(4, SPACE_XS))
-        ent_nb = ctk.CTkEntry(row2, width=110, placeholder_text="B", **input_style())
-        ent_nb.pack(side="left", padx=(0, SPACE_M))
-        for e, k in ((ent_na, "name_a"), (ent_nb, "name_b")):
-            if st[k]:
-                e.insert(0, st[k])
-        chk_ex = ctk.CTkCheckBox(row2, text="Leave out rows to check", font=FONT_SMALL,
-                                 text_color=MUTED, fg_color=BLUE, checkmark_color="white",
-                                 border_color=BORDER2, width=16)
-        if st["exclude"]:
-            chk_ex.select()
-        chk_ex.pack(side="left", padx=(0, SPACE_M))
-        tip(chk_ex, "Rows with a quality alert, a missing segment, a subject on several rows, "
-                    "another template or another duration are left out of the tests and the "
-                    "figure (they stay listed below).")
-        chk_all = ctk.CTkCheckBox(row2, text="All metrics", font=FONT_SMALL,
-                                  text_color=MUTED, fg_color=BLUE, checkmark_color="white",
-                                  border_color=BORDER2, width=16)
-        if st.get("all"):
-            chk_all.select()
-        chk_all.pack(side="left", padx=(0, SPACE_M))
-        tip(chk_all, "Off: one metric per question (HR, SDNN, SD1, SD2, LF/HF), so Holm is not "
-                     "made stricter by equivalent tests. " + DEFAULT_METRICS_NOTE + ".")
-        run_btn = ctk.CTkButton(row2, text="▶  Run", width=0, **button_style("primary"))
-        run_btn.pack(side="left")
-
-        def _sync_mode(_v: object = None) -> None:
-            """All pairs: no A / B to choose, the Holm-across option instead."""
-            all_pairs = cb_mode.get() == MODE_ALL
-            for w in (cb_a, cb_b, ent_na, ent_nb):
-                w.configure(state="disabled" if all_pairs else
-                            ("readonly" if isinstance(w, ctk.CTkComboBox) else "normal"))
-            chk_holm_all.configure(state="normal" if all_pairs else "disabled")
-
-        cb_mode.configure(command=_sync_mode)
-        _sync_mode()
-
-        lbl_status = ctk.CTkLabel(body, text="", font=FONT_SMALL, text_color=MUTED,
-                                  anchor="w", justify="left")
-        lbl_status.pack(fill="x")
-        # The Prism export's result: a line of its own, under the analysis
-        # message (whose warnings stay in view).
-        lbl_prism = ctk.CTkLabel(body, text="", font=FONT_SMALL, text_color=MUTED,
-                                 anchor="w", justify="left")
-
-        def _wrap(e: "Any") -> None:
-            for lbl in (lbl_status, lbl_prism):
-                lbl.configure(wraplength=max(200, e.width - 8))
-        body.bind("<Configure>", _wrap)
-        _scale = THEME.font_scale
-        _fsize = -int(round(12 * _scale))
-        txt = tk.Text(body, bg=CARD, fg=TEXT, bd=0, highlightthickness=0, wrap="none",
-                      font=(THEME.font_family, _fsize), height=1, cursor="arrow",
-                      padx=SPACE_S, spacing1=2, spacing3=2)
-        txt.tag_configure("head", font=(THEME.font_family, _fsize, "bold"), foreground=MUTED)
-        txt.tag_configure("stripe", background=BG)
-        txt.tag_configure("sig", foreground=GREEN, font=(THEME.font_family, _fsize, "bold"))
-        txt.tag_configure("warn", foreground=ORANGE)
-        txt.tag_configure("muted", foreground=MUTED)
-        txt.configure(state="disabled")
-        plot_card = ctk.CTkFrame(body, fg_color=CARD, corner_radius=0, height=430)
-        plot_card.pack_propagate(False)
-        slot = CanvasSlot(plot_card, 14, 4.3, toolbar=False,
-                          placeholder="Open a group table and click Run")
-        res_state: "dict[str, Any]" = {"df": None, "used": None, "stats": None, "checks": None,
-                                      "left_out": [], "mode": MODE_ONE, "all": None}
-
-        def _load(path: str, quiet: bool = False) -> bool:
-            def fail(msg: str) -> bool:
-                if quiet:            # a remembered table: say it, no dialog
-                    lbl_status.configure(text=f"⚠  {msg}", text_color=ORANGE)
-                else:
-                    messagebox.showerror("Group table", msg, parent=win)
-                return False
-            try:
-                df = read_group_table(path)
-            except Exception as exc:
-                return fail(f"{os.path.basename(path)}: {exc}")
-            tags = segment_tags(df)
-            if len(tags) < 2:
-                return fail(f"{os.path.basename(path)} holds fewer than two segments.")
-            res_state["df"] = df
-            st["path"] = path
-            # The last run's results belong to the table it read: none until
-            # the next Run (else Statistics… / Prism… would write the old
-            # rows under the new file's name).
-            res_state.update(used=None, all=None, stats=None, checks=None, keep=None,
-                             left_out=[], path=None)
-            for btn_ in (btn_xlsx, btn_fig, btn_prism):
-                self._set_btn_enabled(btn_, False, "secondary")
-            lbl_prism.configure(text="")
-            if lbl_prism.winfo_manager():
-                lbl_prism.pack_forget()
-            cb_a.configure(values=tags)
-            cb_b.configure(values=tags)
-            # The two most filled segments by default, or the ones chosen before.
-            filled = sorted(tags, key=lambda t: -int(df[f"start (s) {t}"].notna().sum()))
-            a = st["a"] if st["a"] in tags else filled[0]
-            b = st["b"] if st["b"] in tags and st["b"] != a else next(t for t in filled if t != a)
-            for cb in (cb_a, cb_b):          # a disabled entry ignores set()
-                cb.configure(state="readonly")
-            cb_a.set(a)
-            cb_b.set(b)
-            _sync_mode()
-            lbl_file.configure(text=f"{os.path.basename(path)}  ·  {len(df)} rows  ·  "
-                                    f"segments: {', '.join(tags)}")
-            return True
-
-        def _open() -> None:
-            path = filedialog.askopenfilename(
-                parent=win, title="Open a group table (Add to group table…)",
-                filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")],
-                initialdir=os.path.dirname(st["path"]) if st["path"] else None)
-            if path and _load(path):
-                _run()
-
-        open_btn = ctk.CTkButton(row1, text="📂  Open group table…", width=0, command=_open,
-                                 **button_style("secondary"))
-        open_btn.pack(side="left", padx=(0, SPACE_M))
-        lbl_file.pack(side="left", fill="x", expand=True)
-
-        def _show(stats, checks, a: str, b: str, left_out: "list[str]") -> None:
-            txt.configure(state="normal")
-            txt.delete("1.0", "end")
-            x = int(260 * _scale)
-            stops = []
-            for w in (50, 150, 150, 110, 80, 100, 90, 90):
-                x += int(w * _scale)
-                stops += [x, "right"]
-            txt.configure(tabs=stops)
-            heads = ["Metric", "n (≠0)", f"Median {a}", f"Median {b}", "Median Δ", "up/down",
-                     "Wilcoxon p", "p (Holm)", "paired t p"]
-            txt.insert("end", "\t".join(heads), "head")
-
-            def fmt(v: float, p: bool = False) -> str:
-                if v is None or not np.isfinite(v):
-                    return "—"
-                if p:
-                    return f"{v:.3f}" if v >= 0.001 else f"{v:.1e}"
-                return f"{v:.3g}" if abs(v) < 1000 else f"{v:.0f}"
-            for i, r in stats.reset_index(drop=True).iterrows():
-                line = ("stripe",) if i % 2 == 0 else ()
-                txt.insert("end", "\n" + str(r["Metric"]), line)
-                for v in (f"{int(r['n'])} ({int(r['n tested (Δ ≠ 0)'])})",
-                          fmt(r[f"Median {a}"]), fmt(r[f"Median {b}"]),
-                          fmt(r["Median Δ (B − A)"]), str(r["n up / down"])):
-                    txt.insert("end", "\t" + v, line)
-                ph = r["Wilcoxon p (Holm)"]
-                txt.insert("end", "\t" + fmt(r["Wilcoxon p"], True), line)
-                txt.insert("end", "\t" + fmt(ph, True),
-                           ("sig",) + line if np.isfinite(ph) and ph < 0.05 else line)
-                txt.insert("end", "\t" + fmt(r["Paired t p"], True), line)
-            bad = [c for c in checks if not c.ok]
-            if bad:
-                txt.insert("end", "\n\nRows to check", "head")
-                kept = dict(zip(map(id, checks), res_state.get("keep") or [True] * len(checks)))
-                for c in bad:
-                    tag = "kept" if kept.get(id(c), True) else "left out"
-                    txt.insert("end", f"\n[{tag}] {c.subject or '—'} · {c.file}: "
-                               + "; ".join(c.problems), "warn")
-            n_lines = int(txt.index("end-1c").split(".")[0])
-            txt.configure(height=n_lines, state="disabled")
-            if not txt.winfo_manager():
-                txt.pack(fill="x", pady=(SPACE_S, SPACE_M))
-                plot_card.pack(fill="x")
-
-        def _fmt(v: object, p: bool = False) -> str:
-            try:
-                v = float(v)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                return "—"
-            if not np.isfinite(v):
-                return "—"
-            if p:
-                return f"{v:.3f}" if v >= 0.001 else f"{v:.1e}"
-            return f"{v:.3g}" if abs(v) < 1000 else f"{v:.0f}"
-
-        def _show_all(res) -> None:
-            """All pairs: one line per pair × metric, then the notes and the
-            rows to check of each pair."""
-            txt.configure(state="normal")
-            txt.delete("1.0", "end")
-            x = int(250 * _scale)
-            stops = [x, "left"]
-            x += int(250 * _scale)
-            widths = (60, 100, 90, 90) + ((120,) if res.holm_across else ())
-            for w in widths:
-                x += int(w * _scale)
-                stops += [x, "right"]
-            txt.configure(tabs=stops)
-            heads = ["Pair", "Metric", "n (≠0)", "Median Δ", "Wilcoxon p", "p (Holm)"]
-            if res.holm_across:
-                heads.append("Holm all pairs")
-            txt.insert("end", "\t".join(heads), "head")
-            line_no = 0
-            for k, pr in enumerate(res.pairs, 1):
-                if not len(pr.stats):
-                    txt.insert("end", f"\n{k}. {pr.title}\tno animal with both segments",
-                               "muted")
-                    continue
-                for j, r in pr.stats.reset_index(drop=True).iterrows():
-                    line = ("stripe",) if line_no % 2 == 0 else ()
-                    line_no += 1
-                    txt.insert("end", "\n" + (f"{k}. {pr.title}" if j == 0 else ""), line)
-                    txt.insert("end", "\t" + str(r["Metric"]), line)
-                    for v in (f"{int(r['n'])} ({int(r['n tested (Δ ≠ 0)'])})",
-                              _fmt(r["Median Δ (B − A)"]), _fmt(r["Wilcoxon p"], True)):
-                        txt.insert("end", "\t" + v, line)
-                    hcols = ["Wilcoxon p (Holm)"] + ([HOLM_ALL] if res.holm_across else [])
-                    for hc in hcols:
-                        ph = float(r.get(hc, float("nan")))
-                        # Significance shown on the strictest correction asked.
-                        sig = np.isfinite(ph) and ph < 0.05 and hc == hcols[-1]
-                        txt.insert("end", "\t" + _fmt(ph, True), ("sig",) + line if sig else line)
-            notes = list(res.notes) + [f"{pr.title}: {n}" for pr in res.pairs for n in pr.notes]
-            if notes:
-                txt.insert("end", "\n\nNotes", "head")
-                for n in notes:
-                    txt.insert("end", "\n" + n, "muted")
-            for k, pr in enumerate(res.pairs, 1):
-                bad = [(c, kp) for c, kp in zip(pr.checks, pr.keep) if not c.ok]
-                if not bad:
-                    continue
-                txt.insert("end", f"\n\nRows to check — {k}. {pr.title}", "head")
-                for c, kp in bad:
-                    missing = any(p.startswith("no segment") for p in c.problems)
-                    tag = "kept" if kp else ("not in this pair" if missing else "left out")
-                    txt.insert("end", f"\n[{tag}] {c.subject or '—'} · {c.file}: "
-                               + "; ".join(c.problems), "muted" if missing else "warn")
-            n_lines = int(txt.index("end-1c").split(".")[0])
-            txt.configure(height=n_lines, state="disabled")
-            if not txt.winfo_manager():
-                txt.pack(fill="x", pady=(SPACE_S, SPACE_M))
-                plot_card.pack(fill="x")
-
-        def _run_all(df) -> None:
-            st.update(exclude=bool(chk_ex.get()), all=bool(chk_all.get()))
-            # Pairs follow each row's own order of segments (segment_layout),
-            # not the column order: a typo in one animal's label is a row to
-            # check, never a pair of its own.
-            res = all_pairs_stats(df, "all" if st["all"] else None, exclude=st["exclude"],
-                                  holm_across=st["holm_all"])
-            if not res.pairs:
-                lbl_status.configure(text="⚠  the table holds fewer than two segments",
-                                     text_color=RED)
-                return
-            res_state.update(mode=MODE_ALL, all=res, used=None, stats=None, path=st["path"])
-            left = sorted({s for pr in res.pairs for s in pr.left_out})
-            ns = [len(pr.used) for pr in res.pairs]
-            # Animals of the table missing from a pair (no such segment).
-            short = [k for k, n in enumerate(ns, 1) if n < len(df)]
-            n_test = max((int(pr.stats["n tested (Δ ≠ 0)"].max()) for pr in res.pairs
-                          if len(pr.stats)), default=0)
-            weak = not (smallest_wilcoxon_p(n_test) < 0.05) if n_test else True
-            msg = (f"{len(res.pairs)} pair{'s' if len(res.pairs) != 1 else ''} tested "
-                   f"({', '.join(f'{pr.b} vs {pr.a}' for pr in res.pairs)})  ·  animals per pair: "
-                   f"{', '.join(map(str, ns))}"
-                   + (f"  ·  segment {res.odd} has no partner: not tested" if res.odd else "")
-                   + (f"  ·  left out (rows to check): {', '.join(left)}" if left else "")
-                   + (f"  ·  fewer animals than rows ({len(df)}) in pair "
-                      f"{', '.join(map(str, short))}" if short else "")
-                   + ("  ·  Holm across all pairs × metrics" if res.holm_across else "")
-                   + ("  ·  no metric can reach p < 0.05 with these n" if weak else ""))
-            warn = bool(left or short or weak or res.odd or res.notes
-                        or any(pr.notes for pr in res.pairs))
-            lbl_status.configure(text=("⚠  " if warn else "✓  ") + msg,
-                                 text_color=ORANGE if warn else GREEN)
-            _show_all(res)
-            slot.update(lambda fig: draw_all_pairs_figure(fig, res))
-            for btn_ in (btn_xlsx, btn_fig, btn_prism):
-                self._set_btn_enabled(btn_, True, "secondary")
-
-        def _run() -> None:
-            # Read again: rows added since (Add to group table…) count.
-            if st["path"] and os.path.exists(st["path"]):
-                a0, b0 = cb_a.get(), cb_b.get()
-                if not _load(st["path"]):
-                    return
-                if a0 in cb_a.cget("values") and b0 in cb_b.cget("values") and a0 != b0:
-                    cb_a.set(a0)
-                    cb_b.set(b0)
-            df = res_state["df"]
-            if df is None:
-                _open()
-                return
-            st.update(mode=cb_mode.get(), holm_all=bool(chk_holm_all.get()))
-            if st["mode"] == MODE_ALL:
-                _run_all(df)
-                return
-            a, b = cb_a.get(), cb_b.get()
-            if not a or not b or a == b:
-                lbl_status.configure(text="⚠  choose two different segments", text_color=RED)
-                return
-            st.update(a=a, b=b, exclude=bool(chk_ex.get()), all=bool(chk_all.get()),
-                      name_a=ent_na.get().strip(), name_b=ent_nb.get().strip())
-            checks = check_rows(df, a, b)
-            keep = [c.ok or not st["exclude"] for c in checks]
-            # A row without both segments can never be tested.
-            keep = [k and not any(p.startswith("no segment") for p in c.problems)
-                    for k, c in zip(keep, checks)]
-            used = df.loc[keep].reset_index(drop=True)
-            left_out = [c.subject or c.file for c, k in zip(checks, keep) if not k]
-            stats = paired_stats(used, a, b, "all" if st["all"] else None)
-            res_state.update(used=used, stats=stats, checks=checks, left_out=left_out, keep=keep,
-                             mode=MODE_ONE, all=None, path=st["path"])
-            n = len(used)
-            n_test = int(stats["n tested (Δ ≠ 0)"].max()) if len(stats) else 0
-            names = (st["name_a"] or a, st["name_b"] or b)
-            p_min = smallest_wilcoxon_p(n_test) if n_test else float("nan")
-            weak = not (p_min < 0.05)          # also NaN: nothing testable
-            msg = (f"{n} animal{'s' if n != 1 else ''} tested"
-                   + (f"  ·  left out: {', '.join(left_out)}" if left_out else "")
-                   + (f"  ·  with n = {n_test} non-zero differences the smallest possible "
-                      f"Wilcoxon p is {p_min:.3g}" if n_test else "")
-                   + ("  ·  no metric can reach p < 0.05" if weak and n_test else ""))
-            lbl_status.configure(text=("⚠  " if left_out or weak else "✓  ") + msg,
-                                 text_color=ORANGE if left_out or weak else GREEN)
-            _show(stats, checks, a, b, left_out)
-            slot.update(lambda fig: draw_group_figure(fig, used, a, b, names))
-            for btn_ in (btn_xlsx, btn_fig, btn_prism):
-                self._set_btn_enabled(btn_, True, "secondary")
-
-        run_btn.configure(command=_run)
-
-        def _save_all_stats() -> None:
-            res = res_state["all"]
-            path = filedialog.asksaveasfilename(
-                parent=win, title="Save the group statistics (all pairs)",
-                defaultextension=".xlsx", initialfile="group_stats_all_pairs.xlsx",
-                initialdir=os.path.dirname(st["path"]) or None,
-                filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
-            if not path:
-                return
-            try:
-                write_all_pairs_report(path, res,
-                                       note=f"group table: {os.path.basename(st['path'])}")
-            except Exception as exc:
-                messagebox.showerror("Group statistics", str(exc), parent=win)
-                return
-            lbl_status.configure(text=f"✓  statistics → {os.path.basename(path)}", text_color=GREEN)
-
-        def _save_all_figure() -> None:
-            res = res_state["all"]
-            path = filedialog.asksaveasfilename(
-                parent=win, title="Save the group figure (all pairs)",
-                defaultextension=".png", initialfile="group_all_pairs_HR.png",
-                initialdir=os.path.dirname(st["path"]) or None,
-                filetypes=[("PNG image (300 dpi)", "*.png"), ("PDF (vector)", "*.pdf"),
-                           ("SVG (vector)", "*.svg"), ("All files", "*.*")])
-            if not path:
-                return
-            fig = Figure(figsize=all_pairs_figsize(len(res.pairs)), dpi=300, facecolor="white",
-                         layout="constrained")
-            try:
-                draw_all_pairs_figure(fig, res, MAIN_METRIC)
-                fig.savefig(path, dpi=300, facecolor="white", bbox_inches="tight")
-            except Exception as exc:
-                messagebox.showerror("Group figure", str(exc), parent=win)
-                return
-            finally:
-                plt.close(fig)
-            lbl_status.configure(text=f"✓  figure → {os.path.basename(path)}", text_color=GREEN)
-
-        def _save_stats() -> None:
-            if res_state.get("mode") == MODE_ALL and res_state.get("all") is not None:
-                _save_all_stats()
-                return
-            if res_state["stats"] is None:
-                return
-            a, b = st["a"], st["b"]
-            path = filedialog.asksaveasfilename(
-                parent=win, title="Save the group statistics",
-                defaultextension=".xlsx", initialfile=f"group_stats_{a}_vs_{b}.xlsx",
-                initialdir=os.path.dirname(st["path"]) or None,
-                filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
-            if not path:
-                return
-            try:
-                write_group_report(path, res_state["used"], a, b, res_state["stats"],
-                                   res_state["checks"], excluded=res_state["left_out"],
-                                   note=f"group table: {os.path.basename(st['path'])}")
-            except Exception as exc:
-                messagebox.showerror("Group statistics", str(exc), parent=win)
-                return
-            lbl_status.configure(text=f"✓  statistics → {os.path.basename(path)}", text_color=GREEN)
-
-        def _save_figure() -> None:
-            if res_state.get("mode") == MODE_ALL and res_state.get("all") is not None:
-                _save_all_figure()
-                return
-            used = res_state["used"]
-            if used is None:
-                return
-            a, b = st["a"], st["b"]
-            path = filedialog.asksaveasfilename(
-                parent=win, title="Save the group figure",
-                defaultextension=".png", initialfile=f"group_poincare_{a}_vs_{b}.png",
-                initialdir=os.path.dirname(st["path"]) or None,
-                filetypes=[("PNG image (300 dpi)", "*.png"), ("PDF (vector)", "*.pdf"),
-                           ("SVG (vector)", "*.svg"), ("All files", "*.*")])
-            if not path:
-                return
-            st.update(name_a=ent_na.get().strip(), name_b=ent_nb.get().strip())
-            fig = Figure(figsize=(14, 4.6), dpi=300, facecolor="white", layout="constrained")
-            try:
-                draw_group_figure(fig, used, a, b, (st["name_a"] or a, st["name_b"] or b))
-                fig.savefig(path, dpi=300, facecolor="white", bbox_inches="tight")
-            except Exception as exc:
-                messagebox.showerror("Group figure", str(exc), parent=win)
-                return
-            finally:
-                plt.close(fig)
-            lbl_status.configure(text=f"✓  figure → {os.path.basename(path)}", text_color=GREEN)
-
-        def _prism_data() -> "Optional[tuple[list, list[tuple[str, str]], list[str]]]":
-            """The tables of the last run (the rows it left out not written),
-            the notes saying which rows and why, and the warnings (pairs
-            without any row)."""
-            name = os.path.basename(res_state.get("path") or st["path"] or "")
-            if res_state.get("mode") == MODE_ALL and res_state.get("all") is not None:
-                res = res_state["all"]
-                notes = [("Group table", name), ("Analysis", MODE_ALL),
-                         ("Rows to check", "left out" if st["exclude"] else "kept (listed)")]
-                for pr in res.pairs:
-                    notes.append((f"Rows written — {pr.title}", str(len(pr.used))))
-                    notes += left_out_notes(pr.checks, pr.keep, pr.title)
-                notes += [("Note", n) for n in res.notes]
-                used_all = [pr.used for pr in res.pairs if pr.used is not None and len(pr.used)]
-                notes += sex_notes(pd.concat(used_all, ignore_index=True) if used_all else None)
-                empty = [pr.title for pr in res.pairs if pr.used is not None and not len(pr.used)]
-                warns = ([f"no animal in pair {', '.join(empty)}: its tables are empty"]
-                         if empty else [])
-                return pair_tables(res), notes, warns
-            used, df = res_state.get("used"), res_state.get("df")
-            if used is None or df is None:
-                return None
-            notes = [("Group table", name),
-                     ("Analysis", f"{MODE_ONE}: {st['a']} vs {st['b']}; every segment written"),
-                     ("Rows to check", "left out" if st["exclude"] else "kept (listed)"),
-                     ("Rows written", str(len(used)))]
-            notes += left_out_notes(res_state["checks"], res_state["keep"])
-            notes += sex_notes(used)
-            warns = [] if len(used) else ["no animal kept: the tables are empty"]
-            return group_tables(used, tags=segment_tags(df)), notes, warns
-
-        def _group_base() -> str:
-            path = res_state.get("path") or st["path"] or ""
-            return os.path.splitext(os.path.basename(path))[0] or "group"
-
-        def _prism_said(text: str, ok: bool = True, warn: bool = False) -> None:
-            """The Prism result on its own line (the analysis message stays)."""
-            if not lbl_prism.winfo_manager():
-                lbl_prism.pack(fill="x", after=lbl_status)
-            lbl_prism.configure(text=("✓  " if ok and not warn else "⚠  ") + text,
-                                text_color=RED if not ok else ORANGE if warn else GREEN)
-
-        def _prism_new() -> None:
-            got = _prism_data()
-            if got is None:
-                return
-            tables, notes, warns = got
-            path = filedialog.asksaveasfilename(
-                parent=win, title="Export the group table to GraphPad Prism",
-                defaultextension=".pzfx", initialfile=f"{_group_base()}.pzfx",
-                initialdir=os.path.dirname(st["path"]) or None,
-                filetypes=[("GraphPad Prism", "*.pzfx"), ("All files", "*.*")])
-            if not path:
-                return
-            try:
-                n = write_metric_pzfx(tables, path, notes=notes)
-            except Exception as exc:
-                log.exception("group Prism export")
-                messagebox.showerror("Prism export", str(exc), parent=win)
-                _prism_said(f"Prism export failed: {exc}", ok=False)
-                return
-            _prism_said(f"Prism: {n} tables → {os.path.basename(path)}"
-                        + "".join(f"  ·  {w}" for w in warns), warn=bool(warns))
-
-        def _prism_fill() -> None:
-            got = _prism_data()
-            if got is None:
-                return
-            tables, notes, warns = got
-            tpl = ask_prism_template(self, win)
-            if not tpl:
-                return
-            out = ask_filled_path(win, tpl, _group_base())
-            if not out:
-                return
-            try:
-                report = fill_template(tpl, tables, out,
-                                       notes=notes + [("Prism template", os.path.basename(tpl))])
-            except Exception as exc:
-                if not isinstance(exc, PrismTemplateError):
-                    log.exception("group Prism template")
-                messagebox.showerror("Prism template", str(exc), parent=win)
-                _prism_said(f"Prism template: {exc}", ok=False)
-                return
-            _prism_said(f"Prism template {os.path.basename(tpl)}: {report.summary()} → "
-                        f"{os.path.basename(out)}" + "".join(f"  ·  {w}" for w in warns),
-                        warn=report.warn or bool(warns))
-
-        def _prism_export() -> None:
-            prism_menu(win, btn_prism, _prism_new, _prism_fill)
-
-        btn_prism = ctk.CTkButton(hdr, text="Prism…", width=0, command=_prism_export,
-                                  state="disabled",
-                                  **{**button_style("secondary"), **disabled_style()})
-        btn_prism.pack(side="right", padx=(SPACE_S, 0))
-        prism_tip(self, btn_prism,
-                  "GraphPad Prism: one table per metric, one row per animal and one column "
-                  "per segment (all pairs: one table per pair × metric); the rows left out "
-                  "by this analysis are not written (the notes say which and why).")
-        btn_fig = ctk.CTkButton(hdr, text="Figure…", width=0, command=_save_figure,
-                                state="disabled", **{**button_style("secondary"), **disabled_style()})
-        btn_fig.pack(side="right", padx=(SPACE_S, 0))
-        tip(btn_fig, "The group Poincaré (one ellipse per animal, the group mean thick) and "
-                     "the before-after panels; all pairs: one Mean HR panel per pair (one line "
-                     "per animal, the pair's p). 300 dpi PNG or vector PDF / SVG")
-        btn_xlsx = ctk.CTkButton(hdr, text="📊  Statistics…", width=0, command=_save_stats,
-                                 state="disabled", **{**button_style("secondary"), **disabled_style()})
-        btn_xlsx.pack(side="right", padx=(SPACE_S, 0))
-        tip(btn_xlsx, "Excel: the paired tests (Wilcoxon, paired t, Holm), the rows checked "
-                      "and the paired values of every metric, one row per animal; all pairs: "
-                      "a Summary sheet (pairs × metrics) and one sheet per pair")
-        ctk.CTkLabel(body, text=(
-            "One row per animal: the test unit is the animal. Use the same windows and labels for "
-            "every animal. Holm corrects the Wilcoxon p over the metrics listed; pick your primary "
-            "metric in advance."), font=FONT_HINT, text_color=MUTED, anchor="w",
-            justify="left").pack(fill="x", side="bottom", pady=(SPACE_S, 0))
-        if st["path"] and os.path.exists(st["path"]) and _load(st["path"], quiet=True):
-            _run()
+        ctk.CTkLabel(body, text="The tests across animals (one pair or all pairs, by group or "
+                                "sex) are in the Group tab: ➕ Add to group table above, then "
+                                "open it there.", font=FONT_SMALL, text_color=MUTED,
+                     anchor="w").pack(side="left", padx=(SPACE_M, SPACE_M))
+        tabs = getattr(self, "tabs", None)
+        if tabs is not None:
+            from ecg.ui.tab_keys import TAB_GROUP
+            ctk.CTkButton(body, text="Open the Group tab", width=0,
+                          command=lambda: tabs.set(TAB_GROUP),
+                          **button_style("secondary")).pack(side="right")

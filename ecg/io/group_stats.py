@@ -29,6 +29,8 @@ from typing import Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from ecg.io.safe_write import replacing
+
 from ecg.io.subject_name import normalise_sex
 
 # Per-segment columns of the group table that are not metrics.
@@ -305,7 +307,8 @@ def write_group_report(path: str, df: "pd.DataFrame", a: str, b: str,
     """Excel report: Statistics, Rows checked, then the paired values (one
     row per animal) of every metric tested."""
     frames = _report_frames(df, a, b, stats, checks, excluded, note)
-    with pd.ExcelWriter(path, engine="openpyxl") as xw:
+    with replacing(path) as tmp, \
+            pd.ExcelWriter(tmp, engine="openpyxl") as xw:
         for name, frame in frames.items():
             frame.to_excel(xw, sheet_name=name, index=False)
         for ws in xw.book.worksheets:
@@ -689,7 +692,8 @@ def write_all_pairs_report(path: str, res: AllPairsResult, note: str = "") -> "l
     if note:
         about.append(("Note", note))
     names = []
-    with pd.ExcelWriter(path, engine="openpyxl") as xw:
+    with replacing(path) as tmp, \
+            pd.ExcelWriter(tmp, engine="openpyxl") as xw:
         summary.to_excel(xw, sheet_name="Summary", index=False)
         pd.DataFrame(about, columns=["Item", "Value"]).to_excel(
             xw, sheet_name="Summary", index=False, startrow=len(summary) + 3)

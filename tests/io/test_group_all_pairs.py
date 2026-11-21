@@ -165,7 +165,8 @@ def test_all_pairs_workbook(tmp_path):
     assert hr1["n"] == 6 and hr1["Wilcoxon p"] == pytest.approx(st1["Wilcoxon p"])
     assert hr1["Median Δ (B − A)"] == pytest.approx(st1["Median Δ (B − A)"])
     assert summ[(summ["Pair"] == 2)]["n"].iloc[0] == 5           # row 102 left out
-    flat = book["Summary"].astype(str).to_numpy().ravel().tolist()
+    # str() per cell: pandas 3's astype(str) keeps empty cells as NaN.
+    flat = [str(v) for v in book["Summary"].to_numpy().ravel().tolist()]
     assert any("G has no partner" in v for v in flat)
     # A pair sheet: the four single-pair tables one below the other.
     sheet = book[names[1]]
@@ -173,8 +174,8 @@ def test_all_pairs_workbook(tmp_path):
     for title in ("Statistics", "About", "Rows checked", "Paired values"):
         assert title in col0
     assert any("not 'Pre Stim 5min' like the group" in v
-               for v in sheet.astype(str).to_numpy().ravel())
-    assert any("102" == v for v in sheet.astype(str).to_numpy().ravel())   # left out, listed
+               for v in map(str, sheet.to_numpy().ravel()))
+    assert any("102" == v for v in map(str, sheet.to_numpy().ravel()))   # left out, listed
 
 
 def test_sheet_names_are_valid_and_unique():
@@ -200,11 +201,6 @@ def test_all_pairs_figure_one_panel_per_pair():
     fig2 = Figure()
     assert draw_all_pairs_figure(fig2, res_h) and "Holm all" in fig2.axes[0].get_title()
     assert not draw_all_pairs_figure(Figure(), res, metric="nope")
-
-
-def test_all_pairs_figsize():
-    from ecg.ui.compare_segments import all_pairs_figsize
-    assert all_pairs_figsize(3)[0] == pytest.approx(9.9) and all_pairs_figsize(1)[0] == 5.0
 
 
 def test_long_tags_give_numbered_sheet_names(tmp_path):

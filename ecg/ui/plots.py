@@ -312,7 +312,11 @@ class CanvasSlot:
         self._set_cl_pads()
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self._cv_frame)
-        self.canvas.draw()
+        # No draw of the empty figure here: the placeholder below draws it
+        # (or waits for the tab to be shown). A slot used to be drawn twice
+        # at start-up, ~30 renders of nothing. The Tk canvas takes the plot
+        # background meanwhile, so nothing white shows before the first draw.
+        self.canvas.get_tk_widget().configure(bg=PLOT["bg"], highlightthickness=0)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
         # ── Matplotlib toolbar (below canvas) ──────────────────────────────
@@ -430,12 +434,29 @@ class CanvasSlot:
             return
         if px_w < 80 or px_h < 50:
             return
-        new_w = px_w / self._DPI
-        new_h = px_h / self._DPI
+        # The figure's own dpi, not _DPI: the Tk canvas renders at _DPI times
+        # the screen's scaling (device pixel ratio: 1.25 / 1.5 on a scaled
+        # Windows display) and resizes the figure with it on every
+        # <Configure>. Sizing with _DPI made the two disagree: the figure
+        # came out larger than its frame (cut right and bottom) and was
+        # resized and redrawn back and forth, visibly.
+        dpi = float(self.fig.dpi) or float(self._DPI)
+        new_w = px_w / dpi
+        new_h = px_h / dpi
         cur_w, cur_h = self.fig.get_size_inches()
-        if abs(new_w - cur_w) * self._DPI < 3 and abs(new_h - cur_h) * self._DPI < 3:
+        if self._pending is not None and not self._hidden():
+            # Shown with a draw still waiting (its tab opened: <Map> does not
+            # always reach a slot nested in a page that was only hidden).
+            if abs(new_w - cur_w) * dpi >= 3 or abs(new_h - cur_h) * dpi >= 3:
+                self.fig.set_size_inches(new_w, new_h, forward=True)
+            self.flush()
             return
-        self.fig.set_size_inches(new_w, new_h, forward=True)
+        drawn = getattr(self, "_drawn_px", None)
+        if (abs(new_w - cur_w) * dpi < 3 and abs(new_h - cur_h) * dpi < 3
+                and (drawn is None or (abs(drawn[0] - px_w) < 3 and abs(drawn[1] - px_h) < 3))):
+            return
+        if abs(new_w - cur_w) * dpi >= 3 or abs(new_h - cur_h) * dpi >= 3:
+            self.fig.set_size_inches(new_w, new_h, forward=True)
         if self._draw_fn is not None:
             self._redraw()
         else:
@@ -450,6 +471,12 @@ class CanvasSlot:
     # when it is mapped (its tab shown), or when flush() asks (an export
     # reading .fig). With the window itself not shown (start-up, tests) it
     # draws at once, as before.
+
+    # Set by the app while it builds its tabs: a placeholder of a tab not
+    # shown then waits for the tab (some 35 renders of "Click Analyze to
+    # display" at start-up otherwise, ~1 s), drawn by the size check or the
+    # tab change once shown. A real figure is never held back by it.
+    building: bool = False
 
     def _hidden(self) -> bool:
         try:
@@ -477,6 +504,7 @@ class CanvasSlot:
             self._defer("draw")
             return
         self._pending = None
+        self._note_drawn_size()
         self.fig.clear()
         if getattr(self, "_layout_frozen", False):
             # A wheel zoom froze the layout: a full redraw lays it out again.
@@ -506,8 +534,16 @@ class CanvasSlot:
             self.frame.after(50, self._readback_ylim)
         self.canvas.draw_idle()
 
+    def _note_drawn_size(self) -> None:
+        """The frame size the figure is drawn for: _fit redraws (the draw
+        function may depend on it) only when the frame changes from it."""
+        try:
+            self._drawn_px = (self._cv_frame.winfo_width(), self._cv_frame.winfo_height())
+        except Exception:
+            self._drawn_px = None
+
     def _show_placeholder(self, force: bool = False) -> None:
-        if not force and self._hidden():
+        if not force and (self._hidden() or CanvasSlot.building):
             self._defer("placeholder")
             return
         self._pending = None

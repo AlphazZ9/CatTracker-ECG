@@ -228,7 +228,7 @@ def test_rows_survive_a_rebuild_for_new_peaks(root):
     holder.pack()
     app._compare_holder = holder
     app._build_compare_segments = lambda win: M._build_compare_segments(app, win)
-    app._build_group_card = lambda win: None
+    app._build_group_pointer = lambda win: None
     app._compare_built_for = None
     app._compare_signature = lambda: M._compare_signature(app)
     M._refresh_compare_tab(app)
