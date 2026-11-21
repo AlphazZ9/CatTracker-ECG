@@ -24,6 +24,29 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.backends._backend_tk import NavigationToolbar2Tk  # noqa: PLC2701
+
+
+class _ShownCanvas(FigureCanvasTkAgg):
+    """A Tk canvas that renders only when it can be seen. Matplotlib redraws
+    a canvas on every <Configure>, hidden ones included: at start-up the
+    canvases of the tabs not shown were rendered some 40 times for nothing.
+    A render asked for while hidden (the window shown, the canvas not) is
+    noted and made when the canvas is shown (CanvasSlot.flush / _fit). With
+    the window itself not shown (tests, an export) it renders at once."""
+
+    _stale_hidden = False
+
+    def draw(self) -> None:
+        w = self.get_tk_widget()
+        try:
+            hidden = bool(w.winfo_toplevel().winfo_viewable()) and not w.winfo_viewable()
+        except tk.TclError:
+            hidden = False
+        if hidden:
+            self._stale_hidden = True
+            return
+        self._stale_hidden = False
+        super().draw()
 import tkinter as tk
 
 from ecg.ui.theme import PLOT, PANEL, SPACE_XS, SPACE_S, SPACE_M, THEME, make_font
@@ -311,7 +334,7 @@ class CanvasSlot:
             facecolor=PLOT["bg"], layout="constrained")
         self._set_cl_pads()
 
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self._cv_frame)
+        self.canvas = _ShownCanvas(self.fig, master=self._cv_frame)
         # No draw of the empty figure here: the placeholder below draws it
         # (or waits for the tab to be shown). A slot used to be drawn twice
         # at start-up, ~30 renders of nothing. The Tk canvas takes the plot
@@ -444,7 +467,8 @@ class CanvasSlot:
         new_w = px_w / dpi
         new_h = px_h / dpi
         cur_w, cur_h = self.fig.get_size_inches()
-        if self._pending is not None and not self._hidden():
+        if (self._pending is not None or getattr(self.canvas, "_stale_hidden", False)) \
+                and not self._hidden():
             # Shown with a draw still waiting (its tab opened: <Map> does not
             # always reach a slot nested in a page that was only hidden).
             if abs(new_w - cur_w) * dpi >= 3 or abs(new_h - cur_h) * dpi >= 3:
@@ -498,9 +522,13 @@ class CanvasSlot:
             self._redraw(force=True)
         elif kind == "placeholder":
             self._show_placeholder(force=True)
+        elif getattr(self.canvas, "_stale_hidden", False):
+            self.canvas.draw()          # a render asked for while hidden
 
     def _redraw(self, force: bool = False) -> None:
-        if not force and self._hidden():
+        # While the app builds no recording is loaded: what a tab draws then
+        # is its empty state, which waits for the tab like a placeholder.
+        if not force and (self._hidden() or CanvasSlot.building):
             self._defer("draw")
             return
         self._pending = None

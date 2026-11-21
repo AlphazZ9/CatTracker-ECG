@@ -55,6 +55,16 @@ class TabReportMixin:
     """ECGApp Report tab construction and refresh."""
 
     def _build_tab_report(self: ECGApp) -> None:
+        """Built the first time the tab is opened (its widgets are its own:
+        nothing else reads them, and _refresh_report waits for them), not at
+        start-up, where it cost 0.8 s."""
+        lazy = getattr(self, "_lazy_tabs", None)
+        if lazy is not None and self.tabs.get() != TAB_REPORT:
+            lazy[TAB_REPORT] = self._build_tab_report_now
+            return
+        self._build_tab_report_now()
+
+    def _build_tab_report_now(self: ECGApp) -> None:
         t = self.tabs.tab(TAB_REPORT)
         t.grid_rowconfigure(0, weight=1)
         t.grid_columnconfigure(0, weight=1)
@@ -75,11 +85,11 @@ class TabReportMixin:
             font=FONT_SECTION_HDR, height=button_style()["height"], corner_radius=RADIUS)
         self.btn_report_text.grid(row=1, column=0, columnspan=2, sticky="w",
                                   padx=PAGE_PAD_X - SPACE_M, pady=(PAGE_GAP, 0))
-        self.txt_report = ctk.CTkTextbox(page, font=FONT_MONO, fg_color=CARD, text_color=TEXT,
-                                         border_width=1, border_color=BORDER,
-                                         corner_radius=CARD_RADIUS, height=380)
-        self.txt_report.grid(row=2, column=0, columnspan=2, sticky="ew",
-                             padx=PAGE_PAD_X, pady=(SPACE_S, PAGE_PAD_Y))
+        # The text box is made when it is first opened (closed by default;
+        # a CTkTextbox costs some 0.35 s to make): its text waits meanwhile.
+        self._report_page = page
+        self.txt_report = None
+        self._report_text = ""
         self._apply_report_text_open()
         self._refresh_report(force=True)
 
@@ -216,8 +226,15 @@ class TabReportMixin:
 
     def _apply_report_text_open(self: ECGApp) -> None:
         if self.ui.report_text_open:
+            if self.txt_report is None:
+                self.txt_report = ctk.CTkTextbox(
+                    self._report_page, font=FONT_MONO, fg_color=CARD, text_color=TEXT,
+                    border_width=1, border_color=BORDER, corner_radius=CARD_RADIUS, height=380)
+                self.txt_report.grid(row=2, column=0, columnspan=2, sticky="ew",
+                                     padx=PAGE_PAD_X, pady=(SPACE_S, PAGE_PAD_Y))
+                self._set_textbox(self.txt_report, self._report_text)
             self.txt_report.grid()
-        else:
+        elif self.txt_report is not None:
             self.txt_report.grid_remove()
         self.btn_report_text.configure(text=_TEXT_OPEN if self.ui.report_text_open else _TEXT_CLOSED)
 
@@ -251,4 +268,6 @@ class TabReportMixin:
                 tick.deselect()
         self.lbl_report_left_out.configure(
             text=f"Left out of the exports: {', '.join(view.left_out)}" if view.left_out else "")
-        self._set_textbox(self.txt_report, view.text)
+        self._report_text = view.text
+        if self.txt_report is not None:
+            self._set_textbox(self.txt_report, view.text)

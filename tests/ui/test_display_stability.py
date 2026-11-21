@@ -184,12 +184,18 @@ def test_placeholders_wait_for_their_tab_while_the_app_builds(root):
     _pump(root, 1.0)
     slot._fit()
     assert slot._pending is None and slot.fig.axes
-    # A real figure is never held back by it.
+    # A tab's own empty state drawn while the app builds waits too (no
+    # recording is loaded then), and is drawn once shown.
     CanvasSlot.building = True
     try:
-        slot.update(lambda fig: fig.add_subplot(111).set_title("data"))
+        slot.update(lambda fig: fig.add_subplot(111).set_title("empty state"))
     finally:
         CanvasSlot.building = False
+    assert slot._pending == "draw"
+    slot.flush()
+    assert slot.fig.axes[0].get_title() == "empty state"
+    # After the build, an update draws at once.
+    slot.update(lambda fig: fig.add_subplot(111).set_title("data"))
     assert slot.fig.axes[0].get_title() == "data"
 
 
@@ -218,3 +224,32 @@ def _all(w):
     yield w
     for c in w.winfo_children():
         yield from _all(c)
+
+
+
+def test_a_hidden_canvas_renders_when_shown(root):
+    """Matplotlib renders a canvas on every <Configure>, hidden ones too:
+    a render asked for while the canvas is hidden waits until it is shown."""
+    root.deiconify()
+    tab = ctk.CTkFrame(root)
+    tab.pack(fill="both", expand=True)
+    holder = tk.Frame(tab, width=500, height=200)
+    holder.pack(fill="both", expand=True)
+    slot = CanvasSlot(holder, 5, 2, toolbar=False)
+    slot.update(lambda fig: fig.add_subplot(111).plot([0, 1]))
+    _pump(root, 0.8)
+    tab.pack_forget()
+    _pump(root, 0.2)
+    renders = []
+    import ecg.ui.plots as plots
+    orig = plots.FigureCanvasTkAgg.draw
+    plots.FigureCanvasTkAgg.draw = lambda self: (renders.append(1), orig(self))[1]
+    try:
+        slot.canvas.draw()
+        assert renders == [] and slot.canvas._stale_hidden
+        tab.pack(fill="both", expand=True)
+        _pump(root, 0.8)
+        slot.flush()
+        assert renders and not slot.canvas._stale_hidden
+    finally:
+        plots.FigureCanvasTkAgg.draw = orig

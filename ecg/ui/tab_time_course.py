@@ -148,6 +148,10 @@ class TabTimeCourseMixin:
         brought up to date the moment it opens."""
         # The figures of the tab shown that still wait for a draw: a slot in
         # a scrolling page gets no <Map> when its tab comes back.
+        lazy = getattr(self, "_lazy_tabs", None)
+        builder = lazy.pop(self.tabs.get(), None) if lazy else None
+        if builder is not None:
+            builder()                     # first opened: built now
         after_idle = getattr(self, "after_idle", None)
         if after_idle is not None:
             after_idle(self._flush_shown_slots)
@@ -165,7 +169,9 @@ class TabTimeCourseMixin:
     def _flush_shown_slots(self: ECGApp) -> None:
         for slot in list(getattr(self, "_slots", {}).values()):
             try:
-                if getattr(slot, "_pending", None) is not None and not slot._hidden():
+                waiting = (getattr(slot, "_pending", None) is not None
+                           or getattr(getattr(slot, "canvas", None), "_stale_hidden", False))
+                if waiting and not slot._hidden():
                     slot.flush()
             except Exception as exc:          # a slot destroyed by a rebuild
                 log.debug("deferred figure not drawn: %s", exc)

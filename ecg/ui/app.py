@@ -203,6 +203,9 @@ class ECGApp(
             self.tabs.add(name)
         self._build_status_label(self.tabs.bar)
 
+        # Tabs whose widgets nothing else reads are built when first opened:
+        # their builders wait here (ecg.ui.tab_time_course._on_main_tab_changed).
+        self._lazy_tabs: "dict[str, object]" = {}
         CanvasSlot.building = True
         try:
             self._build_tabs_content()
