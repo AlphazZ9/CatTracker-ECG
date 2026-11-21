@@ -203,11 +203,6 @@ def test_all_pairs_figure_one_panel_per_pair():
     assert not draw_all_pairs_figure(Figure(), res, metric="nope")
 
 
-def test_all_pairs_figsize():
-    from ecg.ui.compare_segments import all_pairs_figsize
-    assert all_pairs_figsize(3)[0] == pytest.approx(9.9) and all_pairs_figsize(1)[0] == 5.0
-
-
 def test_long_tags_give_numbered_sheet_names(tmp_path):
     df = _table(tags=["Pre Stim 1min", "Post Stim 1min", "Pre Stim 10min", "Post Stim 10min"],
                 labels=False)

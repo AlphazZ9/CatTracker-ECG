@@ -223,14 +223,9 @@ def replace_recording(sheets: "dict[str, pd.DataFrame]", subject: str, file: str
     return was
 
 
-def add_recording(path: str, subject: str, sex: str, file: str,
-                  new: "Mapping[str, Optional[pd.DataFrame]]") -> "tuple[int, bool]":
-    """Add one recording to the group table at *path* (created if it does not
-    exist): its lines in each sheet of *new* replace the older ones (a sheet
-    given as None loses them), and the Animals sheet gets it (its group and
-    use kept when it was there, and its sex when *sex* is empty). Returns
-    (animals in the table, whether the recording was replaced)."""
-    sheets = read_sheets(path) if os.path.exists(path) else {}
+def _add_to_sheets(sheets: "dict[str, pd.DataFrame]", subject: str, sex: str, file: str,
+                   new: "Mapping[str, Optional[pd.DataFrame]]") -> bool:
+    """add_recording on *sheets* in memory; returns whether it was there."""
     subject = subject_text(subject)
     file = os.path.basename(file or "")
     an = sheets.get(SHEET_ANIMALS)
@@ -260,8 +255,31 @@ def add_recording(path: str, subject: str, sex: str, file: str,
             else pd.DataFrame(columns=["subject", "sex", "group", "use", "file"]))
     base = base.loc[~((base["subject"] == subject) & (base["file"] == file))]
     sheets[SHEET_ANIMALS] = pd.concat([base, row], ignore_index=True) if len(base) else row
+    return replaced
+
+
+def add_recording(path: str, subject: str, sex: str, file: str,
+                  new: "Mapping[str, Optional[pd.DataFrame]]") -> "tuple[int, bool]":
+    """Add one recording to the group table at *path* (created if it does not
+    exist): its lines in each sheet of *new* replace the older ones (a sheet
+    given as None loses them), and the Animals sheet gets it (its group and
+    use kept when it was there, and its sex when *sex* is empty). Returns
+    (animals in the table, whether the recording was replaced)."""
+    sheets = read_sheets(path) if os.path.exists(path) else {}
+    replaced = _add_to_sheets(sheets, subject, sex, file, new)
     write_sheets(path, sheets)
     return len(sheets[SHEET_ANIMALS]), replaced
+
+
+def add_recordings(path: str, items: "Iterable[tuple[str, str, str, Mapping]]") -> "tuple[int, int]":
+    """add_recording for each (subject, sex, file, lines) of *items*, the
+    workbook read and written once. Returns (animals in the table, how many
+    were there already)."""
+    sheets = read_sheets(path) if os.path.exists(path) else {}
+    replaced = sum(_add_to_sheets(sheets, s, x, f, new) for s, x, f, new in items)
+    if SHEET_ANIMALS in sheets:
+        write_sheets(path, sheets)
+    return len(sheets.get(SHEET_ANIMALS, ())), int(replaced)
 
 
 def save_animals(path: str, animals: "pd.DataFrame") -> None:

@@ -252,3 +252,87 @@ def test_two_recordings_of_one_subject_draw_two_curves(tmp_path):
     curves = res.figure["curves"][gc.ALL_LABEL]
     assert curves["n"] == 4 and len(curves["animals"]) == 4
     assert {"100 (100.smr)", "100 (101.smr)"} <= set(curves["animals"])
+
+
+# ── moved from the Compare segments group card ──────────────────────────
+
+SEG_HR = "Mean HR (60000/mean NN) (bpm)"
+
+
+def _segments_table(path):
+    """4 animals, segments Pre 1 / Post 1 / Pre 5 / Post 5; M3's Post 5 has a
+    quality alert (a row to check for the Pre 5 / Post 5 pair)."""
+    from ecg.io.group_table import append_group_row, group_row
+    metrics = [("hr_mean", "Mean HR (60000/mean NN)", "bpm"), ("sdnn", "SDNN", "ms"),
+               ("sd1", "Poincaré SD1", "ms"), ("sd2", "Poincaré SD2", "ms"),
+               ("rr_mean", "Mean RR", "ms")]
+    labels = ["Pre 1", "Post 1", "Pre 5", "Post 5"]
+    for i in range(4):
+        segs = [{"label": lbl, "t_lo": 60.0 * k, "t_hi": 60.0 * k + 60, "duration_s": 60.0,
+                 "hr_mean": 500 + i + 10 * k + (i % 2), "sdnn": 3 + 0.1 * i + k,
+                 "sd1": 2 + 0.1 * k, "sd2": 5 + 0.1 * i, "rr_mean": 120 - k}
+                for k, lbl in enumerate(labels)]
+        flags = [[] for _ in labels]
+        if i == 2:
+            flags[3] = ["few beats"]
+        append_group_row(str(path), group_row(f"M{i + 1}", f"M{i + 1}.mat", segs, metrics,
+                                              flags=flags))
+    sh = gd.read_sheets(str(path))
+    return sh, gd.animals_frame(sh)
+
+
+def test_rows_to_check_are_left_out_and_listed(tmp_path):
+    sh, an = _segments_table(tmp_path / "g.xlsx")
+    out = gc.analyse_segments(sh, an, gc.BY_NONE, "Pre 5", "Post 5")
+    assert len(out.figure["values"][SEG_HR]) == 3
+    assert any(n.startswith("Left out") and "M3" in n and "few beats" in n for n in out.notes)
+    kept = gc.analyse_segments(sh, an, gc.BY_NONE, "Pre 5", "Post 5", leave_out=False)
+    assert len(kept.figure["values"][SEG_HR]) == 4
+    assert any(n.startswith("To check (kept)") for n in kept.notes)
+    # The other pair has nothing to check: all four animals.
+    other = gc.analyse_segments(sh, an, gc.BY_NONE, "Pre 1", "Post 1")
+    assert len(other.figure["values"][SEG_HR]) == 4
+
+
+def test_all_pairs(tmp_path):
+    sh, an = _segments_table(tmp_path / "g.xlsx")
+    res = gc.analyse_segments(sh, an, gc.BY_NONE, "", "", pairs=gc.PAIRS_ALL)
+    assert set(res.stats["Pair"]) == {"Post 1 vs Pre 1", "Post 5 vs Pre 5"}
+    assert any(t.startswith("[Post 5 vs Pre 5]") for t in res.display["Test"])
+    assert f"{SEG_HR} · Post 1 vs Pre 1" in res.figure["values"]
+    assert res.figure["names_by"][f"{SEG_HR} · Post 5 vs Pre 5"] == ("Pre 5", "Post 5")
+    assert len(res.figure["values"][f"{SEG_HR} · Post 5 vs Pre 5"]) == 3   # M3 left out
+    assert any(t[0].endswith("· Post 5 vs Pre 5") for t in res.prism)
+    assert set(res.figure["poincare"]) == {f"{gc.POINCARE} · Post 1 vs Pre 1",
+                                           f"{gc.POINCARE} · Post 5 vs Pre 5"}
+
+
+def test_poincare_group_figure_is_drawn(tmp_path):
+    from matplotlib.figure import Figure
+    from ecg.ui.group_tab_figure import draw_group_tab_figure
+    sh, an = _segments_table(tmp_path / "g.xlsx")
+    res = gc.analyse_segments(sh, an, gc.BY_NONE, "Pre 1", "Post 1")
+    fig = Figure()
+    assert draw_group_tab_figure(fig, res, metric=gc.POINCARE) is True
+    assert len(fig.axes) >= 2
+
+
+def test_post_hoc_and_effect_sizes():
+    assert gc.hedges_g([1, 2, 3, 4], [3, 4, 5, 6]) == pytest.approx(1.347, abs=1e-3)   # d 1.549 x J 0.870
+    assert gc.cohen_dz([1.0, 2.0, 3.0]) == pytest.approx(2.0)
+    ph = gc.posthoc({"A": [1, 2, 3, 4], "B": [5, 6, 7, 8], "C": [9, 10, 11, 12]})
+    assert [r["pair"] for r in ph] == ["B vs A", "C vs A", "C vs B"]
+    assert all(r["p Holm"] >= r["p"] for r in ph)
+
+
+def test_three_groups_get_post_hoc_rows(tmp_path):
+    p = _table(tmp_path, n=6)
+    sh = gd.read_sheets(p)
+    an = gd.animals_frame(sh)
+    an["group"] = ["Control", "CNO", "Sal", "Control", "CNO", "Sal"]
+    res = gc.analyse_whole(sh, an, gc.BY_GROUP)
+    assert res.stats.iloc[0]["between test"] == "Kruskal-Wallis"
+    assert sum(t.strip().startswith("post-hoc") for t in res.display["Test"]) == 3
+    assert "post-hoc (Mann-Whitney, Holm)" in res.stats.columns
+    two = gc.analyse_whole(sh, an.assign(group=["Control", "CNO"] * 3), gc.BY_GROUP)
+    assert "g = " in two.display.iloc[0]["p"] and "Hedges g" in two.stats.columns

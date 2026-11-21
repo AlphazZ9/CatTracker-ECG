@@ -36,8 +36,8 @@ from ecg.io.group_data import (
     onset_of, stim_onsets, window_value, SHEET_ANNOT,
 )
 from ecg.io.group_stats import (
-    DEFAULT_METRICS, _ttest, _wilcoxon, holm, metric_names, segment_tags,
-    smallest_wilcoxon_p,
+    DEFAULT_METRICS, _ttest, _wilcoxon, check_rows, consecutive_pairs, holm, metric_names,
+    segment_tags, smallest_wilcoxon_p,
 )
 
 BY_NONE = "No groups"
@@ -168,6 +168,92 @@ def within_test(ref: "Sequence[float]", cond: "Sequence[float]") -> "dict[str, A
     d = b[ok] - a[ok]
     _, p = _wilcoxon(d)
     return {"n": int(ok.sum()), "p": p, "p t": _ttest(d)}
+
+
+def hedges_g(x: "Sequence[float]", y: "Sequence[float]") -> float:
+    """Hedges' g of *y* against *x* (independent groups): the difference of
+    the means over the pooled SD, with the small-sample correction."""
+    a = np.asarray(x, dtype=float)
+    b = np.asarray(y, dtype=float)
+    a, b = a[np.isfinite(a)], b[np.isfinite(b)]
+    n1, n2 = len(a), len(b)
+    if n1 < 2 or n2 < 2:
+        return math.nan
+    sp = math.sqrt(((n1 - 1) * a.var(ddof=1) + (n2 - 1) * b.var(ddof=1)) / (n1 + n2 - 2))
+    if sp == 0:
+        return math.nan
+    j = 1.0 - 3.0 / (4.0 * (n1 + n2) - 9.0)
+    return float(j * (b.mean() - a.mean()) / sp)
+
+
+def cohen_dz(d: "Sequence[float]") -> float:
+    """Cohen's dz of paired differences *d*: mean over SD."""
+    a = np.asarray(d, dtype=float)
+    a = a[np.isfinite(a)]
+    if len(a) < 2:
+        return math.nan
+    sd = a.std(ddof=1)
+    return float(a.mean() / sd) if sd > 0 else math.nan
+
+
+def posthoc(samples: "Mapping[str, Sequence[float]]") -> "list[dict]":
+    """Every pair of groups, Mann-Whitney, Holm over the pairs: after a
+    Kruskal-Wallis on more than two groups."""
+    from scipy import stats
+    names = list(samples)
+    rows = []
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a = np.asarray(samples[names[i]], dtype=float)
+            b = np.asarray(samples[names[j]], dtype=float)
+            a, b = a[np.isfinite(a)], b[np.isfinite(b)]
+            p = math.nan
+            if len(a) and len(b) and len(a) + len(b) >= 3:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    try:
+                        p = float(stats.mannwhitneyu(a, b, alternative="two-sided").pvalue)
+                    except ValueError:
+                        pass
+            rows.append({"pair": f"{names[j]} vs {names[i]}", "p": p,
+                         "g": hedges_g(a, b)})
+    adj = holm([r["p"] for r in rows])
+    for r, q in zip(rows, adj):
+        r["p Holm"] = q
+    return rows
+
+
+def _between_extras(row: dict, samples: "Mapping[str, Sequence[float]]",
+                    order: "Sequence[str]") -> None:
+    """Hedges' g (two groups: the second against the first, the control) or
+    the post-hoc pairs (more than two) of a between-group test, into *row*."""
+    if len(order) == 2:
+        row["Hedges g"] = hedges_g(samples[order[0]], samples[order[1]])
+    elif len(order) > 2:
+        ph = posthoc({g: samples[g] for g in order})
+        row["post-hoc"] = ph
+        row["post-hoc (Mann-Whitney, Holm)"] = "; ".join(
+            f"{r['pair']}: p = {fmt_p(r['p Holm'])}" for r in ph)
+
+
+def _between_text(row: "Mapping[str, Any]") -> str:
+    """The p of a between-group test with its test, and g for two groups."""
+    text = f"{fmt_p(row.get('between p', math.nan))} ({row.get('between test', '')})"
+    g = row.get("Hedges g", math.nan)
+    if isinstance(g, float) and math.isfinite(g):
+        text += f" · g = {g:.2f}"
+    return text
+
+
+def _posthoc_display(row: "Mapping[str, Any]", order: "Sequence[str]") -> "list[dict]":
+    out = []
+    for r in row.get("post-hoc") or []:
+        d = {"Test": f"    post-hoc {r['pair']}", "p": f"{fmt_p(r['p'])} (Mann-Whitney)",
+             "p Holm": fmt_p(r["p Holm"]), "_p": r["p Holm"]}
+        for g in order:
+            d[g] = ""
+        out.append(d)
+    return out
 
 
 def _gg_epsilon(y: np.ndarray, g: np.ndarray) -> float:
@@ -364,6 +450,7 @@ def _two_condition(analysis: str, by: str, order: "list[str]", gmap: "dict",
             row[f"{g} n pairs"] = w["n"]
             row[f"{g} Wilcoxon p"] = w["p"]
             row[f"{g} paired t p"] = w["p t"]
+            row[f"{g} dz"] = cohen_dz(d)
             ns.append(w["n"])
             for k in ks:
                 pa = per_animal.setdefault(k, {"subject": k[0], "file": k[1], "group": g})
@@ -376,6 +463,7 @@ def _two_condition(analysis: str, by: str, order: "list[str]", gmap: "dict",
             bt = between_test([deltas[g] for g in order])
             row["between test"], row["between p"] = bt["rank test"], bt["p"]
             row["between param test"], row["between param p"] = bt["param test"], bt["p param"]
+            _between_extras(row, deltas, order)
             prism.append(_column_table(f"Δ {metric} ({nb} − {na})", deltas))
         complete = [k for k in keys if all(math.isfinite(x) for x in vals[k])]
         if len(complete) >= len(order) + 1:
@@ -400,10 +488,11 @@ def _two_condition(analysis: str, by: str, order: "list[str]", gmap: "dict",
             for g in order:
                 d1[g] = fmt_mean(r[f"{g} Δ mean"], r[f"{g} Δ SEM"], int(r[f"{g} Δ n"]),
                                  int(r["_dec_d"]))
-            d1["p"] = f"{fmt_p(r['between p'])} ({r['between test']})"
+            d1["p"] = _between_text(r)
             d1["p Holm"] = fmt_p(r["between p (Holm)"])
             d1["_p"] = r["between p (Holm)"]
             disp.append(d1)
+            disp.extend(_posthoc_display(r, order))
         d2 = {"Test": f"{r['Metric']}: {nb} vs {na}"}
         for g in order:
             d2[g] = (f"{fmt_mean(r[f'{g} {na} mean'], r[f'{g} {na} SEM'], int(r[f'{g} {na} n']), dec)}"
@@ -414,7 +503,7 @@ def _two_condition(analysis: str, by: str, order: "list[str]", gmap: "dict",
         d2["_p"] = min([r[f"{g} Wilcoxon p (Holm)"] for g in order
                         if math.isfinite(r[f"{g} Wilcoxon p (Holm)"])], default=math.nan)
         disp.append(d2)
-    stats = stats.drop(columns=["_dec", "_dec_d"], errors="ignore")
+    stats = stats.drop(columns=["_dec", "_dec_d", "post-hoc"], errors="ignore")
     note = _small_n_note(ns)
     if note:
         notes.append(note)
@@ -431,47 +520,121 @@ def _display(rows: "list[dict]", order: "list[str]") -> "pd.DataFrame":
 
 # ── the four analyses ────────────────────────────────────────────────────
 
+PAIRS_ONE = "One pair"
+PAIRS_ALL = "All pairs"
+POINCARE = "Poincaré (group)"
+
+
 def analyse_segments(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame", by: str,
                      a: str, b: str, metrics: "Optional[Sequence[str]]" = None,
-                     names: "tuple[str, str]" = ("", "")) -> GroupResult:
-    """Pre/Post segments: segment *b* vs *a* of the Group sheet, per metric
-    (*metrics* None: DEFAULT_METRICS the table holds; "all": all)."""
+                     names: "tuple[str, str]" = ("", ""), pairs: str = PAIRS_ONE,
+                     leave_out: bool = True) -> GroupResult:
+    """Pre/Post segments of the Group sheet, per metric (*metrics* None:
+    DEFAULT_METRICS the table holds; "all": all): segment *b* vs *a*, or
+    with *pairs* PAIRS_ALL every consecutive pair of segments (B vs A, D vs
+    C...; Holm within each pair). Each row is checked for the pair (segment
+    missing, quality alert, subject on several rows, another template or
+    duration: ecg.io.group_stats.check_rows); with *leave_out* those rows are
+    left out, and listed either way."""
     df = sheets.get(SHEET_SEGMENTS)
     if df is None or df.empty:
         raise ValueError("The group table has no segments (Compare segments → Add to group table).")
+    df = df.reset_index(drop=True)
     tags = segment_tags(df)
-    if a not in tags or b not in tags or a == b:
-        raise ValueError("Choose two different segments of the table.")
     gmap, order, notes = animal_groups(animals, by)
     _need_animals(gmap, by)
-    available = metric_names(df, a, b)
-    if metrics is None:
-        names_m = [m for m in DEFAULT_METRICS if m in available] or available
-    elif metrics == "all":
-        names_m = available
+    if pairs == PAIRS_ALL:
+        todo, odd = consecutive_pairs(tags)
+        if not todo:
+            raise ValueError("The table holds fewer than two segments.")
+        if odd:
+            notes.append(f"Segment {odd} has no partner: not tested")
     else:
-        names_m = [m for m in metrics if m in available]
-    values: "dict[str, dict]" = {}
-    for m in names_m:
-        vals = {}
-        for _, r in df.iterrows():
+        if a not in tags or b not in tags or a == b:
+            raise ValueError("Choose two different segments of the table.")
+        todo = [(a, b)]
+    multi = len(todo) > 1
+    sexes = _sexes(animals)
+    parts: "list[GroupResult]" = []
+    fig_values: "dict[str, dict]" = {}
+    fig_names: "dict[str, tuple[str, str]]" = {}
+    poincare: "dict[str, tuple]" = {}
+    for pa, pb in todo:
+        tag = f" · {pb} vs {pa}" if multi else ""
+        pnotes: "list[str]" = []
+        checks = check_rows(df, pa, pb)
+        doubtful = {(c.subject, c.file): c for c in checks if not c.ok}
+        listed = [f"{c.subject or '?'} ({'; '.join(c.problems)})" for k, c in doubtful.items()
+                  if k in gmap and not all(p.startswith("no segment") for p in c.problems)]
+        if listed:
+            pnotes.append(f"{'Left out' if leave_out else 'To check (kept)'}{tag}: "
+                          + ", ".join(listed))
+        available = metric_names(df, pa, pb)
+        if metrics is None:
+            names_m = [m for m in DEFAULT_METRICS if m in available] or available
+        elif metrics == "all":
+            names_m = available
+        else:
+            names_m = [m for m in metrics if m in available]
+        values: "dict[str, dict]" = {}
+        used_rows = []
+        for i, r in df.iterrows():
             key = (str(r["subject"]), str(r["file"]))
-            if key not in gmap:
+            if key not in gmap or (leave_out and key in doubtful):
                 continue
-            va = _num(r.get(f"{m} {a}"))
-            vb = _num(r.get(f"{m} {b}"))
-            if math.isfinite(va) and math.isfinite(vb):
-                vals[key] = (float(va), float(vb))
-        values[m] = vals
-    missing = [k[0] for k in gmap if not any(k in v for v in values.values())]
-    if missing:
-        notes.append(f"No {a} / {b} segments: {', '.join(missing)}")
-    na, nb = names[0] or a, names[1] or b
-    res = _two_condition(AN_SEGMENTS, by, order, gmap, _sexes(animals), values, (na, nb),
-                         notes, {})
-    res.figure = {"kind": "paired", "values": values, "gmap": gmap, "names": (na, nb),
-                  "metric": names_m[0] if names_m else ""}
-    res.settings = [("Analysis", AN_SEGMENTS), ("By", by), ("Segments", f"{b} vs {a}")]
+            used_rows.append(i)
+            for m in names_m:
+                va, vb = _num(r.get(f"{m} {pa}")), _num(r.get(f"{m} {pb}"))
+                if math.isfinite(va) and math.isfinite(vb):
+                    values.setdefault(m, {})[key] = (float(va), float(vb))
+        values = {m: values.get(m, {}) for m in names_m}
+        missing = [k[0] for k in gmap
+                   if not any(k in v for v in values.values()) and k not in doubtful]
+        if missing:
+            pnotes.append(f"No {pa} / {pb} segments: {', '.join(missing)}")
+        na, nb = (names[0] or pa, names[1] or pb) if not multi else (pa, pb)
+        part = _two_condition(AN_SEGMENTS, by, order, gmap, sexes, values, (na, nb),
+                              pnotes, {})
+        if multi:
+            part.display["Test"] = [f"[{pb} vs {pa}] {t}" for t in part.display["Test"]]
+            for frame in (part.stats, part.anova):
+                if len(frame):
+                    frame.insert(0, "Pair", f"{pb} vs {pa}")
+            part.prism = [(f"{t[0]}{tag}",) + tuple(t[1:]) for t in part.prism]
+        parts.append(part)
+        for m, v in values.items():
+            fig_values[f"{m}{tag}"] = v
+            fig_names[f"{m}{tag}"] = (na, nb)
+        poincare[f"{POINCARE}{tag}"] = (df.loc[used_rows], pa, pb, (na, nb))
+    if len(parts) == 1:
+        res = parts[0]
+        res.notes = notes + res.notes
+    else:
+        per = parts[0].per_animal
+        for p_ in parts[1:]:
+            if len(p_.per_animal):
+                per = p_.per_animal if not len(per) else per.merge(
+                    p_.per_animal, on=["subject", "file", "group"], how="outer")
+        res = GroupResult(
+            analysis=AN_SEGMENTS, by=by, groups=order,
+            display=pd.concat([p_.display for p_ in parts], ignore_index=True),
+            stats=pd.concat([p_.stats for p_ in parts], ignore_index=True),
+            per_animal=per,
+            anova=pd.concat([p_.anova for p_ in parts if len(p_.anova)], ignore_index=True)
+            if any(len(p_.anova) for p_ in parts) else pd.DataFrame(),
+            notes=notes + [n for p_ in parts for n in p_.notes if n not in notes],
+            prism=[t for p_ in parts for t in p_.prism])
+        # One note on the smallest p a Wilcoxon can reach, not one per pair.
+        seen: "list[str]" = []
+        res.notes = [n for n in res.notes if not (n in seen or seen.append(n))]
+    first = next(iter(fig_values), "")
+    res.figure = {"kind": "paired", "values": fig_values, "names_by": fig_names,
+                  "gmap": gmap, "names": fig_names.get(first, ("A", "B")), "metric": first,
+                  "poincare": poincare}
+    res.settings = [("Analysis", AN_SEGMENTS), ("By", by),
+                    ("Segments", PAIRS_ALL + ": " + ", ".join(f"{pb} vs {pa}" for pa, pb in todo)
+                     if multi else f"{todo[0][1]} vs {todo[0][0]}"),
+                    ("Rows to check", "left out" if leave_out else "kept (listed)")]
     return res
 
 
@@ -520,6 +683,7 @@ def analyse_whole(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame",
             bt = between_test([by_g[g] for g in order])
             row.update({"between test": bt["rank test"], "between p": bt["p"],
                         "between param test": bt["param test"], "between param p": bt["p param"]})
+            _between_extras(row, by_g, order)
         rows.append(row)
         prism.append(_column_table(m, by_g))
     stats = pd.DataFrame(rows)
@@ -531,16 +695,17 @@ def analyse_whole(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame",
         for g in order:
             d[g] = fmt_mean(r[f"{g} mean"], r[f"{g} SEM"], int(r[f"{g} n"]), dec)
         if len(order) > 1:
-            d["p"] = f"{fmt_p(r['between p'])} ({r['between test']})"
+            d["p"] = _between_text(r)
             d["p Holm"] = fmt_p(r["between p (Holm)"])
             d["_p"] = r["between p (Holm)"]
         else:
             d["p"], d["p Holm"], d["_p"] = "descriptive", "", math.nan
         disp.append(d)
+        disp.extend(_posthoc_display(r, order))
     if len(order) < 2:
         notes.append("One group: descriptive only (choose By Group or Sex to compare)")
     res = GroupResult(analysis=AN_WHOLE, by=by, groups=order, display=_display(disp, order),
-                      stats=stats, per_animal=pd.DataFrame(list(per_animal.values())),
+                      stats=stats.drop(columns=["post-hoc"], errors="ignore"), per_animal=pd.DataFrame(list(per_animal.values())),
                       notes=notes, prism=prism)
     res.figure = {"kind": "dots", "values": values, "gmap": gmap,
                   "metric": names_m[0] if names_m else ""}
@@ -749,18 +914,22 @@ def analyse_time(sheets: "Mapping[str, pd.DataFrame]", animals: "pd.DataFrame", 
         bt = between_test([deltas[g] for g in order])
         row.update({"between test": bt["rank test"], "between p": bt["p"],
                     "between param test": bt["param test"], "between param p": bt["p param"]})
+        _between_extras(row, deltas, order)
         prism.append(_column_table(f"Δ {metric} ({unit}) {w0:g}–{w1:g} min vs baseline", deltas))
+    for g in order:
+        row[f"{g} dz"] = cohen_dz(deltas[g])
     rows.append(row)
-    stats = pd.DataFrame(rows)
+    stats = pd.DataFrame(rows).drop(columns=["post-hoc"], errors="ignore")
     dec = _decimals([row.get(f"{g} Δ mean", math.nan) for g in order])
     if len(order) > 1:
         d1 = {"Test": f"Δ {metric} {w0:g}–{w1:g} min ({unit})"}
         for g in order:
             d1[g] = fmt_mean(row[f"{g} Δ mean"], row[f"{g} Δ SEM"], int(row[f"{g} Δ n"]), dec)
-        d1["p"] = f"{fmt_p(row['between p'])} ({row['between test']})"
+        d1["p"] = _between_text(row)
         d1["p Holm"] = ""
         d1["_p"] = row["between p"]
         disp.append(d1)
+        disp.extend(_posthoc_display(row, order))
     d2 = {"Test": f"Within group, {w0:g}–{w1:g} min vs baseline"}
     for g in order:
         d2[g] = f"p = {fmt_p(row[f'{g} Wilcoxon p'])}  (t: {fmt_p(row[f'{g} paired t p'])})"

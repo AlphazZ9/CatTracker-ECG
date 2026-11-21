@@ -190,3 +190,80 @@ def test_add_open_asks_where_when_the_remembered_table_did_not_open(root, tmp_pa
     app._add_open_recording_to_group_table = lambda *a, **k: pytest.fail("written")
     _button(frame, "➕  Add open recording…").invoke()
     assert asked and not gone.exists()
+
+
+def test_group_prism_leaves_out_the_rows_left_out_and_pairs(root, tmp_path, monkeypatch):
+    """Moved from the Compare segments group card: Prism… writes the tables
+    without the rows the analysis left out, one per pair and metric in All
+    pairs (the titles of the former card, so its templates still fill)."""
+    from ecg.io import prism_template as pt
+    from ecg.ui import compare_segments as cs
+    from tests.io.test_group_compare import SEG_HR, _segments_table
+    monkeypatch.setattr(pt, "PREFS_PATH", tmp_path / "prism.json")
+    menus = []
+    monkeypatch.setattr(cs, "prism_menu", lambda parent, button, new, fill: menus.append(new))
+    path = tmp_path / "g.xlsx"
+    _segments_table(path)
+    _app, frame = _page(root, {"path": str(path), "analysis": gc.AN_SEGMENTS,
+                                "by": gc.BY_NONE, "pairs": gc.PAIRS_ALL})
+    out = tmp_path / "pairs.pzfx"
+    monkeypatch.setattr(tg.filedialog, "asksaveasfilename", lambda *a, **k: str(out))
+    _button(frame, "Prism… (new file / template)").invoke()
+    menus[-1]()
+    got = pt.read_tables(str(out))
+    t1, t2 = f"{SEG_HR} · Post 1 vs Pre 1", f"{SEG_HR} · Post 5 vs Pre 5"
+    assert got[t1]["rows"] == ["M1", "M2", "M3", "M4"]
+    assert got[t2]["rows"] == ["M1", "M2", "M4"]               # M3: Post 5 few beats
+    assert list(got[t2]["columns"]) == ["Pre 5", "Post 5"]
+    assert "few beats" in out.read_text(encoding="utf-8")       # in the project notes
+
+
+@pytest.fixture
+def sessions(tmp_path, monkeypatch):
+    """A throw-away registry and session folder (never the user's profile)."""
+    from ecg.io import session as sess
+    d = tmp_path / "sessions"
+    monkeypatch.setattr(db, "SESSION_DIR", d)
+    monkeypatch.setattr(db, "_DB_PATH", d / "ecg_registry.db")
+    monkeypatch.setattr(db, "_schema_ready", False)
+    monkeypatch.setattr(db, "_schema_retry_at", 0.0)
+    monkeypatch.setattr(sess, "SESSION_DIR", d)
+    return d
+
+
+def _saved(tmp_path, name, subject, sex, project, analysed=True):
+    from ecg.io.loaders import _serialise_results
+    from ecg.io.session import _file_fingerprint, save_session
+    fp = tmp_path / name
+    fp.write_bytes(b"ecg")
+    rng = np.random.default_rng(len(name))
+    rr = 120 + rng.normal(0, 2, 2000)
+    results = {"rr_ms": rr, "rr_t_s": np.cumsum(rr) / 1000,
+               "rr_valid": np.ones(len(rr), bool), "hr": {}}
+    state = {"recording_fields": {"subject": subject, "sex": sex, "project_name": project},
+             "annotations": [{"t_start": 100.0, "t_end": 101.0, "label": "Stim"}]}
+    if analysed:
+        state["results"] = _serialise_results(results)
+    sp = save_session(str(fp), state)
+    db.upsert_recording(str(fp), _file_fingerprint(str(fp)), str(sp), project_name=project)
+    return str(fp)
+
+
+def test_import_a_project_from_its_saved_sessions(tmp_path, sessions):
+    _saved(tmp_path, "a 1146.smr", "1146", "F", "BNST")
+    _saved(tmp_path, "b 206.smr", "206", "m", "BNST")
+    _saved(tmp_path, "c 300.smr", "300", "F", "BNST", analysed=False)
+    _saved(tmp_path, "d 400.smr", "400", "F", "Other")
+    assert set(db.project_names()) == {"BNST", "Other"}
+    p = str(tmp_path / "g.xlsx")
+    n, added, skipped = tg.import_project(p, "BNST")
+    assert (n, sorted(added)) == (2, ["1146", "206"])
+    assert len(skipped) == 1 and "c 300.smr" in skipped[0] and "Analyze" in skipped[0]
+    sh = gd.read_sheets(p)
+    an = gd.animals_frame(sh).set_index("subject")
+    assert an.loc["206", "sex"] == "M" and an.loc["1146", "file"] == "a 1146.smr"
+    assert an.loc["1146", "has_time"] and an.loc["1146", "has_whole"]
+    assert len(sh[gd.SHEET_ANNOT]) == 2
+    # Imported again: replaced, never doubled.
+    n, added, _ = tg.import_project(p, "BNST")
+    assert n == 2

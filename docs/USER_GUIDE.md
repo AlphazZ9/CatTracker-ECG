@@ -416,48 +416,8 @@ labels; the same recording again replaces its row): use the same windows and
 labels for every animal and the columns line up for a paired test (2 segments: Wilcoxon
 matched-pairs or paired t) or a repeated-measures one (Friedman / RM ANOVA).
 
-**Group — all animals** (the last card, also without a recording open): open a
-group table, choose the two segments, **▶ Run**. Each row is checked (missing
-segment, quality alert, a subject on several rows, another template or
-duration among the rows of this comparison) and, with *Leave out rows to
-check*, left out. Per metric: n animals, n with a non-zero difference (the
-Wilcoxon's own n), medians, median difference B − A, up / down, the two-sided
-Wilcoxon signed-rank p (exact for small n), Holm-adjusted over the metrics, and
-the paired t p. By default one metric per question is tested (HR, SDNN, SD1,
-SD2, LF/HF: RMSSD ≈ SD1·√2 and LF n.u. / HF n.u. ≡ LF/HF would make Holm
-stricter for nothing); *All metrics* tests every column. The status says the
-smallest p the test can reach (2 / 2ⁿ: 0.031 at n = 6, nothing below 0.05 at
-n ≤ 5). **Statistics…** saves the Excel report (Statistics, About, Rows
-checked, Paired values); **Figure…** the group figure: one Poincaré ellipse per
-animal (centre = mean RR, half-axes SD2 / SD1) and the group mean ellipse
-thick, for each segment, then HR, SD1 and SD2 before-after (one line per
-animal, the median thick).
-
-*Analysis: All pairs (B vs A, D vs C, F vs E)* runs the same tests for every
-consecutive pair of segments of the table (e.g. Pre / Post 1, 5 and 10 min:
-A–B, C–D, E–F; an odd last segment is not tested, with a note), Holm within
-each pair; tick *Holm across all pairs × metrics* for one correction over
-everything tested. The label of each segment is stored in the table
-("label A"…) and checked: a row whose segment A is not labelled like the
-group's (e.g. "Pre Stim 5min" where the others say "Pre Stim 1min") is a row
-to check — listed under the pair and left out with *Leave out rows to check*
-(kept, but listed, otherwise). The pairs follow the order of the segments
-in each recording (1st with 2nd, 3rd with 4th…), not the column order of the
-table, so a label typed differently in one animal ("Post 1 min" where the
-others say "Post 1") never makes a pair of its own: that animal's segment is
-a row to check of its pair (*segment 2 is 'Post 1 min', not 'Post 1' like
-the group*). A difference of case or spacing only ("pre stim 5min") is the
-same segment: *Add to group table…* puts it under the existing column, and
-older tables are read the same way (with a note). A pair with fewer animals
-than the table has rows is flagged in the status line. Tables written before
-the labels were kept still open; their labels are not checked (a note says
-so). **Statistics…**
-then saves one workbook: a Summary sheet (pair × metric: n, median Δ,
-Wilcoxon p, Holm p) and one sheet per pair with the single-pair report
-(Statistics, About, Rows checked, Paired values); **Figure…** one Mean HR
-panel per pair (one line per animal, the median thick, the pair's p).
-**Prism…** writes the group table for GraphPad Prism (next section), without
-the rows the last ▶ Run left out (the project notes say which and why).
+**Group — all animals**: the tests across animals are in the **Group** tab
+(below); this card only points to it.
 
 Click **▶ Compare**: the table shows every metric for every segment, with the same definitions
 as the main panels. Each segment is also cut into **non-overlapping blocks**
@@ -475,18 +435,18 @@ almost any two segments "significant".
 
 ### GraphPad Prism: tables and templates
 
-Both **Prism…** buttons (the Results card: this recording; the Group card: the
+Both **Prism…** buttons (the Results card: this recording; the Group tab: the
 group table) write **one Column table per metric**, titled as in the
 comparison table ("SDNN (ms)"): one row per animal (row titles = subjects, with the sex when known: "1146 (F)"), one
 column per segment, named by its label. That is the layout of a paired t /
 Wilcoxon / RM ANOVA and of a before-after or bars-and-points graph. In Pairs
-mode (Results card, *Δ % against: Pairs*) and in *All pairs* (Group card) it is
+mode (Results card, *Δ % against: Pairs*) and in *All pairs* (Group tab) it is
 one table per pair and metric instead, the reference first:
 "SDNN (ms) · Post Stim 1min vs Pre Stim 1min" — with the tags,
 "(B vs A)", when segments share a label. The same protocol gives the same
 titles in every file. With only 2 segments a recording's tables are always
 "SDNN (ms)" (all segments), even in Pairs mode: to fill a template made from
-such an export with the group, use the Group card's *One pair* mode, whose
+such an export with the group, use the Group tab's *One pair* mode, whose
 tables have the same titles (*All pairs* gives "SDNN (ms) · B vs A"). The recording's export also keeps its comparison table,
 HR block means, RR series and Poincaré pairs.
 
@@ -525,7 +485,11 @@ left alone.
 The **Group** tab compares the animals of one experiment. It reads a **group
 table** (.xlsx), not the recording open, so it works with no recording loaded.
 
-**Filling the table.** Open each recording, run what you need, then click
+**Filling the table.** **⤓ Import a project…** adds every saved session of a
+project at once (the *Project* field of the Recording sheet), without reopening
+the files: whole-recording metrics, time course, annotations and event-locked
+results; a session saved before Analyze is listed as left out. For the
+segments, or one recording at a time, open it, run what you need, then click
 **➕ Add open recording…** (Group tab) or **➕ Add to group table…** (Compare
 segments). Both write the same table:
 
@@ -550,7 +514,13 @@ table at once (close it in Excel first).
 control group (Control, Vehicle, Saline, Sham, WT…) comes first.
 *Analysis*:
 
-- **Pre/Post segments**: two segments of the Group sheet. Within each group,
+- **Pre/Post segments**: *One pair* (two segments chosen) or *All pairs* (every
+  consecutive pair: B vs A, D vs C…, Holm within each pair; an odd last segment
+  is not tested). Each row is checked for the pair (missing segment, quality
+  alert, subject on several rows, another template or duration than the group's)
+  and, with *Leave out rows to check*, left out; listed either way. The figure
+  menu also offers the group **Poincaré** (one ellipse per animal, the group
+  mean thick). Within each group,
   Post vs Pre (Wilcoxon signed-rank, paired t beside it, Holm over the metrics);
   between groups, the change Post − Pre (Mann-Whitney for two groups,
   Kruskal-Wallis for more); the mixed ANOVA group × segment.
@@ -568,6 +538,11 @@ control group (Control, Vehicle, Saline, Sham, WT…) comes first.
   descriptive only).
 - **Event-locked**: per animal, the mean of its events (all, or one label),
   post vs pre within each group and the change between groups.
+
+With more than two groups the between-group test is Kruskal-Wallis, followed by
+**post-hoc** pairs (Mann-Whitney, Holm over the pairs). Effect sizes: **Hedges'
+g** between two groups (the second against the first, the control), shown next
+to the p, and **Cohen's dz** within each group (in the workbook).
 
 The **Results** table gives mean ± SEM (n) per group, the p and the Holm p
 (green: below 0.05). With n ≤ 5 per group a Wilcoxon cannot go below

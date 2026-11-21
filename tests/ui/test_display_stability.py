@@ -116,7 +116,7 @@ def test_compare_tab_is_not_rebuilt_without_a_recording(root):
     built = []
     app = SimpleNamespace(_compare_holder=holder, _compare_built_for=None,
                           _compare_signature=lambda: None,
-                          _build_group_card=lambda h: built.append(
+                          _build_group_pointer=lambda h: built.append(
                               ctk.CTkLabel(h, text="group").pack()))
     CompareSegmentsMixin._refresh_compare_tab(app)
     CompareSegmentsMixin._refresh_compare_tab(app)
@@ -143,3 +143,25 @@ def test_a_waiting_draw_is_made_when_its_scrolling_page_is_shown_again(root):
     _pump(root, 1.0)
     slot._fit()
     assert slot._pending is None and slot.fig.axes[0].get_title() == "drawn"
+
+
+def test_the_tab_legend_gives_the_heads_the_room(root):
+    """With eight tabs the state legend (docked right, packed first) squeezed
+    the last heads on a 1280 px window; its texts go when the heads need the
+    room, and come back when the window is wide again."""
+    from ecg.ui.tab_keys import TAB_ORDER
+    from ecg.ui.tabbar import TabBar
+    root.geometry("1280x200+0+0")
+    bar = TabBar(root)
+    bar.pack(fill="both", expand=True)
+    for n in TAB_ORDER:
+        bar.add(n)
+    _pump(root)
+    last = bar._heads[TAB_ORDER[-1]]["head"]
+    assert bar._legend_compact and last.winfo_width() == last.winfo_reqwidth()
+    root.geometry("2000x200+0+0")
+    _pump(root)
+    assert not bar._legend_compact
+    assert all(t.winfo_ismapped() for _g, t in bar._legend)
+    from ecg.ui.tabbar import HEAD_PAD
+    assert bar._head_pad == HEAD_PAD

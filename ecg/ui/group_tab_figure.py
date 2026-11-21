@@ -44,6 +44,11 @@ def draw_group_tab_figure(fig, res: Any, metric: Optional[str] = None,
     kind = data.get("kind")
     if kind == "time":
         return _draw_time(fig, data, res.groups, show_animals, title)
+    poincare = data.get("poincare") or {}
+    if kind == "paired" and metric in poincare:
+        from ecg.ui.group_figure import draw_group_figure
+        rows, a, b, names = poincare[metric]
+        return draw_group_figure(fig, rows, a, b, names, title=title)
     if kind in ("paired", "dots"):
         m = metric if metric in data.get("values", {}) else data.get("metric", "")
         if not m:
@@ -102,7 +107,7 @@ def _draw_paired(fig, data: dict, groups: "Sequence[str]", metric: str, title: s
     by = _by_group(data, groups, metric)
     if not any(by.values()):
         return _empty(fig, f"No animal with both values of {metric}")
-    na, nb = data.get("names", ("A", "B"))
+    na, nb = (data.get("names_by") or {}).get(metric) or data.get("names", ("A", "B"))
     muted = PLOT.get("muted", "#888")
     axes = fig.subplots(1, len(groups), sharey=True, squeeze=False)[0]
     for i, (ax, g) in enumerate(zip(axes, groups)):

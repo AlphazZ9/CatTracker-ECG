@@ -93,6 +93,90 @@ def recording_lines(results: "Optional[dict]", metric_rows: "Any", annotations: 
     return out
 
 
+def session_lines(filepath: str) -> "tuple[str, str, dict] | str":
+    """(subject, sex, {sheet: lines}) of a recording's saved session: its
+    whole-recording metrics and time course (its results), annotations and
+    event-locked results (the registry), without reopening the file. A
+    reason (text) when the session cannot be used. Segments are not in a
+    session (Compare segments → Add to group table for them)."""
+    from ecg.core.metric_table import build_metric_table
+    from ecg.io import db
+    from ecg.io.loaders import _deserialise_results
+    from ecg.io.session import load_session
+    if not os.path.exists(filepath):
+        return "file not found"
+    state = load_session(filepath)
+    if not state:
+        return "no saved session (or the file changed since)"
+    raw = state.get("results")
+    results = _deserialise_results(raw) if raw else None
+    if not results:
+        return "session saved before Analyze"
+    window = state.get("analysed_window")
+    try:
+        rows = list(build_metric_table(
+            results, artifact_report=state.get("artifact_report"),
+            window=tuple(window) if window else None).rows)
+    except Exception as exc:              # a module of an older session: the rest still goes
+        log.warning("group import: metric table of %s: %s", filepath, exc)
+        rows = []
+    events = db.list_event_rows(filepath=filepath, valid_only=False)
+    fields = state.get("recording_fields") or {}
+    subject = str(fields.get("subject") or "").strip() or \
+        os.path.splitext(os.path.basename(filepath))[0]
+    lines = recording_lines(results, rows, state.get("annotations"), events)
+    return subject, normalise_sex(fields.get("sex") or ""), lines
+
+
+def import_project(path: str, project: str) -> "tuple[int, list[str], list[str]]":
+    """Add every saved recording of *project* to the group table at *path*,
+    written once. Returns (animals in the table, the recordings added, the
+    ones left out with why)."""
+    from ecg.io import db
+    items, added, skipped = [], [], []
+    for rec in db.project_recordings(project):
+        fp = str(rec.get("filepath") or "")
+        got = session_lines(fp)
+        name = os.path.basename(fp)
+        if isinstance(got, str):
+            skipped.append(f"{name}: {got}")
+            continue
+        subject, sex, lines = got
+        items.append((subject, sex, fp, lines))
+        added.append(subject)
+    if not items:
+        return 0, added, skipped
+    n, _replaced = gd.add_recordings(path, items)
+    return n, added, skipped
+
+
+def ask_project(parent: "Any", names: "list[str]") -> "Optional[str]":
+    """The project to import, chosen in a small dialog; None when cancelled."""
+    win = ctk.CTkToplevel(parent)
+    win.title("Import a project")
+    win.transient(parent.winfo_toplevel())
+    chosen: "list[Optional[str]]" = [None]
+    ctk.CTkLabel(win, text="Every saved session of the project (Recording sheet → Project) "
+                           "goes into the group table:", font=FONT_SMALL, text_color=MUTED,
+                 wraplength=360, justify="left").pack(padx=16, pady=(16, 8), anchor="w")
+    cb = ctk.CTkComboBox(win, width=360, values=names, state="readonly", **combo_style())
+    cb.set(names[0])
+    cb.pack(padx=16, pady=(0, 12))
+    row = ctk.CTkFrame(win, fg_color="transparent")
+    row.pack(fill="x", padx=16, pady=(0, 16))
+
+    def _ok() -> None:
+        chosen[0] = cb.get()
+        win.destroy()
+    ctk.CTkButton(row, text="Import", width=0, command=_ok,
+                  **button_style("primary")).pack(side="right")
+    ctk.CTkButton(row, text="Cancel", width=0, command=win.destroy,
+                  **button_style("secondary")).pack(side="right", padx=(0, SPACE_S))
+    win.grab_set()
+    parent.wait_window(win)
+    return chosen[0]
+
+
 def load_last_table() -> str:
     try:
         return str(json.loads(PREFS_PATH.read_text(encoding="utf-8")).get("path", ""))
@@ -191,7 +275,8 @@ class TabGroupMixin:
         for k, v in (("path", ""), ("by", gc.BY_GROUP), ("analysis", gc.AN_SEGMENTS),
                      ("a", ""), ("b", ""), ("stim", ""), ("tc_metric", "HR"), ("bin", "60"),
                      ("from", "-10"), ("to", "30"), ("w0", "0"), ("w1", "5"), ("delta", True),
-                     ("lines", False), ("all", False), ("event", ALL_EVENTS), ("ev_config", ""), ("fig_metric", "")):
+                     ("lines", False), ("all", False), ("pairs", gc.PAIRS_ONE), ("leave_out", True),
+                     ("event", ALL_EVENTS), ("ev_config", ""), ("fig_metric", "")):
             st.setdefault(k, v)
         tip = getattr(self, "_bind_hover_tip", lambda *a, **k: None)
         data: "dict[str, Any]" = {"sheets": None, "animals": None, "res": None}
@@ -280,10 +365,24 @@ class TabGroupMixin:
 
         # Pre/Post segments
         o_seg = ctk.CTkFrame(opts, fg_color="transparent")
-        _lbl(o_seg, "Compare")
+        cb_pairs = ctk.CTkComboBox(o_seg, width=110, values=[gc.PAIRS_ONE, gc.PAIRS_ALL],
+                                   state="readonly", command=lambda _v: _changed(),
+                                   **combo_style())
+        cb_pairs.set(st["pairs"] if st["pairs"] in (gc.PAIRS_ONE, gc.PAIRS_ALL) else gc.PAIRS_ONE)
+        cb_pairs.pack(side="left", padx=(0, SPACE_M))
+        tip(cb_pairs, "One pair: the two segments chosen. All pairs: every consecutive pair of "
+                      "segments of the table (B vs A, D vs C, F vs E: Pre / Post 1, 5, 10 min), "
+                      "Holm within each pair; an odd last segment is left out")
+        lbl_cmp = ctk.CTkLabel(o_seg, text="Compare", font=FONT_SMALL, text_color=MUTED)
+        lbl_cmp.pack(side="left", padx=(0, SPACE_XS))
         cb_a = _combo(o_seg, "a")
         _lbl(o_seg, "vs")
         cb_b = _combo(o_seg, "b")
+        chk_leave = _check(o_seg, "Leave out rows to check", "leave_out")
+        tip(chk_leave, "A row with a quality alert, a missing segment, a subject on several "
+                       "rows, another template or another duration than the group's is left "
+                       "out of the tests and the figure; it is listed under the results "
+                       "either way")
         chk_all_seg = _check(o_seg, "All metrics", "all")
         # Time course
         o_tc = ctk.CTkFrame(opts, fg_color="transparent")
@@ -491,8 +590,9 @@ class TabGroupMixin:
             sheets = data["sheets"] or {}
             seg = sheets.get(gd.SHEET_SEGMENTS)
             tags = gc.segment_tags(seg) if seg is not None and len(seg) else []
-            cb_a.configure(values=tags or [""])
-            cb_b.configure(values=tags or [""])
+            # A disabled combo ignores set(): All pairs disabled them.
+            cb_a.configure(values=tags or [""], state="readonly")
+            cb_b.configure(values=tags or [""], state="readonly")
             if tags:
                 a = st["a"] if st["a"] in tags else tags[0]
                 b = st["b"] if st["b"] in tags and st["b"] != a else \
@@ -521,6 +621,42 @@ class TabGroupMixin:
             if st["path"]:
                 _load(st["path"])
 
+        def _import_project() -> None:
+            from ecg.io import db
+            names = db.project_names()
+            if not names:
+                messagebox.showinfo(
+                    "Import a project",
+                    "No saved session has a project name yet: type it in the Recording "
+                    "sheet (file chip ▾ → Project) and Save Session for each recording.",
+                    parent=win)
+                return
+            project = ask_project(win, names)
+            if not project:
+                return
+            path = st["path"] if data["sheets"] is not None else ""
+            if not path:
+                path = filedialog.asksaveasfilename(
+                    parent=win, title=f"Group table for {project} (created if new)",
+                    defaultextension=".xlsx", initialfile=f"{project}.xlsx",
+                    confirmoverwrite=False,
+                    filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
+                if not path:
+                    return
+            try:
+                n, added, skipped = import_project(path, project)
+            except Exception as exc:
+                messagebox.showerror("Import a project", str(exc), parent=win)
+                return
+            if added and not _load(path):
+                return
+            text = (f"✓  {project}: {len(added)} recording{'s' if len(added) != 1 else ''} "
+                    f"imported into {os.path.basename(path)} ({n} animals)"
+                    if added else f"⚠  {project}: nothing imported")
+            if skipped:
+                text += "  ·  left out: " + "; ".join(skipped)
+            _say(text, GREEN if added and not skipped else ORANGE)
+
         def _add_open() -> None:
             # Only the table shown: a remembered one that did not open (moved,
             # deleted) is not written to without asking.
@@ -546,6 +682,11 @@ class TabGroupMixin:
         for text, cmd, tiptext in (
                 ("📂  Open…", _open, "Open a group table (.xlsx): one animal per recording"),
                 ("Reload", _reload, "Read the table again (rows added since count)"),
+                ("⤓  Import a project…", _import_project,
+                 "Every saved session of a project (the Project field of the Recording "
+                 "sheet) at once, without reopening the files: whole-recording metrics, time "
+                 "course, annotations and event-locked results. Segments come from Compare "
+                 "segments → Add to group table."),
                 ("➕  Add open recording…", _add_open,
                  "Write the recording open to the table: its whole-recording metrics and time "
                  "course (after Analyze), its annotations, its event-locked results (saved to "
@@ -568,6 +709,10 @@ class TabGroupMixin:
                 st[k] = e.get().strip()
             st["delta"] = bool(chk_delta.get())
             st["lines"] = bool(chk_lines.get())
+            st["pairs"] = cb_pairs.get()
+            st["leave_out"] = bool(chk_leave.get())
+            for cb in (cb_a, cb_b):
+                cb.configure(state="disabled" if st["pairs"] == gc.PAIRS_ALL else "readonly")
             st["event"] = cb_ev.get()
             st["ev_config"] = cb_cfg.get()
             src = {gc.AN_SEGMENTS: chk_all_seg, gc.AN_WHOLE: chk_all_wh,
@@ -599,7 +744,8 @@ class TabGroupMixin:
             mode = st["analysis"]
             metrics = "all" if st["all"] else None
             if mode == gc.AN_SEGMENTS:
-                return gc.analyse_segments(sheets, an, st["by"], st["a"], st["b"], metrics)
+                return gc.analyse_segments(sheets, an, st["by"], st["a"], st["b"], metrics,
+                                           pairs=st["pairs"], leave_out=st["leave_out"])
             if mode == gc.AN_WHOLE:
                 return gc.analyse_whole(sheets, an, st["by"], metrics)
             if mode == gc.AN_EVENTS:
@@ -663,7 +809,7 @@ class TabGroupMixin:
             lbl_notes.configure(text="\n".join(f"⚠  {n}" for n in res.notes))
             fm = []
             if res.figure.get("kind") in ("paired", "dots"):
-                fm = list(res.figure.get("values", {}))
+                fm = list(res.figure.get("values", {})) + list(res.figure.get("poincare") or {})
             if fm:
                 cb_fm.configure(values=fm)
                 cb_fm.set(st["fig_metric"] if st["fig_metric"] in fm else fm[0])
