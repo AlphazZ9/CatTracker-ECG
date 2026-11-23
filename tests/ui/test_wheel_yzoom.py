@@ -39,7 +39,14 @@ def _slot(root):
         bottom.set_ylim(300, 600)
     slot.update(draw)
     slot.flush() if hasattr(slot, "flush") else None
-    root.update()
+    # A new slot fits itself to its frame 50, 200 and 600 ms after it is
+    # made, and a fit may redraw (new axes, the zoom reset). On a slow
+    # machine those timers fired in the middle of a test's zoom loop: wait
+    # for them here so the axes under test are the ones the slot keeps.
+    end = time.monotonic() + 0.8
+    while time.monotonic() < end:
+        root.update()
+        time.sleep(0.02)
     slot.canvas.draw()
     root.update()
     return slot
