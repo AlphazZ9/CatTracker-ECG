@@ -1427,15 +1427,19 @@ class CompareSegmentsMixin:
                 return
             segs_ = res_.segs
             colors = [_color(k) for k in range(len(segs_))]
-            n_rows = 1 + (len(segs_) > 4)
+            # The exported Poincaré figure has 2 panels a row (a Pre/Post
+            # pair side by side), not the 4 of the on-screen view.
+            p_cols = max(1, min(len(segs_), 2))
+            n_rows = -(-len(segs_) // p_cols)
             n_tacho = len(tachogram_groups(len(segs_), res_.comps))
             written = []
             for suffix, figsize, draw in (
                     ("_tachograms", (10, 4 if n_tacho == 1 else 3 * n_tacho),
                      _rr_drawer(segs_, colors, res_.comps)),
-                    ("_poincare", (min(4 * len(segs_), 16), 4.6 * n_rows),
+                    ("_poincare", (4 * p_cols, 4.6 * n_rows),
                      lambda fig: draw_poincare_set(fig, segs_, colors, title=_subject(),
-                                                   jitter=self._compare_jitter))):
+                                                   jitter=self._compare_jitter,
+                                                   ncols=p_cols))):
                 out = base + suffix + ext
                 try:
                     fig = Figure(figsize=figsize, dpi=300, facecolor="white", layout="constrained")
