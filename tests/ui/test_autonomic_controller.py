@@ -15,7 +15,7 @@ from matplotlib.figure import Figure
 
 from ecg.core.autonomic import COV_METHODS, compute_autonomic_indices
 from ecg.io.session import _SessionEncoder, _session_decode_hook
-from ecg.ui import analysis_controller as ac_module
+from ecg.services import autonomic_service  # where compute_autonomic runs the indices
 from ecg.core import peak_editing as dc_module  # where run_detection applies the threshold
 from ecg.ui import session_controller as sc_module
 from ecg.ui.analysis_controller import AnalysisController
@@ -151,7 +151,7 @@ def test_compute_uses_the_users_bounds_breaks_and_view_parameters(monkeypatch):
         seen.update(kw, rpeaks=rpeaks, fs=fs)
         return compute_autonomic_indices(rpeaks, fs, **kw)
 
-    monkeypatch.setattr(ac_module, "compute_autonomic_indices", _spy)
+    monkeypatch.setattr(autonomic_service, "compute_autonomic_indices", _spy)
     app.analysis_ctrl.compute_autonomic()
 
     assert seen["rr_min_ms"] == 70.0 and seen["rr_max_ms"] == 300.0
@@ -193,7 +193,7 @@ def test_lf_hf_follows_the_band_preset(monkeypatch):
                 "params": {"lf_band": kw["lf_band"], "hf_band": kw["hf_band"],
                            "n_gaps_masked": 0}}
 
-    monkeypatch.setattr(ac_module, "spwvd_lf_hf", _fake_spwvd)
+    monkeypatch.setattr(autonomic_service, "spwvd_lf_hf", _fake_spwvd)
     app.analysis_ctrl.compute_autonomic()
 
     assert seen["lf_band"] == (0.4, 2.0) and seen["hf_band"] == (2.0, 5.0)
@@ -210,7 +210,7 @@ def test_an_spwvd_failure_is_disclosed_and_csi_cpi_kept(monkeypatch):
     def _fail(*_a, **_k):
         raise ValueError("estimated chunk peak memory 2.1 GB exceeds 1.5 GB")
 
-    monkeypatch.setattr(ac_module, "spwvd_lf_hf", _fail)
+    monkeypatch.setattr(autonomic_service, "spwvd_lf_hf", _fail)
     app.analysis_ctrl.compute_autonomic()
     assert app.analysis.autonomic_result is not None
     assert app.analysis.autonomic_spwvd == {"error": "estimated chunk peak memory 2.1 GB exceeds 1.5 GB"}
@@ -231,7 +231,7 @@ def test_real_spwvd_runs_on_a_short_recording():
 def test_invalid_entries_do_not_compute(monkeypatch, field, value):
     app, statuses = _stub_app(_peaks([120.0] * 400))
     getattr(app, field).value = value
-    monkeypatch.setattr(ac_module, "compute_autonomic_indices",
+    monkeypatch.setattr(autonomic_service, "compute_autonomic_indices",
                         lambda *a, **k: pytest.fail("must not compute"))
     app.analysis_ctrl.compute_autonomic()
     assert app.analysis.autonomic_result is None

@@ -72,8 +72,10 @@ ecg-analysis            # after `pip install -e .`
 │   │   └── ml_detector.py    # classical-ML R-peak detector, trainable from
 │   │                         # reviewed recordings, hold-out confusion matrix
 │   ├── services/          # the app's actions on ecg.core, without the UI
-│   │   └── analysis_service.py # Analyze: artifact correction, analysis
-│   │                         # window, analyse_core
+│   │   ├── analysis_service.py  # Analyze: artifact correction, analysis
+│   │   │                     # window, analyse_core
+│   │   ├── events_service.py    # abnormal-event classification (Events)
+│   │   └── autonomic_service.py # CSI / CPI and SPWVD LF / HF (Autonomic)
 │   ├── io/                # file formats and persistence
 │   │   ├── loaders.py        # .mat / HDF5 signal loading
 │   │   ├── session.py        # session save/load (JSON)

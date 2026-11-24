@@ -123,6 +123,11 @@ class _Null:
     def __getitem__(self, key: Any) -> "_Null":
         return self
 
+    def __iter__(self):
+        # Iterating a widget (its children, its items) yields nothing: with
+        # __getitem__ alone, Python's fallback iteration would never stop.
+        return iter(())
+
 
 class _Entry:
     """A text entry or check box holding *value* (its .get())."""

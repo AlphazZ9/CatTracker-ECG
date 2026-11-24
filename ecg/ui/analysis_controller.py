@@ -24,24 +24,26 @@ from ecg.core.models import (
 )
 from ecg.core.models import reported_interval_columns
 from ecg.core.detection import (
-    active_removed_samples, arrhythmia_baseline_info, classify_arrhythmias,
+    active_removed_samples,
     drop_removed_peaks, merge_artifact_reports,
-    premature_beat_summary, premature_summary_rows,
+    premature_summary_rows,
     removed_beats_for_classification,
 )
 from ecg.core.analysis import (
-    ENSEMBLE_BEATS_DEFAULT, POINCARE_MIN_PAIRS, align_interval_column_to_peaks,
+    ENSEMBLE_BEATS_DEFAULT, POINCARE_MIN_PAIRS,
     analyse_hrv_freq, analyse_hrv_nonlinear, analyse_intervals,
-    ensemble_beats_used, hrv_freq_withheld_reason,
+    hrv_freq_withheld_reason,
     normalize_ensemble_beats,
     recompute_qtc_column, rr_bounds_label, rr_exclusion_text,
-    noise_breaks, rr_interval_series,
+    noise_breaks,
 )
-from ecg.core.autonomic import COV_METHODS, METHOD_NOTES, compute_autonomic_indices
+from ecg.core.autonomic import COV_METHODS, METHOD_NOTES
 from ecg.core.filtering import break_line_at_gaps
 from ecg.core.metric_table import MISSING, format_metric
-from ecg.core.spwvd import spwvd_lf_hf
 from ecg.services.analysis_service import run_core_analysis
+from ecg.services.autonomic_service import run_autonomic
+from ecg.services.events_service import (av_delay_input, classify_events, event_settings,
+                                         prepare_events, summarise_events)
 from ecg.core.windowed_hrv import epoch_grid, epoch_hrv, sliding_hrv, window_lf_hf
 from ecg.core.wave_template import WaveTemplate
 from ecg.io.session import session_exists
@@ -534,54 +536,39 @@ class AnalysisController:
             return
         fs      = float(self.app.signal.fs)
 
-        try:
-            baseline_s = max(5.0, float(self.app.ent_arr_baseline.get()))
-        except (ValueError, AttributeError):
-            baseline_s = 30.0
-        try:
-            brady_pct = max(5.0, min(60.0, float(self.app.ent_arr_brady_pct.get())))
-        except (ValueError, AttributeError):
-            brady_pct = 20.0
-        try:
-            min_beats = max(3, int(self.app.ent_arr_min_beats.get()))
-        except (ValueError, AttributeError):
-            min_beats = 10
+        def _entry(name: str) -> Any:
+            try:
+                return getattr(self.app, name).get()
+            except AttributeError:          # no such entry: the default
+                return None
+        baseline_s, brady_pct, min_beats = event_settings(
+            _entry("ent_arr_baseline"), _entry("ent_arr_brady_pct"), _entry("ent_arr_min_beats"))
         _gen = getattr(self.app, "_generation", 0)  # snapshot — detect file change
         # The baseline classify_arrhythmias() will use for these peaks
         # (window, value, and whether it is a meaningful reference: not when
         # it covers most of the analysed span) -- cheap, so computed here.
-        bl_info     = arrhythmia_baseline_info(rpeaks, fs, baseline_s)
+        # The inputs of the classification (ecg.services.events_service.
+        # prepare_events): baseline, the PR of the AV-delay check, the real
+        # beats artifact correction removed (ectopic, and very premature ones
+        # removed as duplicate / non-physiological), put back so they are
+        # still counted, and the minimum AV-delay run (one whole ensemble of
+        # the rolling-median intervals: one delineation error persists over
+        # many rows and would read as a sustained run).
+        prep = prepare_events(
+            rpeaks, fs, baseline_s, (self.app.analysis.results or {}).get("intervals"),
+            self.app.analysis.artifact_report, self.app.detection.rpeaks_ok,
+            self.break_tol_samples(fs))
+        bl_info     = prep["baseline"]
         bl_reliable = bool(bl_info["reliable"])
-
-        pr_ms, av_note = self.av_delay_input(
-            (self.app.analysis.results or {}).get("intervals"), rpeaks, fs)
-
-        # Real beats automatic / reviewed artifact correction removed
-        # (ectopic, and very premature ones removed as duplicate /
-        # non-physiological) are put back for the premature-beat
-        # classification, so they are still counted (classify_arrhythmias
-        # keeps only those inside the analysed span).
-        removed_ect, removal_info = self.arrhythmia_removed_beats(fs)
+        pr_ms, av_note = prep["pr_ms"], prep["av_note"]
+        removed_ect = prep["removed"]
         basis = {"peaks": np.asarray(rpeaks).copy(), "removed": removed_ect.copy()}
-        # Rows of a rolling median share most of their beats: one delineation
-        # error persists over many of them and would read as a sustained run
-        # (Footshocks: 3 false runs of 10-16 rows at PR ~60 where the single
-        # beats read 48). A run must outlast one whole ensemble.
-        min_av_beats = ensemble_beats_used((self.app.analysis.results or {}).get("intervals"))
 
         def _worker():
             def _prog(p, m):
                 self.app.after(0, lambda pp=p, mm=m: self.app._set_progress(pp, mm))
-            return classify_arrhythmias(
-                rpeaks, fs,
-                baseline_s=baseline_s,
-                brady_pct=brady_pct,
-                min_brady_beats=min_beats,
-                progress_cb=_prog,
-                pr_ms=pr_ms,
-                removed_beats=removed_ect if len(removed_ect) else None,
-                min_av_beats=min_av_beats,
-            )
+            return classify_events(rpeaks, fs, prep, baseline_s, brady_pct, min_beats,
+                                   progress_cb=_prog)
 
         def _done(events: "list[ArrhythmiaEvent]"):
             if getattr(self.app, "_generation", 0) != _gen:
@@ -592,9 +579,7 @@ class AnalysisController:
             self.app.analysis.arr_selected_idx  = -1
             # Counts and per-hour rates of the premature beats over the
             # analysed span (first to last analysed peak).
-            summary = premature_beat_summary(
-                events, bl_info["span_s"], removal_info,
-                t_start=float(rpeaks[0]) / fs, t_end=float(rpeaks[-1]) / fs)
+            summary = summarise_events(events, rpeaks, fs, prep)
             self.app.analysis.premature_summary = summary
             self.refresh_premature_label()
 
@@ -631,36 +616,8 @@ class AnalysisController:
         self.app._start_async_result(
             self.app.btn_run_arrhythmia, "Classifying…", _worker, _done)
 
-    @staticmethod
-    def av_delay_input(ivl: "Any", rpeaks: "np.ndarray",
-                       fs: float) -> "tuple[np.ndarray | None, str]":
-        """(PR per peak or None, the note saying why) for the AV-delay check.
-
-        AV conduction-delay detection needs per-beat PR data from Interval
-        delineation, which is a separate, optional analysis step. Its
-        DataFrame is not one row per peak (edge beats have no row), so PR
-        (P onset -> QRS onset) is matched to these windowed rpeaks by sample
-        index, NaN where a peak has no row (e.g. peaks edited since). The
-        check only runs when at least half the peaks got a PR -- Intervals
-        run on another analysis window leaves most peaks unmatched, and a
-        sparse PR series would just fragment the runs."""
-        pr_ms = None
-        av_note = "AV-delay check skipped — measure intervals on the current window"
-        n_ens = ensemble_beats_used(ivl)
-        if ivl is not None and not ivl.empty:
-            pr_aligned = align_interval_column_to_peaks(ivl, rpeaks, fs, "PR_ms")
-            if np.isfinite(pr_aligned).sum() >= 0.5 * len(rpeaks):
-                pr_ms = pr_aligned
-                av_note = "AV-delay check on"
-                if n_ens > 1:
-                    av_note += (f" (PR is a rolling median of {n_ens} beats: only a run of "
-                                f"at least {n_ens} rows counts, a shorter episode is missed)")
-            elif (np.isfinite(align_interval_column_to_peaks(ivl, rpeaks, fs, "R_peak_s")).sum()
-                  >= 0.5 * len(rpeaks)):
-                # Rows do match this window -- PR itself was mostly out of
-                # bounds, so re-running Intervals as-is would not help.
-                av_note = "AV-delay check skipped — PR measured on < 50% of beats"
-        return pr_ms, av_note
+    # PR per peak for the AV-delay check: ecg.services.events_service.
+    av_delay_input = staticmethod(av_delay_input)
 
     def note_intervals_measured(self, ivl: "pd.DataFrame") -> None:
         """Intervals just measured: would the last classification's AV-delay
@@ -1805,27 +1762,9 @@ class AnalysisController:
             app.after(0, lambda: app._set_progress(pct, msg))
 
         def _worker() -> dict:
-            _progress(5, "Poincaré windows…")
-            res = compute_autonomic_indices(
-                rpeaks, fs, window_s=p["window_s"], method=p["method"],
-                ks=p["ks"], kp=p["kp"], rr_min_ms=rr_lo, rr_max_ms=rr_hi,
-                breaks=breaks, min_pairs=p["min_pairs"])
-            res.params["analysis_window"] = window
-            res.params["peak_span_s"] = peak_span
-            spwvd = None
-            if p["lf_hf"]:
-                est = span_s * self._SPWVD_S_PER_S
-                _progress(30, "LF / HF (SPWVD)" + (f" — about {est:.0f} s…" if est >= 5 else "…"))
-                ser = rr_interval_series(rpeaks, fs, rr_lo, rr_hi, breaks=breaks)
-                try:
-                    spwvd = spwvd_lf_hf(ser["rr_ms"], ser["t_s"], ser["valid"],
-                                        lf_band=tuple(lf_band), hf_band=tuple(hf_band))
-                except ValueError as exc:
-                    # Too short, a band outside the resampled range, the
-                    # memory guard: disclosed, the CSI / CPI still shown.
-                    spwvd = {"error": str(exc)}
-            _progress(95, "Drawing…")
-            return {"result": res, "spwvd": spwvd}
+            return run_autonomic(rpeaks, fs, p, rr_lo, rr_hi, breaks, lf_band, hf_band,
+                                 window, peak_span, span_s, progress_cb=_progress,
+                                 spwvd_s_per_s=self._SPWVD_S_PER_S)
 
         def _done(out: dict) -> None:
             self._mark_landed("autonomic")

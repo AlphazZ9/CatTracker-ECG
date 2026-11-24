@@ -19,6 +19,8 @@ ecg/
   services/
     analysis_service.py — Analyze without the UI (artifact correction,
                        analysis window, analyse_core)
+    events_service.py   — abnormal-event classification (Events tab)
+    autonomic_service.py — CSI / CPI and SPWVD LF / HF (Autonomic view)
   io/
     loaders.py       — .mat / HDF5 signal loading
     session.py       — session save/load (JSON)
