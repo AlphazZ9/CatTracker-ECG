@@ -36,6 +36,10 @@ class FigureSlot(MplCanvas):
     def update(self, draw_fn: Callable) -> None:          # noqa: A003 (CanvasSlot API)
         self.update_figure(draw_fn)
 
+    @property
+    def fig(self):                                        # CanvasSlot.fig (exports)
+        return self.figure
+
     def _show_placeholder(self, force: bool = False) -> None:
         self.clear()
 
@@ -126,6 +130,42 @@ class _MainThreadCaller(QtCore.QObject):
         self.call.connect(lambda fn: fn(), QtCore.Qt.ConnectionType.QueuedConnection)
 
 
+class QtFileDialog:
+    """tkinter.filedialog for the reused Tk controllers: Qt file dialogs."""
+
+    @staticmethod
+    def _filter(filetypes: Any) -> str:
+        parts = []
+        for name, pattern in filetypes or ():
+            pats = pattern if isinstance(pattern, str) else " ".join(pattern)
+            parts.append(f"{name} ({pats})")
+        return ";;".join(parts) or "All files (*)"
+
+    @classmethod
+    def asksaveasfilename(cls, title: str = "Save", initialfile: str = "",
+                          initialdir: str = "", defaultextension: str = "",
+                          filetypes: Any = None, **_k: Any) -> str:
+        import os
+        start = os.path.join(initialdir or "", initialfile or "")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            QtWidgets.QApplication.activeWindow(), title, start, cls._filter(filetypes))
+        if path and defaultextension and not os.path.splitext(path)[1]:
+            path += defaultextension
+        return path
+
+    @classmethod
+    def askopenfilename(cls, title: str = "Open", initialdir: str = "",
+                        filetypes: Any = None, **_k: Any) -> str:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            QtWidgets.QApplication.activeWindow(), title, initialdir or "", cls._filter(filetypes))
+        return path
+
+    @staticmethod
+    def askdirectory(title: str = "Choose a folder", initialdir: str = "", **_k: Any) -> str:
+        return QtWidgets.QFileDialog.getExistingDirectory(
+            QtWidgets.QApplication.activeWindow(), title, initialdir or "")
+
+
 class QtMessageBox:
     """tkinter.messagebox for the Tk controllers running under Qt: the same
     calls, Qt boxes (no Tk window is ever opened)."""
@@ -161,10 +201,13 @@ class QtMessageBox:
 def _use_qt_message_boxes() -> None:
     """The Tk controller modules the Qt interface reuses show Qt boxes."""
     import ecg.ui.analysis_controller as ac
+    import ecg.ui.export_controller as ec
     import ecg.ui.plot_controller as pc
-    for mod in (ac, pc):
+    for mod in (ac, pc, ec):
         if hasattr(mod, "messagebox"):
             mod.messagebox = QtMessageBox
+        if hasattr(mod, "filedialog"):
+            mod.filedialog = QtFileDialog
 
 
 class FigureHost:
@@ -202,8 +245,26 @@ class FigureHost:
             def fit_rhythm_table(self) -> None:
                 pass
 
-        self.analysis_ctrl = AnalysisController(self)
+        class _QtAnalysisController(AnalysisController):
+            """The Events list is a Qt table: the events go to the host's
+            callback instead of becoming CustomTkinter cards."""
+
+            def build_event_cards(self) -> None:
+                cb = self.app.__dict__.get("on_events_list")
+                if cb is not None:
+                    cb(list(self.app.analysis.arrhythmia_events or []))
+
+        from ecg.ui.navigation_controller import NavigationController
+        self.analysis_ctrl = _QtAnalysisController(self)
         self.plot_ctrl = _QtPlotController(self)
+        self.nav_ctrl = NavigationController(self)
+        from ecg.ui.export_controller import ExportController
+        self.export_ctrl = ExportController(self)
+        self.freshness = None        # no freshness service yet: results are current
+                                     # (Qt drops them on every peak change)
+        self.ent_subject = Value(lambda: self._window.subject())
+        self._arr_card_widgets: list = []
+        self.on_events_list: "Optional[Callable]" = None
         self.on_rhythm_table: "Optional[Callable]" = None
         self.txt_rhythm_metrics = None          # no Tk text box (see above)
 
@@ -229,6 +290,22 @@ class FigureHost:
         return self._slots[name]
 
     # ── Tk app methods PlotController / AnalysisController call ──
+    def _qtc_formula(self) -> str:
+        return self.analysis.qtc_formula
+
+    def clipboard_clear(self) -> None:
+        QtWidgets.QApplication.clipboard().clear()
+
+    def clipboard_append(self, text: str) -> None:
+        cb = QtWidgets.QApplication.clipboard()
+        cb.setText(cb.text() + str(text))
+
+    def _select_arrhythmia_event(self, idx: int) -> None:
+        self.nav_ctrl.select_arrhythmia_event(idx)
+
+    def _draw_arr_detail(self) -> None:
+        self.plot_ctrl.draw_arr_detail()
+
     def _set_textbox(self, widget: Any, text: str, tsv: "Optional[str]" = None) -> None:
         if isinstance(widget, TextBox):
             widget.setPlainText(text)

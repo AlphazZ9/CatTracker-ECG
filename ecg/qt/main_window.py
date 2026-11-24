@@ -24,12 +24,15 @@ from ecg.core.recording import Recording
 from ecg.qt import theme
 from ecg.qt.figure_host import FigureHost, sync_figure_theme
 from ecg.qt.tabs.detection_tab import DetectionTab
+from ecg.qt.tabs.events_tab import EventsTab
+from ecg.qt.tabs.report_tab import ReportTab
 from ecg.qt.tabs.morphology_tab import MorphologyTab
 from ecg.qt.tabs.time_course_tab import TimeCourseTab
 from ecg.qt.tabs.rhythm_tab import RhythmTab
 from ecg.qt.workers import Job, JobRunner
 from ecg.services.analysis_service import run_core_analysis
-from ecg.ui.tab_keys import (TAB_DETECTION, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER,
+from ecg.ui.tab_keys import (TAB_DETECTION, TAB_EVENTS, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER,
+                             TAB_REPORT,
                              TAB_TIME_COURSE, TIME_COURSE_MODES)
 
 FILE_FILTER = "Recordings (*.mat *.smr);;All files (*)"
@@ -78,6 +81,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 w = MorphologyTab(self)
             elif name == TAB_TIME_COURSE:
                 w = TimeCourseTab(self)
+            elif name == TAB_EVENTS:
+                w = EventsTab(self)
+            elif name == TAB_REPORT:
+                w = ReportTab(self)
             else:
                 w = self._placeholder(name)
             self.tab_widgets[name] = w
@@ -89,6 +96,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rhythm: RhythmTab = self.tab_widgets[TAB_HRV]                # type: ignore[assignment]
         self.morphology: MorphologyTab = self.tab_widgets[TAB_MORPHOLOGY]  # type: ignore[assignment]
         self.time_course: TimeCourseTab = self.tab_widgets[TAB_TIME_COURSE]  # type: ignore[assignment]
+        self.events: EventsTab = self.tab_widgets[TAB_EVENTS]  # type: ignore[assignment]
+        self.report: ReportTab = self.tab_widgets[TAB_REPORT]  # type: ignore[assignment]
+        self.tabs.currentChanged.connect(
+            lambda i: self.report.refresh() if self.tabs.widget(i) is self.report else None)
         # What the Tk controllers call to show a tab / a Time course mode.
         self.figures.tabs = _TabSwitcher(self.tabs)
         self.figures._show_time_mode = lambda mode: self.time_course.setCurrentIndex(
@@ -163,11 +174,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rhythm.clear()
         self.morphology.results_changed()
         self.time_course.results_changed()
+        self.events.clear()
+        self.events.peaks_changed()
         self.lbl_file.setText(Path(path).name)
         self.lbl_file.setToolTip(str(path))
         self.detection.file_opened()
         self.recording_changed.emit()
         self.set_status(f"Opened {Path(path).name} — click Detect Peaks")
+
+    def subject(self) -> str:
+        """The subject ID of the recording: from its file name, as the Tk
+        interface's default (ecg.io.subject_name)."""
+        from ecg.io.subject_name import DEFAULT_SUBJECT, subject_from_filename
+        path = self.recording.signal.filepath
+        subject = subject_from_filename(path)[0] if path else None
+        return subject or DEFAULT_SUBJECT
 
     # ── Analyze ─────────────────────────────────────────────
     def peaks_changed(self) -> None:
@@ -178,6 +199,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.rhythm.clear()
             self.morphology.results_changed()
         self.time_course.results_changed()
+        self.events.peaks_changed()
 
     def analysis_params(self) -> dict:
         """AnalysisController.run_analysis's snapshot."""
