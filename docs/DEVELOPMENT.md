@@ -119,6 +119,19 @@ none on `ecg.ui` — the detection and HRV
 algorithms are pure functions that can be tested, scripted, or reused without
 launching the GUI.
 
+## The Qt interface (migration in progress)
+
+The PySide6 interface is built tab by tab in `ecg/qt/`, on the same
+scientific code; the CustomTkinter one (`python -m ecg`) stays the reference
+until the migration is validated.
+
+```bash
+python -m ecg.qt [recording.mat]
+```
+
+Today: Signal & Detection (open, Detect Peaks, threshold, PyQtGraph trace
+with overview). Its tests (`tests/qt/`, pytest-qt) run headless.
+
 ## Scripting an analysis
 
 The scientific code runs without the interface: `ecg.core` (algorithms),

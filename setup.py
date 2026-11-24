@@ -26,6 +26,8 @@ setup(
         "scikit-learn",
         "skops",
         "PyWavelets",
+        "PySide6-Essentials",
+        "pyqtgraph",
     ],
     extras_require={
         "h5": ["h5py"],
