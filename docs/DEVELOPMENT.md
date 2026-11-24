@@ -59,6 +59,7 @@ ecg-analysis            # after `pip install -e .`
 │   │   │                     # polarity, the five detectors' candidates
 │   │   ├── peak_editing.py   # accepted peaks after a threshold change or a
 │   │   │                     # manual edit; signal-quality score
+│   │   ├── windowed_hrv.py   # Epochs and Sliding HRV (Time course)
 │   │   ├── detection.py      # R-peak detection, RR artifacts, rhythm /
 │   │   │                     # abnormal-event classification (incl. AV delay)
 │   │   ├── analysis.py       # HRV time/freq/non-linear (incl. multiscale
