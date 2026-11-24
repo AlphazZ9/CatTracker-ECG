@@ -422,7 +422,7 @@ class FigureHost:
         """AsyncMixin._start_async_result: *worker()* in a background job,
         *on_done(result)* on the main thread."""
         self._window.run_job(busy_label.rstrip("…").strip() or "Computing", worker,
-                             progress=False, on_done=on_done)
+                             progress=False, peaks_bound=True, on_done=on_done)
 
     @property
     def _peak_distance_ms(self) -> float:

@@ -77,3 +77,18 @@ def test_a_peak_edit_clears_the_results(qtbot, analysed):
     assert rec.analysis.results is None
     assert not analysed.figures.slot("rr").figure.axes
     assert analysed.btn_analyze.isEnabled()
+
+
+def test_analyze_result_dropped_when_peaks_change_meanwhile(qtbot):
+    w = MainWindow()
+    qtbot.addWidget(w)
+    w.open_path(str(FIXTURE), check_session=False)
+    w.detection.detect()
+    qtbot.waitUntil(lambda: w.recording.detection.rpeaks_ok is not None, timeout=60000)
+    w.analyze()
+    w.detection.apply_threshold()                  # the threshold applied while it runs
+    qtbot.waitUntil(lambda: not w._active, timeout=120000)
+    assert w.recording.analysis.results is None
+    assert "peaks changed" in w.statusBar().currentMessage()
+    w.jobs.cancel_all()
+    w.jobs.wait(5000)

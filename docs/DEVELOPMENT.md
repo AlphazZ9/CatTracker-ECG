@@ -11,6 +11,7 @@ standalone apps are made.
 - [Installation](#installation)
 - [Usage](#usage)
 - [Project layout](#project-layout)
+- [The Qt interface](#the-qt-interface-migration-in-progress)
 - [Notes for contributors](#notes-for-contributors)
 - [One-click launchers: full details and internals](#one-click-launchers-full-details-and-internals)
 - [Standalone apps and publishing a version](#standalone-apps-and-publishing-a-version)
@@ -129,11 +130,31 @@ until the migration is validated.
 python -m ecg.qt [recording.mat]
 ```
 
-Today: Signal & Detection (open, Detect Peaks, threshold, editing peaks by
-hand with undo / redo, PyQtGraph trace with overview) and Rhythm & HRV
-(Analyze, then frequency and non-linear HRV in background jobs; the result
-figures and tables come from the Tk interface's own figure code through
-`ecg/qt/figure_host.py`, so they are identical). Its tests (`tests/qt/`, pytest-qt) run headless.
+Every tab and the daily dialogs are there:
+- settings, annotations and noisy regions, artifact review, wave template, ML detector;
+- sessions, in the same file format as Tk.
+
+The result figures and tables come from the Tk interface's own figure code
+through `ecg/qt/figure_host.py`, so they are identical. Still Tk-only: the
+Prism exports, saved segment configurations, Group > From saved sessions,
+annotation suggestions, Check agreement, cohort trends and the ks / kp
+calibration. Its tests (`tests/qt/`, pytest-qt) run headless, each in a
+profile folder of its own.
+
+### Background jobs and errors (Qt)
+
+- **Jobs** (`ecg/qt/workers.py`, `MainWindow.run_job`):
+  - A computation runs in a pool thread on a snapshot of its inputs. Only its `on_done` callback writes the result, on the main thread.
+  - Cancel stops every running job at its next `progress_cb` checkpoint; the algorithms are not modified for this.
+  - Several jobs may run at once: the progress row shows the newest.
+- **Stale results are dropped, never shown:**
+  - for a file closed meanwhile (the generation number);
+  - for peaks that changed while the job ran (`peaks_bound=True`: Analyze, frequency / non-linear HRV, intervals, Compare segments, Time course, artifact review).
+- **Errors** (`ecg/qt/errors.py`):
+  - A failing job, an error while showing a result, and any uncaught exception of the main thread or of a worker thread are logged with their traceback.
+  - They are shown in a non-blocking dialog, one at a time; the window stays open.
+  - Log file: `~/.ecg_sessions/logs/ecg_qt.log` (rotated at 1 MB, 3 kept; Help > Open log folder).
+- **Unsaved changes** (peaks, edits, results, regions) are offered for saving on Open and Quit. Running jobs are cancelled and waited for on exit.
 
 ## Scripting an analysis
 

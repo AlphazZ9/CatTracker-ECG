@@ -187,7 +187,7 @@ def review_artifacts(window: "MainWindow") -> None:
 
     window.run_job("Artifact review", detect_rr_artifacts, rp, fs, rr_min_ms=rr_min,
                    rr_max_ms=rr_max, window_beats=WINDOW_BEATS, dev_threshold=DEV_THRESHOLD,
-                   signal=sig, progress=False, on_done=done)
+                   signal=sig, progress=False, peaks_bound=True, on_done=done)
 
 
 def apply_review(window: "MainWindow", rp: np.ndarray, fs: float, result: "list[dict]",

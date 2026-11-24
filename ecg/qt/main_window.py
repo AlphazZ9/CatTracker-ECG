@@ -70,6 +70,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.recording = Recording()
         self.session_dirty = False
         self.generation = 0
+        self.peaks_version = 0          # +1 each time the peaks change (peaks_changed)
         self.jobs = JobRunner(self)
         self._active: "list[tuple[Job, str]]" = []     # the jobs running, oldest first
         from ecg.qt.errors import ErrorReporter
@@ -290,6 +291,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def peaks_changed(self) -> None:
         """Detection or a hand edit changed the peaks: results are stale."""
         self.session_dirty = True
+        self.peaks_version += 1
         self.btn_save.setEnabled(self.recording.signal.filtered is not None)
         has_peaks = self.recording.detection.rpeaks_ok is not None
         self.btn_analyze.setEnabled(has_peaks and len(self.recording.detection.rpeaks_ok) >= 5)
@@ -320,7 +322,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_analyze.setEnabled(False)
         self.run_job("Analyze", run_core_analysis, d.rpeaks_ok.copy(), s.filtered, s.fs,
                      self.analysis_params(), rec.analysis.artifact_report,
-                     on_done=self._core_done, on_end=lambda: self.btn_analyze.setEnabled(True))
+                     peaks_bound=True, on_done=self._core_done,
+                     on_end=lambda: self.btn_analyze.setEnabled(True))
 
     def _core_done(self, bundle: dict) -> None:
         """AnalysisController.on_analysis_done's state writes, then drawing."""
@@ -348,7 +351,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.figures.lbl_freq_status.configure(text="Computing…")
         self.run_job("Frequency HRV", analyse_hrv_freq, rp, s.fs, rr_min_ms=lo, rr_max_ms=hi,
                      breaks=ctl.hrv_breaks(), bands=ctl.get_freq_bands(),
-                     on_done=self._freq_done)
+                     peaks_bound=True, on_done=self._freq_done)
 
     def _freq_done(self, df) -> None:
         r = self.recording.analysis.results
@@ -370,7 +373,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.figures.lbl_nonlin_status.configure(text="Computing SampEn / DFA…")
         self.run_job("Non-linear HRV", analyse_hrv_nonlinear, rp, s.fs,
                      max_beats=ctl.entropy_cap(), rr_min_ms=lo, rr_max_ms=hi,
-                     breaks=ctl.hrv_breaks(), on_done=self._nonlinear_done)
+                     breaks=ctl.hrv_breaks(), peaks_bound=True,
+                     on_done=self._nonlinear_done)
 
     def _nonlinear_done(self, df) -> None:
         r = self.recording.analysis.results
@@ -408,7 +412,8 @@ class MainWindow(QtWidgets.QMainWindow):
     # ── jobs ────────────────────────────────────────────────
     def run_job(self, what: str, fn: Callable[..., Any], *args: Any,
                 on_done: Callable[[Any], None],
-                on_end: "Optional[Callable[[], None]]" = None, **kwargs: Any) -> Job:
+                on_end: "Optional[Callable[[], None]]" = None, peaks_bound: bool = False,
+                **kwargs: Any) -> Job:
         """Run ``fn(*args, progress_cb=..., **kwargs)`` in the background.
         *on_done(result)* runs on the main thread if the recording is still
         the one the job started on; *on_end()* always runs once it ends.
@@ -416,8 +421,13 @@ class MainWindow(QtWidgets.QMainWindow):
         Errors: a failing job is logged with its traceback and shown; an
         error while showing its result (in *on_done*) too -- the window and
         the state the job did not touch stay as they were. Several jobs may
-        run at once: the progress row follows the newest, Cancel stops all."""
+        run at once: the progress row follows the newest, Cancel stops all.
+
+        *peaks_bound*: the job computes from the current peaks; its result is
+        dropped if they changed while it ran (a peak edit, the threshold, a
+        new detection), instead of being shown for peaks no longer there."""
         gen = self.generation
+        version = self.peaks_version
         job = Job(fn, *args, **kwargs)
         self._active.append((job, what))
         self._show_progress()
@@ -444,6 +454,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if gen != self.generation:
                 self.set_status(f"{what}: result discarded — another recording was opened",
                                 warn=True)
+                return
+            if peaks_bound and version != self.peaks_version:
+                log.info("job result discarded (peaks changed): %s", what)
+                self.set_status(f"{what}: result discarded — the peaks changed while it ran; "
+                                "run it again", warn=True)
                 return
             _guard("showing the result failed", on_done, result)
 

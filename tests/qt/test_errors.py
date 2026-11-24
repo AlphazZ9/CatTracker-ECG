@@ -98,3 +98,18 @@ def test_unsaved_changes_prompt(qtbot, window, monkeypatch):
     assert window.confirm_discard("Quit") is True and not saved
     assert window.confirm_discard("Quit") is True and saved
     window.session_dirty = False                    # teardown closes without asking
+
+
+def test_result_for_changed_peaks_is_dropped(qtbot, window):
+    """A peak-bound job's result is not shown for peaks no longer there."""
+    gate = threading.Event()
+    got = []
+    window.run_job("Bound", lambda: gate.wait(5) and 1, progress=False, peaks_bound=True,
+                   on_done=got.append)
+    window.peaks_changed()                         # e.g. a peak edit while it runs
+    gate.set()
+    qtbot.waitUntil(lambda: not window._active, timeout=5000)
+    assert got == [] and "peaks changed" in window.statusBar().currentMessage()
+    window.run_job("Bound", lambda: 2, progress=False, peaks_bound=True, on_done=got.append)
+    qtbot.waitUntil(lambda: got == [2], timeout=5000)
+    window.session_dirty = False

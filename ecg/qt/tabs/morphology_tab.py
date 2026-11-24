@@ -149,7 +149,7 @@ class MorphologyTab(QtWidgets.QScrollArea):
         self.win.run_job("Measure intervals", analyse_intervals, sig, rp, fs, rr,
                          wave_template=wt, permissive_bounds=self.chk_permissive.isChecked(),
                          qtc_formula=qtc, rr_min_ms=lo, rr_max_ms=hi,
-                         ensemble_beats=ctl.ensemble_beats(),
+                         ensemble_beats=ctl.ensemble_beats(), peaks_bound=True,
                          on_done=lambda df: self._measured(df, wt, qtc),
                          on_end=lambda: self.btn_measure.setEnabled(
                              self.win.recording.analysis.results is not None))

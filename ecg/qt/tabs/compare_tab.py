@@ -312,7 +312,7 @@ class CompareTab(QtWidgets.QScrollArea):
         self.lbl_status.configure(text="Computing…")
         gen = self.win.generation
         self.win.run_job("Compare segments", run_segments, s.filtered, rp, s.fs, windows,
-                         progress=False, **seg_kw,
+                         progress=False, peaks_bound=True, **seg_kw,
                          on_done=lambda segs: self._done(segs, windows, block_s, lf, hf)
                          if gen == self.win.generation else None,
                          on_end=lambda: self.btn_run.setEnabled(
