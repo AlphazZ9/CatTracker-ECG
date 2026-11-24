@@ -72,7 +72,6 @@ class _Tabs:
 
 @pytest.fixture
 def root(monkeypatch, tmp_path):
-    monkeypatch.setattr(tg, "PREFS_PATH", tmp_path / "group_prefs.json")
     try:
         r = ctk.CTk()
     except tk.TclError:
@@ -203,10 +202,13 @@ def test_no_table_gives_a_clear_message(root, tmp_path):
     assert "has no segments yet" in _status(whole)
 
 
-def test_remembered_table_is_used_when_the_group_tab_is_not_built(root, tmp_path):
-    p = _table(tmp_path)
-    tg.save_last_table(p)
+def test_no_table_is_remembered_from_an_earlier_session(root, tmp_path):
+    _table(tmp_path)
     app = _App(None)
+    _card(root, app)
+    assert not _status(app).startswith("n = ")
+    # The table a recording was just added to is drawn.
+    app._cmp_group_added = _table(tmp_path)
     _card(root, app)
     assert _status(app).startswith("n = 4 animals")
 
@@ -351,7 +353,7 @@ def test_open_the_group_tab_opens_the_table_drawn(root, tmp_path):
     app2 = _App(None, tabs=_Tabs(TAB_COMPARE))
     app2._cmp_group_added = p
     app2._compare_open_group_tab()
-    assert app2._grouptab_state["path"] == p and tg.load_last_table() == p
+    assert app2._grouptab_state["path"] == p
 
 
 def test_segments_keep_the_colours_of_the_comparison_above(root, tmp_path):

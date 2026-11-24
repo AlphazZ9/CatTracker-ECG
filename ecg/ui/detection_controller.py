@@ -377,6 +377,8 @@ class DetectionController:
         else:
             self.app.btn_edit_mode.configure(text="Edit Peaks", **toggle_style(False))
             self.app.lbl_edit_hint.pack_forget()
+            if self.app.detection.edit_noise_mode:
+                self.toggle_noise_mode()
             # Also turn off free placement when leaving edit mode
             if self.app.detection.edit_free_placement:
                 self.app.detection.edit_free_placement = False
@@ -387,6 +389,91 @@ class DetectionController:
                     pass
         if self.app.signal.filtered is not None:
             self.app._draw_detail(self.app.ui.nav_pos)
+
+    # ── Mark Noise: drag over a stretch too noisy to trust ───────────────
+    NOISE_MIN_S = 0.05          # a shorter drag is a click, not a region
+
+    def toggle_noise_mode(self) -> None:
+        """Mark Noise on/off. On, a left drag on the detail view marks a noisy
+        region (its RR intervals left out of HR / HRV) and a right-click on
+        one removes it; peak editing waits until it is off. Turns Edit mode
+        on when needed."""
+        det = self.app.detection
+        det.edit_noise_mode = not det.edit_noise_mode
+        self._noise_drag = None
+        btn = getattr(self.app, "btn_mark_noise", None)
+        if det.edit_noise_mode:
+            if not det.edit_mode:
+                self.toggle_edit_mode()
+            if btn is not None:
+                btn.configure(text="Mark Noise ON", **toggle_style(True, warn=True))
+            self.app._set_status(
+                "Mark Noise ON — drag over a noisy stretch to leave its RR intervals out of "
+                "HR / HRV; right-click a noisy region to remove it.", ORANGE)
+        else:
+            if btn is not None:
+                btn.configure(text="Mark Noise", **toggle_style(False))
+            self.app._set_status("Mark Noise OFF — clicks edit peaks again.", MUTED)
+
+    def _noise_press(self, event) -> None:
+        t = float(event.xdata)
+        regions = self.app.analysis.noise_regions
+        if event.button == 3:
+            hit = [i for i, r in enumerate(regions)
+                   if float(r["t_start"]) <= t <= float(r["t_end"])]
+            if hit:
+                for i in reversed(hit):
+                    del regions[i]
+                self.app._noise_regions_changed()
+                self.app._set_status(f"Noisy region at {t:.2f} s removed.", GREEN)
+            return
+        if event.button != 1:
+            return
+        ax = event.inaxes
+        span = None
+        if ax is not None:
+            span = ax.axvspan(t, t, facecolor="#9AA0A6", edgecolor="#5F6368", hatch="///",
+                              alpha=0.35, linewidth=0, zorder=0.6)
+        self._noise_drag = {"t0": t, "ax": ax, "span": span}
+
+    def _noise_motion(self, event) -> bool:
+        drag = getattr(self, "_noise_drag", None)
+        if not drag or event.xdata is None or drag["span"] is None:
+            return bool(drag)
+        a, b = sorted((drag["t0"], float(event.xdata)))
+        try:
+            drag["span"].set_x(a)
+            drag["span"].set_width(b - a)
+            drag["ax"].figure.canvas.draw_idle()
+        except Exception:
+            pass
+        return True
+
+    def on_detail_release(self, event) -> None:
+        drag = getattr(self, "_noise_drag", None)
+        self._noise_drag = None
+        if not drag:
+            return
+        if drag["span"] is not None:
+            try:
+                drag["span"].remove()
+            except Exception:
+                pass
+        t1 = float(event.xdata) if event.xdata is not None else drag["t0"]
+        a, b = sorted((drag["t0"], t1))
+        if self.app.signal.fs and self.app.signal.filtered is not None:
+            b = min(b, len(self.app.signal.filtered) / float(self.app.signal.fs))
+        a = max(a, 0.0)
+        if b - a < self.NOISE_MIN_S:
+            self.app._draw_detail(self.app.ui.nav_pos)
+            return
+        self.app.analysis.noise_regions.append(
+            {"t_start": round(a, 3), "t_end": round(b, 3), "note": ""})
+        self.app.analysis.noise_regions.sort(key=lambda r: float(r["t_start"]))
+        self.app._noise_regions_changed()
+        self.app._set_status(
+            f"Noisy region {a:.2f}–{b:.2f} s marked: its RR intervals are left out of HR / "
+            "HRV at the next Analyze.", GREEN)
 
     def toggle_free_placement(self) -> None:
         """Toggle free-placement mode: bypass proximity constraint when adding peaks.
@@ -443,6 +530,9 @@ class DetectionController:
 
         Redraws are throttled to 30 ms (≈33 fps) via after().
         """
+        if self.app.detection.edit_mode and self.app.detection.edit_noise_mode:
+            self._noise_motion(event)
+            return
         if not self.app.detection.edit_mode:
             if self.app.detection.hover_samp is not None:
                 self.app.detection.hover_samp = None
@@ -524,6 +614,9 @@ class DetectionController:
         if not self.app.detection.edit_mode:
             return
         if event.xdata is None or self.app.signal.filtered is None:
+            return
+        if self.app.detection.edit_noise_mode:
+            self._noise_press(event)
             return
         if self.app.detection.rpeaks_ok is None:
             return

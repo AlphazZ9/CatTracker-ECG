@@ -203,6 +203,9 @@ class ECGApp(
             self.tabs.add(name)
         self._build_status_label(self.tabs.bar)
 
+        # Tabs whose widgets nothing else reads are built when first opened:
+        # their builders wait here (ecg.ui.tab_time_course._on_main_tab_changed).
+        self._lazy_tabs: "dict[str, object]" = {}
         CanvasSlot.building = True
         try:
             self._build_tabs_content()
@@ -335,11 +338,11 @@ class ECGApp(
         # the correlation badge was never repainted after a theme toggle
         # before, so it silently went blank on every _rebuild_ui(). Cheap
         # fix while already touching this exact code path.
-        # Same class of gap: the detection bar's Annotations / Pacing chips
+        # Same class of gap: the detection bar's Annotations / Noise chips
         # need a refresh after a full rebuild -- valid here since _build()
         # (called above) has already fully rebuilt every tab and popover.
         self._update_ann_count()
-        self._update_pacing_count()
+        self._update_noise_count()
         self._refresh_shell()
 
     # ════════════════════════════════════════════════════════

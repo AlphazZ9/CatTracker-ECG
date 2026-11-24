@@ -33,7 +33,7 @@ from ecg.ui.theme import toggle_style
 from ecg.ui.widgets import make_sparkline
 from ecg.ui.tab_keys import TAB_REPORT
 from ecg.ui.dialogs import (
-    ArtifactReviewDialog, AnnotationManagerDialog, PacingPeriodManagerDialog,
+    ArtifactReviewDialog, AnnotationManagerDialog, NoiseRegionManagerDialog,
 )
 from ecg.ui.wave_editor import WaveTemplateMiniEditor
 
@@ -393,6 +393,13 @@ class DelegatesMixin:
         """
         self.detection_ctrl.on_detail_click(event)
 
+    def _on_detail_release(self: ECGApp, event) -> None:
+        """End of a Mark Noise drag on the detail view."""
+        self.detection_ctrl.on_detail_release(event)
+
+    def _toggle_noise_mode(self: ECGApp) -> None:
+        self.detection_ctrl.toggle_noise_mode()
+
     # ── Threshold slider / entry callbacks ────────────────────
     def _on_threshold_slide(self: ECGApp, value: float) -> None:
         """Called continuously while the slider is being dragged.
@@ -655,13 +662,28 @@ class DelegatesMixin:
         self.analysis_ctrl.redraw_windowed_plots()
         self.event_ctrl.on_annotations_changed()
 
-    def _open_pacing_periods(self: ECGApp) -> None:
-        """Open the pacing/stimulation period manager dialog."""
-        PacingPeriodManagerDialog(self)
+    def _open_noise_regions(self: ECGApp) -> None:
+        """Open the noisy regions manager dialog."""
+        NoiseRegionManagerDialog(self)
 
-    def _update_pacing_count(self: ECGApp) -> None:
-        """Refresh the count on the detection bar's Pacing chip (the one
-        entry point to the pacing-period manager)."""
+    def _noise_regions_changed(self: ECGApp) -> None:
+        """After a noisy region is added, edited or deleted: drawn, counted,
+        and the results computed before shown as out of date (their RR
+        intervals are left out of HR / HRV from the next run)."""
+        self._session_dirty = True
+        self._draw_detail()
+        self._update_noise_count()
+        for name in ("_refresh_tab_states", "_refresh_context_strip"):
+            fn = getattr(self, name, None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception as exc:
+                    log.debug("%s after a noisy-region change: %s", name, exc)
+
+    def _update_noise_count(self: ECGApp) -> None:
+        """Refresh the count on the detection bar's Noise chip (the one
+        entry point to the noisy-region manager)."""
         self._refresh_annotation_chips()
 
     def _toggle_rrhr_strip(self: ECGApp) -> None:
@@ -1215,8 +1237,8 @@ class DelegatesMixin:
         space in "Project name" or an annotation label -- or pressing the
         Left/Right arrow keys to move the text cursor -- fired the app's
         global Space/arrow shortcuts instead: re-running full detection
-        (silently discarding manual peak edits, annotations, and pacing
-        periods) or shifting the plotted time window under the field being
+        (silently discarding manual peak edits, annotations, and noisy
+        regions) or shifting the plotted time window under the field being
         edited. CTkEntry/CTkTextbox are themselves composite widgets; the
         actual keyboard-receiving child Tk hands back from focus_get() is
         a plain tk.Entry ("Entry") or tk.Text ("Text").

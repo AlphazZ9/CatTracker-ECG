@@ -4,6 +4,7 @@ open recording writes the recording open (whole, time course, annotations,
 events, segments) to the table."""
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from types import SimpleNamespace as NS
 
@@ -22,7 +23,6 @@ from tests.io.test_group_compare import _table
 
 @pytest.fixture
 def root(monkeypatch, tmp_path):
-    monkeypatch.setattr(tg, "PREFS_PATH", tmp_path / "group_prefs.json")
     errors: "list" = []
     monkeypatch.setattr(tg.messagebox, "showerror", lambda *a, **k: errors.append(a))
     try:
@@ -157,14 +157,33 @@ def test_recording_lines_with_a_comparison():
     assert gd.SHEET_TIME not in lines and gd.SHEET_WHOLE not in lines
 
 
-def test_the_last_table_is_remembered(root, tmp_path):
-    p = _table(tmp_path, n=4)
-    _page(root, {"path": p})
-    assert tg.load_last_table() == p
+def test_nothing_is_opened_by_itself(root, tmp_path):
+    _table(tmp_path, n=4)
     app = NS(_bind_hover_tip=lambda *a, **k: None)          # a new session
     frame = ctk.CTkFrame(root)
     TabGroupMixin._build_group_page(app, frame)
-    assert app._grouptab_state["path"] == p
+    assert app._grouptab_state["path"] == ""
+    assert _button(frame, "✕  Close").cget("state") == "disabled"
+
+
+def test_an_animal_is_removed_and_the_table_closed(root, tmp_path, monkeypatch):
+    p = _table(tmp_path, n=4)
+    monkeypatch.setattr(tg.messagebox, "askyesno", lambda *a, **k: True)
+    app, frame = _page(root, {"path": p, "analysis": gc.AN_WHOLE, "by": gc.BY_GROUP})
+    before = gd.animals_frame(gd.read_sheets(p))
+    first = (before.iloc[0]["subject"], before.iloc[0]["file"])
+    rm = [w for w in _walk(frame) if isinstance(w, ctk.CTkButton) and w.cget("text") == "✕"]
+    assert len(rm) == len(before)
+    rm[0].invoke()
+    sh = gd.read_sheets(p)
+    after = gd.animals_frame(sh)
+    assert len(after) == len(before) - 1
+    assert first not in set(zip(after["subject"], after["file"]))
+    for name in (gd.SHEET_WHOLE, gd.SHEET_TIME):
+        assert first[0] not in set(sh[name]["subject"].astype(str))
+    _button(frame, "✕  Close").invoke()
+    assert app._grouptab_state["path"] == "" and os.path.exists(p)
+    assert _button(frame, "Figure…").cget("state") == "disabled"
 
 
 def test_the_comparison_subject_keys_the_row(tmp_path, monkeypatch):
@@ -267,6 +286,29 @@ def test_import_a_project_from_its_saved_sessions(tmp_path, sessions):
     # Imported again: replaced, never doubled.
     n, added, _ = tg.import_project(p, "BNST")
     assert n == 2
+
+
+def test_a_group_from_saved_sessions_is_held_in_memory(root, tmp_path, sessions, monkeypatch):
+    _saved(tmp_path, "a 1146.smr", "1146", "F", "BNST")
+    _saved(tmp_path, "b 206.smr", "206", "m", "BNST")
+    monkeypatch.setattr(tg, "ask_project", lambda parent, names: "BNST")
+    app, frame = _page(root, {"analysis": gc.AN_WHOLE, "by": gc.BY_SEX})
+    _button(frame, "⤓  From saved sessions…").invoke()
+    st = app._grouptab_state
+    assert st["path"] == "" and st["name"] == "BNST"
+    assert not list(tmp_path.glob("*.xlsx"))                 # no file written
+    labels = [str(w.cget("text")) for w in _walk(frame) if isinstance(w, ctk.CTkLabel)]
+    assert any("BNST (not saved)" in t and "2 animals" in t for t in labels)
+    # A group set in memory, then Save as Excel… writes it.
+    combos = [w for w in _walk(frame) if isinstance(w, ctk.CTkComboBox) and w.cget("width") == 130]
+    combos[0].set("CNO")
+    combos[0]._command("CNO")
+    out = tmp_path / "BNST.xlsx"
+    monkeypatch.setattr(tg.filedialog, "asksaveasfilename", lambda *a, **k: str(out))
+    _button(frame, "💾  Save as Excel…").invoke()
+    assert st["path"] == str(out)
+    an = gd.animals_frame(gd.read_sheets(str(out)))
+    assert len(an) == 2 and "CNO" in set(an["group"])
 
 
 def _notes(frame) -> str:

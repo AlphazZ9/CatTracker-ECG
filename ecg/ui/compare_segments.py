@@ -1792,14 +1792,11 @@ class CompareSegmentsMixin:
         self._compare_group_refresh()
 
     def _compare_group_path(self: ECGApp) -> str:
-        """The group table of the card: the Group tab's (open, or the last one
-        remembered), else the one this tab last added a recording to."""
+        """The group table of the card: the Group tab's (an Excel file open
+        there), else the one this tab last added a recording to. No table is
+        remembered from an earlier session."""
         gts = getattr(self, "_grouptab_state", None)
         path = (gts or {}).get("path") or ""
-        if not path and gts is None:
-            # The Group tab not built yet: the table it will open.
-            from ecg.ui import tab_group
-            path = tab_group.load_last_table()
         return path or getattr(self, "_cmp_group_added", "") or ""
 
     def _compare_open_group_tab(self: ECGApp) -> None:
@@ -1818,11 +1815,9 @@ class CompareSegmentsMixin:
                 open_(path)
             else:
                 # Not built yet: the Group tab reads gts["path"] when it is.
-                from ecg.ui import tab_group
                 if getattr(self, "_grouptab_state", None) is None:
                     self._grouptab_state = {}
                 self._grouptab_state["path"] = path
-                tab_group.save_last_table(path)
         tabs = getattr(self, "tabs", None)
         if tabs is not None:
             tabs.set(TAB_GROUP)

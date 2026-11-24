@@ -4,7 +4,7 @@ ecg.ui.app_detection_bar
 ------------------------
 The detection bar at the top of Signal & Detection: method, threshold (slider
 and exact value, always in view), Min / Max RR, then chips for the Filters
-popover, the annotations and the pacing periods, and the method help.
+popover, the annotations and the noisy regions, and the method help.
 
 Every widget keeps the attribute name it had in the left sidebar
 (cb_det_method, sl_thr, ent_thr, lbl_thr, lbl_thr_hint, ent_minrr, ent_maxrr,
@@ -130,7 +130,7 @@ class DetectionBarMixin:
             setattr(self, f"ent_{attr}", ent)
             self._bind_hover_tip(ent, tip)
 
-        # ── Chips: Filters / Annotations / Pacing, then the help ─
+        # ── Chips: Filters / Annotations / Noise, then the help ─
         chips = ctk.CTkFrame(g, fg_color="transparent")
         chips.grid(row=1, column=4, sticky="e")
         self.btn_filters_chip = self._chip(chips, "Filters: off", self._toggle_filters_popover)
@@ -139,9 +139,11 @@ class DetectionBarMixin:
                              "filter preview, Savitzky-Golay options")
         self.btn_annotations = self._chip(chips, f"Annotations {len(self._annotations)}",
                                           self._open_annotations)
-        self.btn_pacing = self._chip(chips, f"Pacing {len(self._pacing_periods)}",
-                                     self._open_pacing_periods)
-        self._bind_hover_tip(self.btn_pacing, "Pacing / stimulation periods")
+        self.btn_noise = self._chip(chips, f"Noise {len(self._noise_regions)}",
+                                     self._open_noise_regions)
+        self._bind_hover_tip(self.btn_noise, "Noisy regions: stretches you judge too noisy to trust. Their RR intervals are "
+                             "left out of HR and HRV (not read as a slower heart rate). Mark them "
+                             "here or with the Noise tool of Edit mode.")
         h = button_style()["height"]
         self.btn_method_help = ctk.CTkButton(
             chips,
@@ -303,14 +305,14 @@ class DetectionBarMixin:
     def _toggle_method_help(self: ECGApp) -> None:
         self.method_help.toggle(self.btn_method_help)
 
-    # ── Annotation / pacing chips ────────────────────────────────
+    # ── Annotation / noise chips ────────────────────────────────
 
     def _refresh_annotation_chips(self: ECGApp) -> None:
-        """Counts on the Annotations and Pacing chips, orange when non-zero."""
+        """Counts on the Annotations and Noise chips, orange when non-zero."""
         for btn, word, n in ((getattr(self, "btn_annotations", None), "Annotations",
                               len(self._annotations)),
-                             (getattr(self, "btn_pacing", None), "Pacing",
-                              len(self._pacing_periods))):
+                             (getattr(self, "btn_noise", None), "Noise",
+                              len(self._noise_regions))):
             if btn is None:
                 continue
             btn.configure(text=f"{word} {n}", text_color=ORANGE if n else TEXT,

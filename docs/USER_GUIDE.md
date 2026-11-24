@@ -143,6 +143,16 @@ missed or a false one is added, **Edit Peaks** switches into manual
 edit mode — click near a peak to remove it, or in empty space (with
 **Free Placement** on) to add one — with full undo/redo.
 
+**Noisy stretches.** Where the trace is too noisy to trust (movement,
+electrode contact), switch on **Mark Noise** (beside Free Placement; it turns
+Edit mode on) and drag over the stretch: it is shaded grey and hatched. Every
+RR interval touching it is left out of heart rate and HRV, as an interval
+across a removed beat is — so beats missed in the noise do not read as a
+slower heart rate. Right-click a noisy region to remove it; the **Noise** chip
+of the detection bar lists them all (add, edit, delete by times). Results
+computed before show as out of date: run **Analyze** again. Noisy regions are
+saved with the session.
+
 The **Signal quality** panel on the right of the plot gives the
 signal-quality score, built from how closely each beat matches the
 recording's own beat template; heart rate, RR and HRV (SDNN / RMSSD / pNN6)
@@ -492,14 +502,22 @@ left alone.
 
 ### Group tab: all the animals of an experiment
 
-The **Group** tab compares the animals of one experiment. It reads a **group
-table** (.xlsx), not the recording open, so it works with no recording loaded.
+The **Group** tab compares the animals of one experiment. It works on a **group
+table**, not the recording open, so it works with no recording loaded. Nothing
+is opened at start-up; the group comes from one of two sources:
 
-**Filling the table.** **⤓ Import a project…** adds every saved session of a
-project at once (the *Project* field of the Recording sheet), without reopening
-the files: whole-recording metrics, time course, annotations and event-locked
-results; a session saved before Analyze is listed as left out. For the
-segments, or one recording at a time, open it, run what you need, then click
+- **📂 Open Excel…**: a group table (.xlsx) made before;
+- **⤓ From saved sessions…**: every saved session of a project (the *Project*
+  field of the Recording sheet), without reopening the files and without an
+  Excel file: whole-recording metrics, time course, annotations and
+  event-locked results; a session saved before Analyze is listed as left out.
+  The table is held in memory (*not saved*): **💾 Save as Excel…** keeps it.
+
+**✕** at the end of an animal's line removes it from the table (every sheet);
+**✕ Close** closes the table (the Excel file is kept as it is).
+
+**Filling the table.** For the segments, or one recording at a time, open it,
+run what you need, then click
 **➕ Add open recording…** (Group tab) or **➕ Add to group table…** (Compare
 segments). Both write the same table:
 
@@ -517,7 +535,8 @@ table made before (Group sheet only) still opens.
 
 **Animals.** One line per recording: tick *Use* to keep it, type or pick its
 **Group** (Control, CNO…), correct its **Sex**. Changes are saved in the
-table at once (close it in Excel first).
+Excel file at once (close it in Excel first); a table from saved sessions keeps
+them in memory until **Save as Excel…**.
 
 **Compare.** *By*: **No groups** (all animals together), **Group**, or
 **Sex** (an animal without a group or sex is left out, with a note; so are
@@ -711,9 +730,14 @@ and CSI / CPI are still shown.
 Choose **Event-locked** in the selector of Time course.
 
 1. **Mark the events.** Add one annotation per condition change (injection,
-   stimulus…) with the **Annotations** chip of the Signal & Detection bar
-   (pacing / stimulation periods: the **Pacing** chip beside it); its
-   **start** time is the event onset.
+   stimulus…) with the **Annotations** chip of the Signal & Detection bar;
+   its **start** time is the event onset. **✨ Suggest from channels…** (in the
+   Annotations dialog) lists the events of the file's other channels — the
+   keyboard / marker channels (one per key or code) and the trains of
+   stimulus pulses of a TTL channel — for you to tick, rename and add
+   (Spike2 .smr or its MATLAB export). A pacing / stimulation period is an
+   annotation too (sessions saved with the former *Pacing* chip open with
+   their periods as annotations).
    Give events of the same kind the same label.
 2. **Compute the Autonomic indices** (⟳ Compute in the bar above).
 3. **Choose the events and windows.** **Events** = *All*, one label, or
