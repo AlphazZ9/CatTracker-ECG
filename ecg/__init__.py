@@ -9,6 +9,7 @@ ecg/
     filtering.py     — bandpass, notch, normalise, downsample helpers
     pipeline.py      — signal preparation and R-peak candidates (Detect Peaks)
     peak_editing.py  — accepted peaks after an edit, signal-quality score
+    windowed_hrv.py  — HRV per epoch and in a sliding window
     detection.py     — peak detection, RR artifact handling, rhythm /
                        abnormal-event classification
     analysis.py      — HRV time/freq/nonlinear, interval delineation
