@@ -19,7 +19,8 @@ import numpy as np
 from PySide6 import QtCore, QtWidgets
 
 from ecg.core.models import FilterParams, MouseECG
-from ecg.core.peak_editing import apply_peak_edits, signal_quality_score
+from ecg.core.peak_editing import (apply_click_edit, apply_peak_edits, edit_at_click,
+                                   push_undo, signal_quality_score, undo_redo)
 from ecg.qt.widgets.ecg_plot import EcgPlot
 from ecg.services.detection_service import load_and_detect
 
@@ -83,8 +84,34 @@ class DetectionTab(QtWidgets.QWidget):
         row.addWidget(self.lbl_quality)
         lay.addWidget(bar)
 
+        edit_bar = QtWidgets.QHBoxLayout()
+        self.btn_edit = QtWidgets.QPushButton("Edit Peaks")
+        self.btn_edit.setCheckable(True)
+        self.btn_edit.setEnabled(False)
+        self.btn_edit.setToolTip("Left click near a peak: exclude / include it. Right click: add a "
+                                 "peak at the local maximum (replacing a peak too close), or remove "
+                                 "a peak added by hand.")
+        self.btn_edit.toggled.connect(self._edit_toggled)
+        edit_bar.addWidget(self.btn_edit)
+        self.chk_free = QtWidgets.QCheckBox("Free placement")
+        self.chk_free.setToolTip("Right click adds the peak exactly where clicked (no snapping, "
+                                 "no replacement)")
+        edit_bar.addWidget(self.chk_free)
+        self.btn_undo = QtWidgets.QPushButton("Undo")
+        self.btn_redo = QtWidgets.QPushButton("Redo")
+        self.btn_undo.clicked.connect(self.undo)
+        self.btn_redo.clicked.connect(self.redo)
+        edit_bar.addWidget(self.btn_undo)
+        edit_bar.addWidget(self.btn_redo)
+        self.lbl_edit = QtWidgets.QLabel("")
+        self.lbl_edit.setProperty("muted", True)
+        edit_bar.addWidget(self.lbl_edit, 1)
+        lay.addLayout(edit_bar)
+
         self.plot = EcgPlot()
+        self.plot.time_clicked.connect(self._clicked)
         lay.addWidget(self.plot, 1)
+        self._update_undo_buttons()
 
         self._thr_timer = QtCore.QTimer(self, singleShot=True, interval=THRESH_DEBOUNCE_MS)
         self._thr_timer.timeout.connect(self.apply_threshold)
@@ -120,6 +147,9 @@ class DetectionTab(QtWidgets.QWidget):
     # ── Detect Peaks ────────────────────────────────────────
     def file_opened(self) -> None:
         self.btn_detect.setEnabled(True)
+        self.btn_edit.setChecked(False)
+        self.btn_edit.setEnabled(False)
+        self._update_undo_buttons()
         self.plot.clear()
         self.lbl_peaks.setText("Peaks: —")
         self.lbl_quality.setText("Quality: —")
@@ -159,6 +189,8 @@ class DetectionTab(QtWidgets.QWidget):
         d.edit_undo.clear()
         d.edit_redo.clear()
         rec.analysis.results = None
+        self.btn_edit.setEnabled(True)
+        self._update_undo_buttons()
         self.plot.set_signal(s.filtered, fs, s.time)
         self.plot.set_noise_regions(rec.analysis.noise_regions)
         self._show_peaks()
@@ -186,6 +218,76 @@ class DetectionTab(QtWidgets.QWidget):
             d.manual_excluded -= d.manual_added
         d.rpeaks_ok, d.rpeaks_rej, d.thresh_amp = edits.accepted, edits.rejected, edits.thresh_amp
         self._show_peaks()
+
+    # ── editing by hand ─────────────────────────────────────
+    def _edit_toggled(self, on: bool) -> None:
+        self.btn_edit.setText("Edit Mode ON" if on else "Edit Peaks")
+        self.lbl_edit.setText("Left click: exclude / include · right click: add / remove · "
+                              "Ctrl+Z / Ctrl+Y" if on else "")
+
+    def _clicked(self, t: float, button: str) -> None:
+        """A click on the trace in edit mode (DetectionController.on_detail_click)."""
+        if not self.btn_edit.isChecked():
+            return
+        rec = self.win.recording
+        s, d = rec.signal, rec.detection
+        if s.filtered is None:
+            return
+        t0, t1 = self.plot.window()
+        edit = edit_at_click(s.filtered, s.fs, t, button, t1 - t0, d.rpeaks_ok,
+                             d.rpeaks_manual_excl, d.rpeaks_manual_added,
+                             d.manual_excluded, d.manual_added,
+                             free_placement=self.chk_free.isChecked())
+        if not edit.changes_peaks:
+            return                      # not near a peak: nothing changes, results kept
+        self._drop_results()
+        push_undo(d.edit_undo, d.edit_redo, d.manual_excluded, d.manual_added)
+        apply_click_edit(edit, d.manual_excluded, d.manual_added)
+        self.apply_threshold()
+        self._update_undo_buttons()
+        fs, n_ok = s.fs, len(d.rpeaks_ok)
+        text = {
+            "add_free": f"[Free] Added peak at {(edit.peak or 0) / fs:.3f} s",
+            "remove_added": f"Removed manually added peak at {t:.3f} s",
+            "replace": f"Replaced peak {(edit.old_peak or 0) / fs:.3f} s → "
+                       f"{(edit.peak or 0) / fs:.3f} s ({(edit.distance or 0) / fs * 1000:.1f} ms apart)",
+            "add": f"Added peak at {(edit.peak or 0) / fs:.3f} s (snapped to local max)",
+        }.get(edit.action, f"Manual exclusions: {len(d.manual_excluded)}")
+        self.win.set_status(f"{text}  |  Accepted: {n_ok}  — click Analyze to refresh HRV.",
+                            warn=True)
+
+    def undo(self) -> None:
+        self._undo_redo(redo=False)
+
+    def redo(self) -> None:
+        self._undo_redo(redo=True)
+
+    def _undo_redo(self, redo: bool) -> None:
+        d = self.win.recording.detection
+        src, dst = (d.edit_redo, d.edit_undo) if redo else (d.edit_undo, d.edit_redo)
+        sets = undo_redo(src, dst, d.manual_excluded, d.manual_added)
+        if sets is None:
+            self.win.set_status("Nothing to redo." if redo else "Nothing to undo.")
+            return
+        d.manual_excluded, d.manual_added = sets
+        self._drop_results()
+        self.apply_threshold()
+        self._update_undo_buttons()
+        self.win.set_status(f"Redone ({len(d.edit_redo)} remaining)" if redo else
+                            f"Undone ({len(d.edit_undo) or 'none'} left) — Ctrl+Y to redo",
+                            warn=True)
+
+    def _update_undo_buttons(self) -> None:
+        d = self.win.recording.detection
+        self.btn_undo.setEnabled(bool(d.edit_undo))
+        self.btn_redo.setEnabled(bool(d.edit_redo))
+
+    def _drop_results(self) -> None:
+        """A peak change makes the analysis results stale: they are dropped
+        (DetectionController._invalidate_stale_results)."""
+        a = self.win.recording.analysis
+        a.results = None
+        a.autonomic_result = None
 
     def _show_peaks(self) -> None:
         rec = self.win.recording

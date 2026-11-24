@@ -56,6 +56,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.detection: DetectionTab = self.tab_widgets[TAB_DETECTION]   # type: ignore[assignment]
 
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Open, self, activated=self.open_dialog)
+        QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self, activated=self.detection.undo)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Y"), self, activated=self.detection.redo)
 
     # ── layout ──────────────────────────────────────────────
     def _build_header(self) -> QtWidgets.QFrame:

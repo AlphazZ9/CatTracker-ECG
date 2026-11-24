@@ -144,3 +144,149 @@ def signal_quality_score(
     rr_tmp = np.diff(accepted) / fs * 1000
     rr_cv = rr_tmp.std() / (rr_tmp.mean() + 1e-6)
     return int(np.clip(100 * (1 - rr_cv) * ratio, 0, 100))
+
+
+# ════════════════════════════════════════════════════════════
+#  Editing by hand: what a click does
+# ════════════════════════════════════════════════════════════
+# Moved from ecg.ui.detection_controller.on_detail_click (the decision only;
+# each interface keeps its messages and redraws). In edit mode:
+#   left click   near a peak (accepted, not added by hand, or excluded by hand)
+#                -> toggle its exclusion;
+#   right click  near a peak added by hand -> remove it; elsewhere -> add a
+#                peak at the local maximum within the click radius, replacing
+#                the nearest accepted peak when closer than MIN_RR / 2; with
+#                free placement, add at the exact sample clicked.
+# The click radius is max(MIN_RR / 2, 3 % of the time window shown).
+
+UNDO_LIMIT = 50     # ECGApp._EDIT_UNDO_LIMIT
+
+
+@dataclass
+class ClickEdit:
+    """The change a click makes (``action`` "none" when it changes nothing):
+    "add", "add_free", "remove_added", "replace", "exclude" or "include".
+    *peak*: the sample added, removed or toggled; *old_peak*: the peak a
+    replacement excludes; *distance*: samples between them."""
+    action: str
+    peak: "Optional[int]" = None
+    old_peak: "Optional[int]" = None
+    distance: "Optional[int]" = None
+
+    @property
+    def changes_peaks(self) -> bool:
+        return self.action != "none"
+
+
+def click_tolerance_s(window_s: float) -> float:
+    """Click radius (s) for a view showing *window_s* seconds: half the
+    minimum RR interval, or 3 % of the window if larger."""
+    return max(MouseECG.MIN_RR_MS / 1000 / 2, window_s * 0.03)
+
+
+def edit_at_click(
+    signal: np.ndarray,
+    fs: float,
+    click_time_s: float,
+    button: str,
+    window_s: float,
+    accepted: "Optional[np.ndarray]",
+    excluded_peaks: "Optional[np.ndarray]",
+    added_peaks: "Optional[np.ndarray]",
+    manual_excluded: "set[int]",
+    manual_added: "set[int]",
+    free_placement: bool = False,
+) -> ClickEdit:
+    """What a *button* ("left" / "right") click at *click_time_s* does (see
+    the rules above). *accepted*: the accepted peaks; *excluded_peaks* /
+    *added_peaks*: the peaks excluded / added by hand as drawn
+    (rpeaks_manual_excl / rpeaks_manual_added); *manual_excluded* /
+    *manual_added*: the edit sets. Nothing is modified (apply_click_edit)."""
+    if accepted is None:
+        return ClickEdit("none")
+    click_samp = int(np.clip(int(round(click_time_s * fs)), 0, len(signal) - 1))
+    tol_s = click_tolerance_s(window_s)
+    tol_samp = int(tol_s * fs)
+
+    if button == "right":
+        if free_placement:
+            return ClickEdit("add_free", peak=click_samp)
+        if added_peaks is not None and len(added_peaks):
+            dists = np.abs(added_peaks - click_samp)
+            nearest_i = int(np.argmin(dists))
+            if dists[nearest_i] <= tol_samp:
+                return ClickEdit("remove_added", peak=int(added_peaks[nearest_i]))
+        # Snap to local maximum within ±tol_samp of click
+        lo = max(0, click_samp - tol_samp)
+        hi = min(len(signal), click_samp + tol_samp + 1)
+        new_samp = lo + int(np.argmax(signal[lo:hi]))
+        if len(accepted):
+            min_sep_samp = int(MouseECG.MIN_RR_MS / 1000 * fs * 0.5)
+            dists_ok = np.abs(accepted - new_samp)
+            nearest_idx = int(np.argmin(dists_ok))
+            nearest_dist = int(dists_ok[nearest_idx])
+            if nearest_dist < min_sep_samp:
+                return ClickEdit("replace", peak=new_samp, old_peak=int(accepted[nearest_idx]),
+                                 distance=nearest_dist)
+        return ClickEdit("add", peak=new_samp)
+
+    if button != "left":
+        return ClickEdit("none")
+    # Pool: all accepted peaks + all currently excluded peaks (peaks added by
+    # hand are not toggled -- right-click removes them)
+    base_ok = np.array([p for p in accepted if p not in manual_added], int)
+    excl_arr = excluded_peaks if excluded_peaks is not None else np.array([], int)
+    candidates = np.concatenate([base_ok, excl_arr])
+    if len(candidates) == 0:
+        return ClickEdit("none")
+    distances = np.abs(candidates / fs - click_time_s)
+    nearest_i = int(np.argmin(distances))
+    if distances[nearest_i] > tol_s:
+        return ClickEdit("none")      # click not close enough to any peak
+    peak = int(candidates[nearest_i])
+    return ClickEdit("include" if peak in manual_excluded else "exclude", peak=peak)
+
+
+def apply_click_edit(edit: ClickEdit, manual_excluded: "set[int]",
+                     manual_added: "set[int]") -> None:
+    """Apply *edit* to the edit sets, in place (then rebuild the peaks with
+    apply_peak_edits)."""
+    if edit.action in ("add", "add_free"):
+        manual_added.add(edit.peak)
+        manual_excluded.discard(edit.peak)
+    elif edit.action == "remove_added":
+        manual_added.discard(edit.peak)
+    elif edit.action == "replace":
+        manual_excluded.add(edit.old_peak)
+        manual_added.discard(edit.old_peak)
+        manual_added.add(edit.peak)
+        manual_excluded.discard(edit.peak)
+    elif edit.action == "exclude":
+        manual_excluded.add(edit.peak)
+    elif edit.action == "include":
+        manual_excluded.discard(edit.peak)
+
+
+EditSnapshot = "tuple[frozenset, frozenset]"
+
+
+def push_undo(undo: list, redo: list, manual_excluded: "set[int]", manual_added: "set[int]",
+              limit: int = UNDO_LIMIT) -> None:
+    """Remember the edit sets before a change (DetectionController.
+    push_edit_undo): at most *limit* steps; a new change clears redo."""
+    undo.append((frozenset(manual_excluded), frozenset(manual_added)))
+    if len(undo) > limit:
+        undo.pop(0)
+    redo.clear()
+
+
+def undo_redo(source: list, target: list, manual_excluded: "set[int]",
+              manual_added: "set[int]") -> "Optional[tuple[set, set]]":
+    """Undo (source = undo, target = redo) or redo (the reverse): push the
+    current sets on *target* and return the sets popped from *source*, or
+    None when there is nothing to undo / redo."""
+    if not source:
+        return None
+    target.append((frozenset(manual_excluded), frozenset(manual_added)))
+    excl, added = source.pop()
+    return set(excl), set(added)

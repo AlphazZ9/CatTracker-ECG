@@ -19,7 +19,8 @@ import numpy as np
 import customtkinter as ctk  # type: ignore[import-untyped]
 
 from ecg.core.models import MouseECG
-from ecg.core.peak_editing import apply_peak_edits, signal_quality_score
+from ecg.core.peak_editing import (apply_click_edit, apply_peak_edits, edit_at_click,
+                                   push_undo, signal_quality_score, undo_redo)
 from ecg.core.detection import (
     peak_agreement_counts,
     detect_peaks_wavelet, detect_peaks_sg_derivative, detect_peaks_envelope_max,
@@ -241,11 +242,9 @@ class DetectionController:
     def push_edit_undo(self) -> None:
         """Snapshot state before a destructive edit action."""
         self.mark_peaks_edited()
-        snap = (frozenset(self.app.detection.manual_excluded), frozenset(self.app.detection.manual_added))
-        self.app.detection.edit_undo.append(snap)
-        if len(self.app.detection.edit_undo) > self.app._EDIT_UNDO_LIMIT:
-            self.app.detection.edit_undo.pop(0)
-        self.app.detection.edit_redo.clear()
+        det = self.app.detection
+        push_undo(det.edit_undo, det.edit_redo, det.manual_excluded, det.manual_added,
+                  limit=self.app._EDIT_UNDO_LIMIT)
         self.update_undo_btns()
 
     def _drop_results(self) -> None:
@@ -280,11 +279,9 @@ class DetectionController:
         if not self.app.detection.edit_undo:
             self.app._set_status("Nothing to undo.", MUTED)
             return
-        cur = (frozenset(self.app.detection.manual_excluded), frozenset(self.app.detection.manual_added))
-        self.app.detection.edit_redo.append(cur)
-        excl, added = self.app.detection.edit_undo.pop()
-        self.app.detection.manual_excluded = set(excl)
-        self.app.detection.manual_added    = set(added)
+        det = self.app.detection
+        det.manual_excluded, det.manual_added = undo_redo(
+            det.edit_undo, det.edit_redo, det.manual_excluded, det.manual_added)
         self.mark_peaks_edited()
         self.apply_edit_state()
         n = len(self.app.detection.edit_undo)
@@ -296,11 +293,9 @@ class DetectionController:
         if not self.app.detection.edit_redo:
             self.app._set_status("Nothing to redo.", MUTED)
             return
-        cur = (frozenset(self.app.detection.manual_excluded), frozenset(self.app.detection.manual_added))
-        self.app.detection.edit_undo.append(cur)
-        excl, added = self.app.detection.edit_redo.pop()
-        self.app.detection.manual_excluded = set(excl)
-        self.app.detection.manual_added    = set(added)
+        det = self.app.detection
+        det.manual_excluded, det.manual_added = undo_redo(
+            det.edit_redo, det.edit_undo, det.manual_excluded, det.manual_added)
         self.mark_peaks_edited()
         self.apply_edit_state()
         self.app._set_status(f"Redone  ({len(self.app.detection.edit_redo)} remaining)", ORANGE)
@@ -571,167 +566,51 @@ class DetectionController:
         if self.app.detection.rpeaks_ok is None:
             return
 
-        fs         = self.app.signal.fs
+        fs = self.app.signal.fs
         click_time = float(event.xdata)      # seconds
-        click_samp = int(round(click_time * fs))
-        click_samp = int(np.clip(click_samp, 0, len(self.app.signal.filtered) - 1))
-
-        # ── Tolerance ────────────────────────────────────────────────────────
         try:
             win = float(self.app.ent_window.get())
         except Exception:
             win = 2.0
-        # Half the minimum RR interval (in seconds) is a natural click radius
-        tol_s    = max(MouseECG.MIN_RR_MS / 1000 / 2, win * 0.03)
-        tol_samp = int(tol_s * fs)
-
-        is_left  = (event.button == 1)
-        is_right = (event.button == 3)
-
-        # ──────────────────────────────────────────────────────────────────────
-        #  RIGHT-CLICK: add a new peak, or remove an existing manually-added one
-        # ──────────────────────────────────────────────────────────────────────
-        if is_right:
-            # Every branch below this point commits a change (add/remove/
-            # replace) -- unlike the left-click branch, there's no no-op
-            # path here, so invalidating unconditionally is safe.
-            self._invalidate_stale_results()
-
-            # ── FREE PLACEMENT: always add at the exact clicked sample ────────
-            # All guards (proximity, remove-nearby, local-max snapping) are
-            # bypassed.  The peak lands precisely where the user clicked.
-            if self.app.detection.edit_free_placement:
-                new_samp = click_samp
-                self.push_edit_undo()
-                self.app.detection.manual_added.add(new_samp)
-                self.app.detection.manual_excluded.discard(new_samp)
-                self.run_detection(float(self.app.sl_thr.get()))  # type: ignore[union-attr]
-                n_ok    = len(self.app.detection.rpeaks_ok) if self.app.detection.rpeaks_ok is not None else 0
-                n_added = len(self.app.detection.manual_added)
-                self.app._set_status(
-                    f"[Free] Added peak at {new_samp / fs:.3f} s  |  "
-                    f"Total added: {n_added}  |  Accepted: {n_ok}  "
-                    "— click Analyze to refresh HRV.",
-                    BLUE,
-                )
-                self.app._draw_detail(self.app.ui.nav_pos)
-                return
-
-            # ── NORMAL MODE ───────────────────────────────────────────────────
-            # First check if click is near a manually-added peak → remove it
-            if self.app.detection.rpeaks_manual_added is not None and len(self.app.detection.rpeaks_manual_added):
-                dists = np.abs(self.app.detection.rpeaks_manual_added - click_samp)
-                nearest_i = int(np.argmin(dists))
-                if dists[nearest_i] <= tol_samp:
-                    peak_to_remove = int(self.app.detection.rpeaks_manual_added[nearest_i])
-                    self.push_edit_undo()
-                    self.app.detection.manual_added.discard(peak_to_remove)
-                    self.run_detection(float(self.app.sl_thr.get()))  # type: ignore[union-attr]
-                    n_ok = len(self.app.detection.rpeaks_ok) if self.app.detection.rpeaks_ok is not None else 0
-                    self.app._set_status(
-                        f"Removed manually added peak at {click_time:.3f} s  |  "
-                        f"Accepted: {n_ok}  — click Analyze to refresh HRV.",
-                        ORANGE,
-                    )
-                    self.app._draw_detail(self.app.ui.nav_pos)
-                    return
-
-            # Snap to local maximum within ±tol_samp of click
-            sig      = self.app.signal.filtered
-            lo       = max(0, click_samp - tol_samp)
-            hi       = min(len(sig), click_samp + tol_samp + 1)
-            seg      = sig[lo:hi]
-            local_max_offset = int(np.argmax(seg))
-            new_samp = lo + local_max_offset
-
-            # If too close to existing accepted peak → replace it
-            # (exclude the old one, add the new one) instead of refusing.
-            if self.app.detection.rpeaks_ok is not None and len(self.app.detection.rpeaks_ok):
-                min_sep_samp = int(MouseECG.MIN_RR_MS / 1000 * fs * 0.5)
-                dists_ok     = np.abs(self.app.detection.rpeaks_ok - new_samp)
-                nearest_idx  = int(np.argmin(dists_ok))
-                nearest_dist = int(dists_ok[nearest_idx])
-                if nearest_dist < min_sep_samp:
-                    # Replace: exclude the nearby peak, add the new one
-                    old_peak = int(self.app.detection.rpeaks_ok[nearest_idx])
-                    self.push_edit_undo()
-                    self.app.detection.manual_excluded.add(old_peak)
-                    self.app.detection.manual_added.discard(old_peak)
-                    self.app.detection.manual_added.add(new_samp)
-                    self.app.detection.manual_excluded.discard(new_samp)
-                    self.run_detection(float(self.app.sl_thr.get()))  # type: ignore[union-attr]
-                    n_ok = len(self.app.detection.rpeaks_ok) if self.app.detection.rpeaks_ok is not None else 0
-                    self.app._set_status(
-                        f"Replaced peak {old_peak/fs:.3f} s → {new_samp/fs:.3f} s  "
-                        f"({nearest_dist/fs*1000:.1f} ms apart)  |  Accepted: {n_ok}  "
-                        "— click Analyze to refresh HRV.",
-                        ORANGE,
-                    )
-                    self.app._draw_detail(self.app.ui.nav_pos)
-                    return
-
-            self.push_edit_undo()
-            self.app.detection.manual_added.add(new_samp)
-            # If this sample was previously excluded, unexclude it
-            self.app.detection.manual_excluded.discard(new_samp)
-            self.run_detection(float(self.app.sl_thr.get()))  # type: ignore[union-attr]
-            n_ok    = len(self.app.detection.rpeaks_ok) if self.app.detection.rpeaks_ok is not None else 0
-            n_added = len(self.app.detection.manual_added)
-            self.app._set_status(
-                f"Added peak at {new_samp / fs:.3f} s (snapped to local max)  |  "
-                f"Total added: {n_added}  |  Accepted: {n_ok}  "
-                "— click Analyze to refresh HRV.",
-                ORANGE,
-            )
-            self.app._draw_detail(self.app.ui.nav_pos)
-            return
-
-        # ──────────────────────────────────────────────────────────────────────
-        #  LEFT-CLICK: toggle exclusion of the nearest existing peak
-        # ──────────────────────────────────────────────────────────────────────
-        if not is_left:
-            return
-
-        # Pool: all accepted peaks + all currently excluded peaks
-        # (manually added peaks are excluded from toggle — use right-click to remove)
-        added_set  = self.app.detection.manual_added
-        base_ok    = np.array([p for p in self.app.detection.rpeaks_ok if p not in added_set], int) \
-                     if self.app.detection.rpeaks_ok is not None else np.array([], int)
-        excl_arr   = self.app.detection.rpeaks_manual_excl if self.app.detection.rpeaks_manual_excl is not None \
-                     else np.array([], int)
-        candidates = np.concatenate([base_ok, excl_arr])
-        if len(candidates) == 0:
-            return
-
-        times_s   = candidates / fs
-        distances = np.abs(times_s - click_time)
-        nearest_i = int(np.argmin(distances))
-
-        if distances[nearest_i] > tol_s:
-            return   # click not close enough to any peak
-
-        # Past this point the click is guaranteed to toggle a peak's
-        # exclusion -- safe to invalidate now (not unconditionally at the
-        # top of the handler, which would also wipe results for the two
-        # no-op returns above).
+        det = self.app.detection
+        # What the click does: ecg.core.peak_editing.edit_at_click (rules there).
+        edit = edit_at_click(
+            self.app.signal.filtered, fs, click_time,
+            "left" if event.button == 1 else "right" if event.button == 3 else "other",
+            win, det.rpeaks_ok, det.rpeaks_manual_excl, det.rpeaks_manual_added,
+            det.manual_excluded, det.manual_added, free_placement=det.edit_free_placement)
+        if not edit.changes_peaks:
+            return                      # not near a peak: nothing changes, results kept
+        # Right before committing the change (a no-op click keeps the results).
         self._invalidate_stale_results()
-
-        peak_idx = int(candidates[nearest_i])
-
         self.push_edit_undo()
-        if peak_idx in self.app.detection.manual_excluded:
-            self.app.detection.manual_excluded.discard(peak_idx)
-        else:
-            self.app.detection.manual_excluded.add(peak_idx)
-
+        apply_click_edit(edit, det.manual_excluded, det.manual_added)
         self.run_detection(float(self.app.sl_thr.get()))  # type: ignore[union-attr]
-        n_ok   = len(self.app.detection.rpeaks_ok)  if self.app.detection.rpeaks_ok   is not None else 0
-        n_excl = len(self.app.detection.manual_excluded)
-        self.app._set_status(
-            f"Manual exclusions: {n_excl}  |  Accepted peaks: {n_ok}  "
-            "— click Analyze to refresh HRV.",
-            ORANGE,
-        )
+        n_ok = len(det.rpeaks_ok) if det.rpeaks_ok is not None else 0
+        n_added = len(det.manual_added)
+        if edit.action == "add_free":
+            self.app._set_status(
+                f"[Free] Added peak at {edit.peak / fs:.3f} s  |  "
+                f"Total added: {n_added}  |  Accepted: {n_ok}  "
+                "— click Analyze to refresh HRV.", BLUE)
+        elif edit.action == "remove_added":
+            self.app._set_status(
+                f"Removed manually added peak at {click_time:.3f} s  |  "
+                f"Accepted: {n_ok}  — click Analyze to refresh HRV.", ORANGE)
+        elif edit.action == "replace":
+            self.app._set_status(
+                f"Replaced peak {edit.old_peak/fs:.3f} s → {edit.peak/fs:.3f} s  "
+                f"({edit.distance/fs*1000:.1f} ms apart)  |  Accepted: {n_ok}  "
+                "— click Analyze to refresh HRV.", ORANGE)
+        elif edit.action == "add":
+            self.app._set_status(
+                f"Added peak at {edit.peak / fs:.3f} s (snapped to local max)  |  "
+                f"Total added: {n_added}  |  Accepted: {n_ok}  "
+                "— click Analyze to refresh HRV.", ORANGE)
+        else:                            # exclude / include
+            self.app._set_status(
+                f"Manual exclusions: {len(det.manual_excluded)}  |  Accepted peaks: {n_ok}  "
+                "— click Analyze to refresh HRV.", ORANGE)
         self.app._draw_detail(self.app.ui.nav_pos)
 
     def on_threshold_slide(self, value: float) -> None:

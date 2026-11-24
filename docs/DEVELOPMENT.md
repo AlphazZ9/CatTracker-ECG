@@ -129,8 +129,8 @@ until the migration is validated.
 python -m ecg.qt [recording.mat]
 ```
 
-Today: Signal & Detection (open, Detect Peaks, threshold, PyQtGraph trace
-with overview). Its tests (`tests/qt/`, pytest-qt) run headless.
+Today: Signal & Detection (open, Detect Peaks, threshold, editing peaks by
+hand with undo / redo, PyQtGraph trace with overview). Its tests (`tests/qt/`, pytest-qt) run headless.
 
 ## Scripting an analysis
 

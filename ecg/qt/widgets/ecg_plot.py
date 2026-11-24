@@ -13,8 +13,9 @@ maximum, so no QRS disappears) and clips it to the visible range. A one-hour
 recording at 2 kHz (7.2 million samples) scrolls without delay.
 
 Peaks are given as sample indices and drawn at index / fs seconds. A click
-on the trace emits ``sample_clicked(sample, button)`` -- the edit rules
-(add / exclude, snap) belong to the caller.
+on the trace emits ``time_clicked(t_s, button)`` (button: "left", "right" or
+"other") -- the edit rules (ecg.core.peak_editing.edit_at_click) belong to
+the caller.
 """
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ def _alpha(color: str, alpha: int) -> QtGui.QColor:
 class EcgPlot(QtWidgets.QWidget):
     """Detail trace + overview of one signal."""
 
-    sample_clicked = QtCore.Signal(int, int)        # sample index, Qt mouse button
+    time_clicked = QtCore.Signal(float, str)        # time (s), "left" / "right" / "other"
     window_changed = QtCore.Signal(float, float)    # t0, t1 (s)
 
     def __init__(self, parent: "QtWidgets.QWidget | None" = None) -> None:
@@ -180,10 +181,12 @@ class EcgPlot(QtWidgets.QWidget):
     def _clicked(self, ev) -> None:
         if self._signal is None or not self.detail.sceneBoundingRect().contains(ev.scenePos()):
             return
-        x = self.detail.vb.mapSceneToView(ev.scenePos()).x()
-        sample = int(round(x * self._fs))
-        if 0 <= sample < len(self._signal):
-            self.sample_clicked.emit(sample, int(ev.button().value))
+        x = float(self.detail.vb.mapSceneToView(ev.scenePos()).x())
+        if 0.0 <= x * self._fs < len(self._signal):
+            b = ev.button()
+            self.time_clicked.emit(x, "left" if b == QtCore.Qt.MouseButton.LeftButton
+                                   else "right" if b == QtCore.Qt.MouseButton.RightButton
+                                   else "other")
 
     # ── look ────────────────────────────────────────────────
     def apply_palette(self, p: "theme.Palette") -> None:
