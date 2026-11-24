@@ -77,6 +77,24 @@ class QtSession:
                     rec.signal.filtered, "", snap, progress=False,
                     on_done=lambda result: self._saved(result, gen))
 
+    def save_now(self) -> bool:
+        """Save Session on the main thread (the quit / open prompt, which
+        cannot wait for a job). True when saved."""
+        rec = self.win.recording
+        if rec.signal.filepath is None or rec.signal.filtered is None:
+            return True
+        try:
+            state = self.ctrl.collect_session_state()
+            result = self.ctrl.save_session_worker(state, rec.signal.filepath,
+                                                   rec.signal.filtered, "",
+                                                   self.ctrl.save_snapshot())
+        except Exception as exc:
+            import traceback
+            self.win.errors.report("Save Session failed", str(exc), traceback.format_exc())
+            return False
+        self._saved(result, self.win.generation)
+        return True
+
     def _saved(self, result: dict, gen: int) -> None:
         name = Path(result["out_path"]).name
         if gen != self.win.generation:

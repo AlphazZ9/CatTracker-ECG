@@ -406,7 +406,7 @@ class FigureHost:
         self._window.set_status(text.strip())
 
     def _set_progress(self, pct: int, msg: str) -> None:
-        self._window._progress(int(pct), msg)
+        self._window.set_progress(int(pct), msg)
 
     def after(self, ms: int, fn: "Optional[Callable]" = None) -> None:
         if fn is None:

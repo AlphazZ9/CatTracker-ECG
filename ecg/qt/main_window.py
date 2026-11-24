@@ -13,6 +13,8 @@ progress checkpoint.
 """
 from __future__ import annotations
 
+import logging
+import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -39,6 +41,8 @@ from ecg.ui.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_GROUP, TAB_EVENTS, 
 
 FILE_FILTER = "Recordings (*.mat *.smr);;All files (*)"
 
+
+log = logging.getLogger("ecg")
 
 class _TabSwitcher:
     """app.tabs.set(name) / .get() of the Tk interface, on the Qt tab widget."""
@@ -67,7 +71,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session_dirty = False
         self.generation = 0
         self.jobs = JobRunner(self)
-        self._current_job: "Optional[Job]" = None
+        self._active: "list[tuple[Job, str]]" = []     # the jobs running, oldest first
+        from ecg.qt.errors import ErrorReporter
+        self.errors = ErrorReporter(self)
         self.figures = FigureHost(self)          # the shared figure code's "app"
 
         central = QtWidgets.QWidget()
@@ -118,11 +124,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.figures._show_time_mode = lambda mode: self.time_course.setCurrentIndex(
             TIME_COURSE_MODES.index(mode) if mode in TIME_COURSE_MODES else 0)
 
-        QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Open, self, activated=self.open_dialog)
+        self._build_menu()
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self, activated=self.detection.undo)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Y"), self, activated=self.detection.redo)
 
     # ── layout ──────────────────────────────────────────────
+    def _build_menu(self) -> None:
+        mb = self.menuBar()
+        m = mb.addMenu("&File")
+        for text, key, fn in (("Open…", QtGui.QKeySequence.StandardKey.Open, self.open_dialog),
+                              ("Save Session", QtGui.QKeySequence.StandardKey.Save,
+                               lambda: self.session.save()),
+                              (None, None, None),
+                              ("Quit", QtGui.QKeySequence.StandardKey.Quit, self.close)):
+            if text is None:
+                m.addSeparator()
+                continue
+            act = m.addAction(text)
+            act.setShortcut(key)
+            act.triggered.connect(fn)
+        h = mb.addMenu("&Help")
+        h.addAction("Open log folder").triggered.connect(self.open_log_folder)
+        h.addAction("About").triggered.connect(lambda: QtWidgets.QMessageBox.about(
+            self, "ECG Analysis", f"ECG Analysis {ecg.__version__}\nQt interface (PySide6)."))
+
+    def open_log_folder(self) -> None:
+        from ecg.qt.errors import default_log_dir
+        d = default_log_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(d)))
+
     def _build_header(self) -> QtWidgets.QFrame:
         bar = QtWidgets.QFrame(objectName="Header")
         row = QtWidgets.QHBoxLayout(bar)
@@ -185,9 +216,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ── recording ───────────────────────────────────────────
     def open_dialog(self) -> None:
+        if not self.confirm_discard("Open another recording"):
+            return
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open a recording", "", FILE_FILTER)
         if path:
             self.open_path(path)
+
+    def confirm_discard(self, action: str) -> bool:
+        """Unsaved changes to this recording (peaks, edits, results, regions):
+        Save / Discard / Cancel. True when *action* may go on."""
+        if not self.session_dirty or self.recording.signal.filtered is None:
+            return True
+        B = QtWidgets.QMessageBox.StandardButton
+        answer = QtWidgets.QMessageBox.question(
+            self, action, f"{Path(self.recording.signal.filepath or '').name} has unsaved "
+            "changes (peaks, edits, results or regions).\n\nSave the session first?",
+            B.Save | B.Discard | B.Cancel, B.Save)
+        if answer == B.Cancel:
+            return False
+        if answer == B.Save:
+            return self.session.save_now()
+        return True
 
     def open_path(self, path: str, check_session: bool = True) -> None:
         """Make *path* the recording; results of jobs still running for the
@@ -240,6 +289,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def peaks_changed(self) -> None:
         """Detection or a hand edit changed the peaks: results are stale."""
+        self.session_dirty = True
         self.btn_save.setEnabled(self.recording.signal.filtered is not None)
         has_peaks = self.recording.detection.rpeaks_ok is not None
         self.btn_analyze.setEnabled(has_peaks and len(self.recording.detection.rpeaks_ok) >= 5)
@@ -279,6 +329,7 @@ class MainWindow(QtWidgets.QMainWindow):
         d.rpeaks_ok = bundle["rpeaks_ok"]
         a.artifact_report = bundle["artifact_report"]
         a.analysed_window = bundle.get("analysis_window")
+        self.session_dirty = True
         self._auto_epochs = bool(bundle.get("auto_epochs", False))
         self.detection.refresh()
         hr = a.results.get("hr") or {}
@@ -360,54 +411,86 @@ class MainWindow(QtWidgets.QMainWindow):
                 on_end: "Optional[Callable[[], None]]" = None, **kwargs: Any) -> Job:
         """Run ``fn(*args, progress_cb=..., **kwargs)`` in the background.
         *on_done(result)* runs on the main thread if the recording is still
-        the one the job started on; *on_end()* always runs once it ends."""
+        the one the job started on; *on_end()* always runs once it ends.
+
+        Errors: a failing job is logged with its traceback and shown; an
+        error while showing its result (in *on_done*) too -- the window and
+        the state the job did not touch stay as they were. Several jobs may
+        run at once: the progress row follows the newest, Cancel stops all."""
         gen = self.generation
         job = Job(fn, *args, **kwargs)
-        self._current_job = job
-        self.progress.setValue(0)
-        self.progress.setVisible(True)
-        self.btn_cancel.setVisible(True)
-        self.lbl_progress.setText(what + "…")
+        self._active.append((job, what))
+        self._show_progress()
+        log.info("job started: %s", what)
+
+        def _guard(label: str, fn_: Callable[..., Any], *a: Any) -> None:
+            try:
+                fn_(*a)
+            except Exception:
+                import traceback
+                exc = sys.exc_info()[1]
+                self.errors.report(f"{what}: {label}", str(exc) or type(exc).__name__,
+                                   traceback.format_exc())
 
         def _end() -> None:
-            if self._current_job is job:
-                self._current_job = None
-                self.progress.setVisible(False)
-                self.btn_cancel.setVisible(False)
-                self.lbl_progress.setText("")
+            self._active = [(j, w) for j, w in self._active if j is not job]
+            self._show_progress()
             if on_end is not None:
-                on_end()
+                _guard("finishing failed", on_end)
 
         def _finished(result: Any) -> None:
+            log.info("job done: %s", what)
             _end()
             if gen != self.generation:
                 self.set_status(f"{what}: result discarded — another recording was opened",
                                 warn=True)
                 return
-            on_done(result)
+            _guard("showing the result failed", on_done, result)
 
         def _failed(msg: str, tb: str) -> None:
             _end()
             self.set_status(f"{what} failed: {msg}", warn=True)
             if gen == self.generation:
-                box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Icon.Warning, what,
-                                            f"{what} failed:\n\n{msg}", parent=self)
-                box.setDetailedText(tb)
-                box.open()
+                self.errors.report(f"{what} failed", msg, tb)
+            else:
+                log.error("%s failed (recording since closed): %s\n%s", what, msg, tb)
 
         def _cancelled() -> None:
+            log.info("job cancelled: %s", what)
             _end()
             self.set_status(f"{what} cancelled", warn=True)
 
-        job.signals.progress.connect(self._progress)
+        job.signals.progress.connect(lambda pct, msg: self._progress(job, pct, msg))
         job.signals.finished.connect(_finished)
         job.signals.failed.connect(_failed)
         job.signals.cancelled.connect(_cancelled)
         return self.jobs.start(job)
 
-    def _progress(self, pct: int, msg: str) -> None:
-        self.progress.setValue(pct)
-        self.lbl_progress.setText(msg)
+    def _show_progress(self) -> None:
+        """The progress row: the newest running job (and how many others)."""
+        busy = bool(self._active)
+        self.progress.setVisible(busy)
+        self.btn_cancel.setVisible(busy)
+        if not busy:
+            self.lbl_progress.setText("")
+            return
+        job, what = self._active[-1]
+        others = len(self._active) - 1
+        self.progress.setValue(0)
+        self.lbl_progress.setText(what + "…" + (f" (+{others} running)" if others else ""))
+
+    def _progress(self, job: Job, pct: int, msg: str) -> None:
+        if self._active and self._active[-1][0] is job:
+            self.set_progress(pct, msg)
+
+    def set_progress(self, pct: int, msg: str) -> None:
+        """The progress row's value and text (the newest job's; the Tk
+        controllers' _set_progress)."""
+        if not self._active:
+            return
+        self.progress.setValue(int(pct))
+        others = len(self._active) - 1
+        self.lbl_progress.setText(msg + (f" (+{others} running)" if others else ""))
 
     def cancel_jobs(self) -> None:
         self.jobs.cancel_all()
@@ -427,6 +510,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redraw_results()
 
     def closeEvent(self, ev: QtGui.QCloseEvent) -> None:
+        """Unsaved changes are offered for saving; the jobs running are
+        cancelled (they stop at their next checkpoint) and waited for."""
+        if not self.confirm_discard("Quit"):
+            ev.ignore()
+            return
         self.cancel_jobs()
-        self.jobs.wait(5000)
+        if not self.jobs.wait(5000):
+            log.warning("jobs still running at exit")
         super().closeEvent(ev)

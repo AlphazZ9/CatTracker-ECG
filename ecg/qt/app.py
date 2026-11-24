@@ -30,7 +30,15 @@ def main(argv: "Optional[list[str]]" = None) -> int:
     theme.apply(app)
     from ecg.qt.figure_host import sync_figure_theme
     sync_figure_theme(theme.current().is_dark)
+    from ecg.qt.errors import install_excepthook, setup_logging
+    try:
+        log_path = setup_logging()
+    except OSError:                      # no writable session folder: console only
+        log_path = None
     win = MainWindow()
+    install_excepthook(win.errors)
+    import logging
+    logging.getLogger("ecg").info("Qt interface started (log: %s)", log_path)
     win.btn_theme.setText("Light mode" if theme.current().is_dark else "Dark mode")
     win.show()
     if len(argv) > 1:
