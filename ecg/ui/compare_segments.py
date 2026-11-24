@@ -20,6 +20,7 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from ecg.core.metric_families import by_family, family_of
 from ecg.core.models import MouseECG
 from ecg.ui.theme import (
     BG, PANEL, CARD, BORDER, BORDER2, TEXT, MUTED, LIGHT, PLOT, RED, BLUE,
@@ -34,7 +35,7 @@ from ecg.ui.theme import (
     card_style,
 )
 import tkinter as tk
-from ecg.ui.theme import button_style, disabled_style, toggle_style
+from ecg.ui.theme import button_style, disabled_style, light_plot_theme, toggle_style
 from ecg.ui.poincare_figure import draw_poincare_set
 from ecg.io.group_table import append_group_row, group_row
 from ecg.io.subject_name import normalise_sex
@@ -190,6 +191,19 @@ def _cell(v: "Any") -> "Any":
     return f if f is not None else ("" if v is None else str(v))
 
 
+def own_line_stripes(text: "tk.Text", tag: str = "stripe") -> None:
+    """Give each line's end the zebra *tag* of the line itself. The rows are
+    inserted as "\\n" + row, so a line's newline (the part that paints to
+    the right edge) carried the next row's tags: a family header then showed
+    the stripe of its first metric to the right of its title."""
+    last = int(text.index("end-1c").split(".")[0])
+    for ln in range(1, last):
+        end = f"{ln}.end"
+        text.tag_remove(tag, end)
+        if tag in text.tag_names(f"{ln}.0"):
+            text.tag_add(tag, end)
+
+
 def normalize_compare_setup(raw: "Any") -> "Optional[dict]":
     """A Compare segments setup as saved in a session (or snapshot before a
     UI rebuild), checked: {"rows": [[label, from, to], ...] (1 to
@@ -308,10 +322,95 @@ def draw_rr_tachograms(fig, segs: "list[dict]", colors: "list[str]",
         else:
             ax.set_title(names[grp[0]], loc="left", fontsize=9)
         if drawn:
-            ax.legend(framealpha=0, fontsize=8)
+            ax.legend(framealpha=0, fontsize=8, labelcolor=PLOT.get("text", "#222"))
     for ax in axes:
         ax.set_xlabel("Time within segment (s)", fontsize=9)
     return axes
+
+
+# ── Group Poincaré (the group table the Group tab uses) ──────────────────
+
+
+def _refresh_group_card(app: "Any") -> None:
+    """The group Poincaré card brought up to date, when the app has one."""
+    refresh = getattr(app, "_compare_group_refresh", None)
+    if callable(refresh):
+        refresh()
+
+# The two sheets the group Poincaré needs: the TimeCourse sheet of a big
+# table took most of the 1.5 s of reading it whole.
+_GROUP_SHEETS = ("Animals", "Group")
+_GROUP_FIG_SIZE = (14.0, 4.3)
+_GROUP_PLOT_H = 430
+
+
+def segment_choices(seg: "pd.DataFrame") -> "list[tuple[str, str]]":
+    """(tag, shown) of each segment of a group table's Group sheet: 'Pre ·
+    Baseline' when the group's label is not the tag."""
+    from ecg.io.group_stats import segment_labels, segment_tags
+    out = []
+    for tag in segment_tags(seg):
+        label = segment_labels(seg, tag)[0]
+        out.append((tag, f"{tag} · {label}" if label and label != tag else tag))
+    return out
+
+
+def segment_color(i: int) -> str:
+    """The colour of the *i*-th segment of a comparison (the first, the
+    reference, blue): the tachograms, the table and the group Poincaré. Read
+    at call time, so a theme change re-synced into this module applies."""
+    seq = (BLUE, ORANGE_DARK, GREEN, PURPLE, TEAL, RED)
+    return seq[i % len(seq)]
+
+
+def group_poincare_data(sheets: "dict", a: str, b: str, leave_out: bool = True,
+                        by: "Optional[str]" = None) -> "tuple[pd.DataFrame, dict]":
+    """The rows of the Group sheet the group Poincaré of A → B draws, with
+    the Group tab's rules: unticked animals out; with *by* (the Group tab's
+    By: group or sex; None, no groups) the animals without a group or sex
+    out, as there; with *leave_out* the rows to check (quality alert,
+    subject on several rows, another template or duration:
+    ecg.io.group_stats.check_rows) out too; then the animals with a mean RR,
+    SD1 and SD2 for both segments. And the counts left out ({"unticked": n,
+    "ungrouped": n, "to_check": n, "pooled": bool}). When no ticked animal
+    has a group (or a sex) at all, every ticked animal is drawn ("pooled"
+    True): the Group tab then asks for groups or No groups, but the Poincaré
+    of all the animals is still worth seeing here. ValueError when no animal
+    is ticked."""
+    from ecg.io import group_compare as gc
+    from ecg.io import group_data as gd
+    from ecg.io.group_stats import check_rows
+    from ecg.ui.group_figure import poincare_rows
+    df = sheets[gd.SHEET_SEGMENTS].reset_index(drop=True)
+    animals = gd.animals_frame(sheets)
+    by = by or gc.BY_NONE
+    gmap, _order, _notes = gc.animal_groups(animals, by)
+    pooled = False
+    if not gmap and by != gc.BY_NONE:
+        gmap, _order, _notes = gc.animal_groups(animals, gc.BY_NONE)
+        pooled = bool(gmap)
+    gc._need_animals(gmap, gc.BY_NONE, animals)
+    keys = list(zip(df["subject"].astype(str), df["file"].astype(str)))
+    in_table = set(keys)
+    ticked = {(str(r["subject"]), str(r["file"])) for _, r in animals.iterrows()
+              if bool(r["use"])}
+    unticked = sum(1 for _, r in animals.iterrows() if not bool(r["use"])
+                   and (str(r["subject"]), str(r["file"])) in in_table)
+    ungrouped = sum(1 for k in ticked & in_table if k not in gmap)
+    # A row merely without one of the two segments is not "to check": it
+    # simply has nothing to draw.
+    doubtful = {(c.subject, c.file) for c in check_rows(df, a, b)
+                if not c.ok and not all(p.startswith("no segment") for p in c.problems)}
+    used = [k in gmap for k in keys]
+    keep = [u and not (leave_out and k in doubtful) for u, k in zip(used, keys)]
+    # Counted only when it had something to draw: a row with a quality alert
+    # on A and no B is not drawn either way.
+    to_check = 0
+    if leave_out:
+        out_rows = df.loc[[u and k in doubtful for u, k in zip(used, keys)]]
+        to_check = len(poincare_rows(out_rows, a, b))
+    return poincare_rows(df.loc[keep], a, b), {"unticked": unticked, "ungrouped": ungrouped,
+                                               "to_check": to_check, "pooled": pooled}
 
 
 class CompareSegmentsMixin:
@@ -395,12 +494,14 @@ class CompareSegmentsMixin:
             return
         sig = self._compare_signature()
         if sig is not None and sig == self._compare_built_for:
+            _refresh_group_card(self)           # the table or the pair may have changed
             return
         # Built already for no recording: opening the tab again must not
         # destroy and rebuild it (a visible flash, and the group card's
         # table read again each time).
         if (sig is None and getattr(self, "_compare_built_empty", False)
                 and self._compare_built_for is None and holder.winfo_children()):
+            _refresh_group_card(self)
             return
         # The rows typed for this recording survive a rebuild for its new
         # peaks (not the comparison: it rests on the old ones), unless a
@@ -712,11 +813,7 @@ class CompareSegmentsMixin:
         _state: "dict[str, Any]" = {"segs": None, "cmps": None, "flags": None, "ref": 0,
                                     "run": None, "inflight": None}
 
-        def _color(i: int) -> str:
-            # Segment colours in order, the first the reference; read at call
-            # time so a theme change re-synced into this module applies.
-            seq = (BLUE, ORANGE_DARK, GREEN, PURPLE, TEAL, RED)
-            return seq[i % len(seq)]
+        _color = segment_color
 
         def _read_rows() -> "list[tuple[str, float, float]]":
             out = []
@@ -851,6 +948,9 @@ class CompareSegmentsMixin:
         tbl.tag_configure("head", font=(THEME.font_family, _fsize, "bold"), foreground=MUTED)
         tbl.tag_configure("stripe", background=BG)
         tbl.tag_configure("unit", foreground=MUTED)
+        # A metric family's header, as in the Rhythm & HRV table.
+        tbl.tag_configure("family", font=(THEME.font_family, _fsize, "bold"), foreground=BLUE,
+                          spacing1=SPACE_S)
         tbl.tag_configure("delta", foreground=MUTED,
                           font=(THEME.font_family, -int(round(11 * _scale))))
         tbl.configure(state="disabled")
@@ -1066,26 +1166,44 @@ class CompareSegmentsMixin:
                 tbl.insert("end", _seg_head(k), f"seg{k}")
                 if comps[k] is not None:
                     tbl.insert("end", "\t" + _d_head(k), "head")
-            for ri, (key, name, unit) in enumerate(_METRICS):
-                line = ("stripe",) if ri % 2 == 0 else ()
-                tbl.insert("end", "\n" + name, line)
-                if unit:
-                    tbl.insert("end", f"  {unit}", ("unit",) + line)
-                vals = [float(s_.get(key, float("nan"))) for s_ in segs]
-                for k, v in enumerate(vals):
-                    tbl.insert("end", "\t" + _fmt_cell(key, v), line)
-                    j = comps[k]
-                    if j is None:
-                        continue
-                    d = _delta(vals[j], v)
-                    if not np.isfinite(d):
-                        txt = "—"
-                    elif abs(d) < 0.05:
-                        txt = "0.0 %"
-                    else:
-                        txt = f"{'▲' if d > 0 else '▼'} {abs(d):.1f} %"
-                    tbl.insert("end", "\t" + txt, ("delta",) + line)
-            tbl.configure(height=len(_METRICS) + 1, state="disabled")
+            # One section per metric family (Heart rate, HRV time domain...),
+            # each under its header, the metrics in their order inside.
+            n_lines = 1
+            sections = by_family(_METRICS, lambda m: family_of(m[1]))
+            for fam, items in sections:
+                tbl.insert("end", "\n" + fam.upper(), "family")
+                n_lines += 1 + len(items)
+                for ri, (key, name, unit) in enumerate(items):
+                    _metric_line(key, name, unit, ri, segs, comps)
+            own_line_stripes(tbl)
+            # The headers' space above (spacing1) is not counted in lines:
+            # without it the last metric is cut off.
+            line_px = tkfont.Font(font=tbl.cget("font")).metrics("linespace") + 4
+            n_lines += -(-len(sections) * SPACE_S // max(1, line_px))
+            tbl.configure(height=n_lines, state="disabled")
+
+        def _metric_line(key: str, name: str, unit: str, ri: int, segs: "list[dict]",
+                         comps: "list[Optional[int]]") -> None:
+            """One metric row of the table: name, unit, each segment's value
+            and its Δ % against its comparator."""
+            line = ("stripe",) if ri % 2 == 0 else ()
+            tbl.insert("end", "\n" + name, line)
+            if unit:
+                tbl.insert("end", f"  {unit}", ("unit",) + line)
+            vals = [float(s_.get(key, float("nan"))) for s_ in segs]
+            for k, v in enumerate(vals):
+                tbl.insert("end", "\t" + _fmt_cell(key, v), line)
+                j = comps[k]
+                if j is None:
+                    continue
+                d = _delta(vals[j], v)
+                if not np.isfinite(d):
+                    txt = "—"
+                elif abs(d) < 0.05:
+                    txt = "0.0 %"
+                else:
+                    txt = f"{'▲' if d > 0 else '▼'} {abs(d):.1f} %"
+                tbl.insert("end", "\t" + txt, ("delta",) + line)
 
         def _rr_drawer(segs: "list[dict]", colors: "list[str]",
                        comps: "Optional[list[Optional[int]]]" = None):
@@ -1263,6 +1381,9 @@ class CompareSegmentsMixin:
             _state["inflight"] = None
             run_btn.configure(state="normal")
             progress_bar.stop(); progress_bar.place_forget()
+            # An export's or an add's message is about the previous result.
+            lbl_exp.configure(text="")
+            lbl_exp.pack_forget()
             # The reference as it is NOW (the selector stays usable while
             # the worker runs), kept when it still exists for these
             # segments; then the cheap block-mean comparison of each
@@ -1427,15 +1548,19 @@ class CompareSegmentsMixin:
                 return
             segs_ = res_.segs
             colors = [_color(k) for k in range(len(segs_))]
-            n_rows = 1 + (len(segs_) > 4)
+            # The exported Poincaré figure has 2 panels a row (a Pre/Post
+            # pair side by side), not the 4 of the on-screen view.
+            p_cols = max(1, min(len(segs_), 2))
+            n_rows = -(-len(segs_) // p_cols)
             n_tacho = len(tachogram_groups(len(segs_), res_.comps))
             written = []
             for suffix, figsize, draw in (
                     ("_tachograms", (10, 4 if n_tacho == 1 else 3 * n_tacho),
                      _rr_drawer(segs_, colors, res_.comps)),
-                    ("_poincare", (min(4 * len(segs_), 16), 4.6 * n_rows),
+                    ("_poincare", (4 * p_cols, 4.6 * n_rows),
                      lambda fig: draw_poincare_set(fig, segs_, colors, title=_subject(),
-                                                   jitter=self._compare_jitter))):
+                                                   jitter=self._compare_jitter,
+                                                   ncols=p_cols))):
                 out = base + suffix + ext
                 try:
                     fig = Figure(figsize=figsize, dpi=300, facecolor="white", layout="constrained")
@@ -1487,8 +1612,13 @@ class CompareSegmentsMixin:
             if gst is not None and not (gst.get("a") and gst.get("b")) and res_.pairs:
                 j, k = res_.pairs[0]
                 gst["a"], gst["b"] = res_.tags[j], res_.tags[k]
+            # The group Poincaré below: this table when the Group tab has none.
+            self._cmp_group_added = path
+            self._compare_group_refresh(force=True)
+            # No count here: the group card below says how many animals the
+            # table holds (a count in this line went stale beside it).
             _done(f"{res_.subject or 'recording'} {'updated in' if replaced else 'added to'} "
-                  f"{os.path.basename(path)} ({n} recording{'s' if n != 1 else ''}){extra}")
+                  f"{os.path.basename(path)}{extra}")
 
         run_btn.configure(command=_run_compare)
         lbl_exp = ctk.CTkLabel(res, text="", font=FONT_SMALL, text_color=MUTED,
@@ -1591,24 +1721,325 @@ class CompareSegmentsMixin:
             except Exception as exc:
                 log.warning("Compare segments setup not restored: %s", exc, exc_info=True)
 
-    # ── Group: moved to the Group tab ───────────────────────────────────
+    # ── Group: the group Poincaré; the tests are in the Group tab ────────
 
     def _build_group_pointer(self: ECGApp, win) -> None:
-        """Where the group statistics went: the Group tab (the table, the
-        animals, every analysis and its exports)."""
+        """The GROUP — ALL ANIMALS card: the group Poincaré of one pair A → B
+        (one thin ellipse per animal, the group mean thick, and the paired
+        panels) for the group table the Group tab uses, and the way to the
+        Group tab (the animals, every analysis and its exports). The table is
+        read when the tab is shown, never at start-up."""
         card = ctk.CTkFrame(win, **card_style())
         card.pack(fill="x", padx=PAGE_PAD_X, pady=(0, PAGE_GAP))
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="x", padx=CARD_PAD, pady=CARD_PAD - 4)
-        ctk.CTkLabel(body, text="GROUP — ALL ANIMALS", font=FONT_SECTION_HDR,
+        tip = getattr(self, "_bind_hover_tip", None) or (lambda *a, **k: None)
+        hdr = ctk.CTkFrame(body, fg_color="transparent")
+        hdr.pack(fill="x")
+        ctk.CTkLabel(hdr, text="GROUP — ALL ANIMALS", font=FONT_SECTION_HDR,
                      text_color=MUTED).pack(side="left")
-        ctk.CTkLabel(body, text="The tests across animals (one pair or all pairs, by group or "
-                                "sex) are in the Group tab: ➕ Add to group table above, then "
-                                "open it there.", font=FONT_SMALL, text_color=MUTED,
+        ctk.CTkLabel(hdr, text="The tests across animals (one pair or all pairs, by group or "
+                               "sex) are in the Group tab: ➕ Add to group table above, then "
+                               "open it there.", font=FONT_SMALL, text_color=MUTED,
                      anchor="w").pack(side="left", padx=(SPACE_M, SPACE_M))
         tabs = getattr(self, "tabs", None)
         if tabs is not None:
             from ecg.ui.tab_keys import TAB_GROUP
-            ctk.CTkButton(body, text="Open the Group tab", width=0,
-                          command=lambda: tabs.set(TAB_GROUP),
-                          **button_style("secondary")).pack(side="right")
+            btn_open = ctk.CTkButton(hdr, text="Open the Group tab", width=0,
+                                     command=self._compare_open_group_tab,
+                                     **button_style("secondary"))
+            btn_open.pack(side="right")
+            tip(btn_open, "The Group tab, on the group table drawn here")
+        btn_fig = ctk.CTkButton(hdr, text="Figure…", width=0, state="disabled",
+                                command=self._save_compare_group_figure,
+                                **{**button_style("secondary"), **disabled_style()})
+        btn_fig.pack(side="right", padx=(0, SPACE_S))
+        tip(btn_fig, "The group Poincaré (one ellipse per animal, the group mean thick) and the "
+                     "before-after panels of the pair shown: 300 dpi PNG or vector PDF / SVG")
+
+        row = ctk.CTkFrame(body, fg_color="transparent")
+        row.pack(fill="x", pady=(SPACE_S, 0))
+        ctk.CTkLabel(row, text="Group Poincaré", font=FONT_SMALL, text_color=TEXT).pack(
+            side="left", padx=(0, SPACE_M))
+        combos = []
+        for sep in ("→", ""):
+            cb = ctk.CTkComboBox(row, width=170, values=[""], state="readonly",
+                                 command=lambda _v: self._compare_group_pair_chosen(),
+                                 **combo_style())
+            cb.pack(side="left", padx=(0, SPACE_XS))
+            combos.append(cb)
+            if sep:
+                ctk.CTkLabel(row, text=sep, font=FONT_SMALL, text_color=MUTED).pack(
+                    side="left", padx=(0, SPACE_XS))
+        for cb in combos:
+            tip(cb, "The pair drawn, A → B: the Group tab's pair by default, else this "
+                    "comparison's reference and the first segment compared with it")
+        lbl = ctk.CTkLabel(row, text="", font=FONT_SMALL, text_color=MUTED, anchor="w",
+                           justify="left")
+        lbl.pack(side="left", fill="x", expand=True, padx=(SPACE_M, 0))
+        plot_card = ctk.CTkFrame(body, fg_color=CARD, corner_radius=0, height=_GROUP_PLOT_H)
+        plot_card.pack_propagate(False)
+        slot = CanvasSlot(plot_card, _GROUP_FIG_SIZE[0], _GROUP_FIG_SIZE[1], toolbar=False,
+                          placeholder="")
+        # Listed with the app's figures: a draw deferred while the tab was
+        # hidden is made when it is shown (_flush_shown_slots).
+        slots = getattr(self, "_slots", None)
+        if isinstance(slots, dict):
+            slots["compare_group"] = slot
+        self._cmp_group_ui = {"a": combos[0], "b": combos[1], "lbl": lbl, "fig": btn_fig,
+                              "plot": plot_card, "slot": slot, "drawn": None, "tags": {},
+                              "shown": None}
+        self._compare_group_refresh()
+
+    def _compare_group_path(self: ECGApp) -> str:
+        """The group table of the card: the Group tab's (an Excel file open
+        there), else the one this tab last added a recording to. No table is
+        remembered from an earlier session."""
+        gts = getattr(self, "_grouptab_state", None)
+        path = (gts or {}).get("path") or ""
+        return path or getattr(self, "_cmp_group_added", "") or ""
+
+    def _compare_open_group_tab(self: ECGApp) -> None:
+        """The Group tab, on the table this card draws: when the card fell
+        back on the table a recording was just added to (the Group tab had
+        none open), the Group tab opens that one, so the two tabs agree."""
+        from ecg.ui.tab_keys import TAB_GROUP
+        path = self._compare_group_path()
+        gts = getattr(self, "_grouptab_state", None) or {}
+        same = bool(gts.get("path")) and bool(path) and (
+            os.path.normcase(os.path.abspath(gts["path"]))
+            == os.path.normcase(os.path.abspath(path)))
+        if path and not same and os.path.exists(path):
+            open_ = getattr(self, "_grouptab_open", None)
+            if callable(open_):
+                open_(path)
+            else:
+                # Not built yet: the Group tab reads gts["path"] when it is.
+                if getattr(self, "_grouptab_state", None) is None:
+                    self._grouptab_state = {}
+                self._grouptab_state["path"] = path
+        tabs = getattr(self, "tabs", None)
+        if tabs is not None:
+            tabs.set(TAB_GROUP)
+
+    def _compare_group_sheets(self: ECGApp, path: str) -> "dict":
+        """{"key", "sheets": the Animals and Group sheets} of *path*, or
+        {"error": why not}; read again only when the file changed (the Group
+        tab saves the animals ticked in it)."""
+        try:
+            st = os.stat(path)
+            key = (os.path.normcase(os.path.abspath(path)), st.st_mtime_ns, st.st_size)
+        except OSError:
+            return {"error": f"Group table not found: {os.path.basename(path)}"}
+        cache = getattr(self, "_cmp_group_cache", None)
+        if cache is not None and cache.get("key") == key:
+            return cache
+        from ecg.io import group_data as gd
+        try:
+            cache = {"key": key, "sheets": gd.read_sheets(path, only=_GROUP_SHEETS)}
+        except Exception as exc:
+            cache = {"key": key, "error": f"{os.path.basename(path)}: {exc}"}
+        self._cmp_group_cache = cache
+        return cache
+
+    def _compare_group_pair(self: ECGApp, tags: "list[str]") -> "tuple[str, str]":
+        """A → B of the card: the one chosen in it (while the Group tab's pair
+        stays the one it was chosen against), else the Group tab's, else this
+        comparison's reference vs the first segment compared with it (as Add
+        to group table), else the first two segments."""
+        gts = getattr(self, "_grouptab_state", None) or {}
+        group_pair = (gts.get("a") or "", gts.get("b") or "")
+        mine = getattr(self, "_cmp_group_choice", None)
+        if (mine is not None and mine["seen"] == group_pair and mine["a"] in tags
+                and mine["b"] in tags):
+            return mine["a"], mine["b"]
+        self._cmp_group_choice = None
+        if group_pair[0] in tags and group_pair[1] in tags and group_pair[0] != group_pair[1]:
+            return group_pair
+        current = getattr(self, "_current_comparison", None)
+        res = current() if callable(current) else None
+        if res is not None and getattr(res, "pairs", None):
+            j, k = res.pairs[0]
+            a, b = res.tags[j], res.tags[k]
+            if a in tags and b in tags and a != b:
+                return a, b
+        return tags[0], tags[1]
+
+    def _compare_group_pair_chosen(self: ECGApp) -> None:
+        ui = getattr(self, "_cmp_group_ui", None)
+        if ui is None:
+            return
+        gts = getattr(self, "_grouptab_state", None) or {}
+        self._cmp_group_choice = {"a": ui["tags"].get(ui["a"].get(), ""),
+                                  "b": ui["tags"].get(ui["b"].get(), ""),
+                                  "seen": (gts.get("a") or "", gts.get("b") or "")}
+        self._compare_group_refresh()
+
+    def _compare_group_refresh(self: ECGApp, force: bool = False) -> None:
+        """Bring the group Poincaré up to date: the table (read again when it
+        changed), the pair, the animals used; drawn again only when one of
+        them changed. While the tab is hidden it waits to be shown (opening
+        the tab calls this again). *force*: read the table again."""
+        ui = getattr(self, "_cmp_group_ui", None)
+        if ui is None:
+            return
+        try:
+            if not ui["lbl"].winfo_exists():
+                return
+        except tk.TclError:
+            return
+        tabs = getattr(self, "tabs", None)
+        try:
+            hidden = tabs is not None and tabs.get() != TAB_COMPARE
+        except Exception:
+            hidden = False
+        if hidden:
+            return
+        if force:
+            self._cmp_group_cache = None
+        from ecg.io import group_data as gd
+        from ecg.ui.group_figure import draw_group_figure
+
+        def _combos(choices: "list[tuple[str, str]]", a: str = "", b: str = "") -> None:
+            ui["tags"] = {v: t for t, v in choices}
+            shown = dict(choices)
+            for cb, t in ((ui["a"], a), (ui["b"], b)):
+                cb.configure(values=[v for _t, v in choices] or [""],
+                             state="readonly" if choices else "disabled")
+                cb.set(shown.get(t, ""))
+
+        def _enable_fig(on: bool) -> None:
+            # Its look as well (a bare state change leaves it greyed).
+            setter = getattr(self, "_set_btn_enabled", None)
+            if callable(setter):
+                setter(ui["fig"], on, "secondary")
+            else:
+                ui["fig"].configure(state="normal" if on else "disabled")
+
+        def _nothing(text: str) -> None:
+            ui["lbl"].configure(text=text, text_color=MUTED)
+            ui["drawn"] = ui["shown"] = None
+            _enable_fig(False)
+            if ui["plot"].winfo_manager():
+                ui["plot"].pack_forget()
+
+        path = self._compare_group_path()
+        got = self._compare_group_sheets(path) if path else {}
+        # The shell's tick refreshes the open tab: nothing to do (and the
+        # figure export's message kept) while nothing this card shows changed.
+        gts = getattr(self, "_grouptab_state", None) or {}
+        current = getattr(self, "_current_comparison", None)
+        res = current() if callable(current) else None
+        inputs = (path, got.get("key"), gts.get("a"), gts.get("b"), gts.get("leave_out", True),
+                  gts.get("by"), str(getattr(self, "_cmp_group_choice", None)),
+                  (tuple(res.tags), tuple(res.pairs[:1])) if getattr(res, "pairs", None) else None)
+        if inputs == ui.get("inputs") and not force:
+            return
+        ui["inputs"] = inputs
+        if not path:
+            _combos([])
+            _nothing("No group table yet: ➕ Add to group table above, or open one in the "
+                     "Group tab.")
+            return
+        name = os.path.basename(path)
+        if "error" in got:
+            _combos([])
+            _nothing(f"⚠  {got['error']}")
+            return
+        seg = got["sheets"].get(gd.SHEET_SEGMENTS)
+        if seg is None or seg.empty:
+            _combos([])
+            _nothing(f"{name} has no segments yet (no Group sheet): ➕ Add to group table "
+                     "above.")
+            return
+        choices = segment_choices(seg)
+        if len(choices) < 2:
+            _combos([])
+            _nothing(f"{name} holds fewer than two segments: no pair to draw.")
+            return
+        a, b = self._compare_group_pair([t for t, _v in choices])
+        _combos(choices, a, b)
+        if a == b:
+            _nothing(f"Choose two different segments · table: {name}")
+            return
+        leave_out = bool(gts.get("leave_out", True))
+        # The Group tab's By (By group by default, as there): an animal it
+        # leaves out for having no group or sex is left out here too.
+        from ecg.io import group_compare as gc
+        by = gts.get("by") or gc.BY_GROUP
+        try:
+            rows, out = group_poincare_data(got["sheets"], a, b, leave_out, by)
+        except ValueError as exc:
+            _nothing(f"⚠  {exc} · table: {name}")
+            return
+        except Exception as exc:
+            log.warning("group Poincaré: %s", exc, exc_info=True)
+            _nothing(f"⚠  {name}: {exc}")
+            return
+        extra = []
+        if out["unticked"]:
+            extra.append(f"{out['unticked']} unticked")
+        if out["ungrouped"]:
+            extra.append(f"{out['ungrouped']} " + ("of unknown sex" if by == gc.BY_SEX
+                                                    else "without a group"))
+        if out["to_check"]:
+            extra.append(f"{out['to_check']} to check")
+        tail = " (left out: " + ", ".join(extra) + ")" if extra else ""
+        if out.get("pooled"):
+            tail += " · no " + ("sex" if by == gc.BY_SEX else "group") + " set: all ticked animals"
+        tail += f" · table: {name}"
+        n = len(rows)
+        if n < 2:
+            _nothing(f"Only {n} animal{'s' if n != 1 else ''} with a mean RR, SD1 and SD2 for "
+                     f"both {a} and {b} (2 needed){tail}")
+            return
+        ui["lbl"].configure(text=f"n = {n} animals{tail}", text_color=MUTED)
+        _enable_fig(True)
+        if not ui["plot"].winfo_manager():
+            ui["plot"].pack(fill="x", pady=(SPACE_S, 0))
+        shown = dict(choices)
+        names = tuple(shown[t].split(" · ", 1)[-1] for t in (a, b))
+        colors = self._compare_group_colors(res, a, b)
+        ui["shown"] = (rows, a, b, names, path, colors)
+        sig = (got["key"], a, b, leave_out, by, colors, tuple(map(str, rows.index)))
+        if sig != ui["drawn"]:
+            ui["drawn"] = sig
+            ui["slot"].update(lambda fig: draw_group_figure(fig, rows, a, b, names, colors))
+
+    @staticmethod
+    def _compare_group_colors(res: "Any", a: str, b: str) -> "tuple[str, str]":
+        """A and B in the colours this comparison gives them above (Pre blue,
+        Post orange...: a segment keeps its colour down the page); a segment
+        it does not hold, in the colour of its place (A blue, B orange)."""
+        tags = list(getattr(res, "tags", None) or [])
+        return tuple(segment_color(tags.index(t) if t in tags else k)
+                     for k, t in enumerate((a, b)))
+
+    def _save_compare_group_figure(self: ECGApp) -> None:
+        """The group Poincaré shown, 300 dpi PNG or vector PDF / SVG."""
+        ui = getattr(self, "_cmp_group_ui", None)
+        if ui is None or ui["shown"] is None:
+            return
+        from ecg.ui.group_figure import draw_group_figure
+        rows, a, b, names, table, colors = ui["shown"]
+        parent = ui["lbl"].winfo_toplevel()
+        out = filedialog.asksaveasfilename(
+            parent=parent, title="Save the group Poincaré",
+            defaultextension=".png", initialfile=f"group_poincare_{a}_vs_{b}.png",
+            initialdir=os.path.dirname(table) or None,
+            filetypes=[("PNG image (300 dpi)", "*.png"), ("PDF (vector)", "*.pdf"),
+                       ("SVG (vector)", "*.svg"), ("All files", "*.*")])
+        if not out:
+            return
+        fig = Figure(figsize=_GROUP_FIG_SIZE, dpi=300, facecolor="white", layout="constrained")
+        try:
+            # On white whatever the theme on screen.
+            with light_plot_theme():
+                draw_group_figure(fig, rows, a, b, names, colors)
+                fig.savefig(out, dpi=300, facecolor="white", bbox_inches="tight")
+        except Exception as exc:
+            messagebox.showerror("Group Poincaré", str(exc), parent=parent)
+            return
+        finally:
+            plt.close(fig)
+        ui["lbl"].configure(text=f"✓  figure → {os.path.basename(out)}", text_color=GREEN)

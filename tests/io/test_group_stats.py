@@ -151,3 +151,35 @@ def test_a_longer_tag_ending_like_another_is_not_a_metric():
 def test_default_family_has_one_test_per_question():
     assert "RMSSD (ms)" not in gs.DEFAULT_METRICS and "HF (n.u.) (%)" not in gs.DEFAULT_METRICS
     assert "Poincaré SD1 (ms)" in gs.DEFAULT_METRICS and "LF/HF" in gs.DEFAULT_METRICS
+
+
+def test_rank_tests_with_ties_never_beat_the_smallest_p_quoted():
+    # 3 vs 3 fully apart with tied values: scipy's normal approximation gives
+    # p = 0.047, below the 0.1 that the small-n note says no split of 6
+    # animals can beat. The exact permutation p is 0.1.
+    from scipy import stats
+    assert stats.mannwhitneyu([1, 1, 1], [2, 2, 2]).pvalue < 0.05
+    assert gs.mann_whitney_p([1, 1, 1], [2, 2, 2]) == pytest.approx(0.1)
+    assert gs.mann_whitney_p([1, 2, 3], [4, 5, 6]) == pytest.approx(0.1)   # no ties: scipy
+    rng = np.random.default_rng(1)
+    for _ in range(150):
+        n1, n2 = rng.integers(2, 6, 2)
+        x = rng.integers(0, 3, n1).astype(float)
+        y = rng.integers(0, 3, n2).astype(float)
+        p = gs.mann_whitney_p(x, y)
+        assert p >= gs.smallest_mann_whitney_p(n1, n2) - 1e-12
+        assert p == pytest.approx(float(stats.mannwhitneyu(
+            x, y, method=stats.PermutationMethod()).pvalue))
+        d = rng.integers(-2, 3, rng.integers(2, 9)).astype(float)
+        if np.any(d != 0):
+            _w, pw = gs._wilcoxon(d)
+            assert pw >= gs.smallest_wilcoxon_p(int((d != 0).sum())) - 1e-12
+            assert pw == pytest.approx(float(stats.wilcoxon(
+                d, method=stats.PermutationMethod()).pvalue))
+
+
+def test_between_test_with_ties_agrees_with_the_small_n_note():
+    from ecg.io import group_compare as gc
+    out = gc.between_test([[5.0, 5.0, 5.0], [7.0, 7.0, 7.0]])
+    assert out["rank test"] == "Mann-Whitney" and out["p"] == pytest.approx(0.1)
+    assert "smallest Mann-Whitney p is 0.1" in gc._small_n_note([3, 3], [[3, 3]])

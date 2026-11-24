@@ -385,7 +385,10 @@ when a new file is opened or the peaks are edited.
 **Segments.** 1 to 6 windows (label, from, to; **＋ Add segment**, ✕ to remove).
 The first is the reference: the table gives each metric of every segment with
 its Δ % against the first, and the HR block comparison is each segment against
-the first.
+the first. The table is cut into metric families, each under its header (Heart
+rate, HRV time domain, HRV frequency domain, HRV non-linear); the Excel
+*Comparison* sheet has a **Family** column after Metric (the CSV, the clipboard
+and the Prism tables keep their layout and titles).
 
 The windows are always typed: the tab no longer has a "Windows around an
 event" card (event, templates, artefact margin). Type the same windows and
@@ -427,7 +430,14 @@ labels for every animal and the columns line up for a paired test (2 segments: W
 matched-pairs or paired t) or a repeated-measures one (Friedman / RM ANOVA).
 
 **Group — all animals**: the tests across animals are in the **Group** tab
-(below); this card only points to it.
+(below). The card draws the **group Poincaré** of one pair A → B for the group table
+the Group tab uses (else the last one you added to): one thin ellipse per animal
+(centre = its mean RR, half-axes SD2 / SD1), the group mean thick, and one line per
+animal for HR, SD1 and SD2. The pair is the Group tab's, else this comparison's
+reference vs the first segment compared with it; change it with the two lists. Unticked
+animals and, when the Group tab leaves them out, the rows to check are not drawn; the
+line beside the lists gives n and the table, or why nothing can be drawn. **Figure…**
+saves it (300 dpi PNG, or vector PDF / SVG).
 
 Click **▶ Compare**: the table shows every metric for every segment, with the same definitions
 as the main panels. Each segment is also cut into **non-overlapping blocks**
@@ -516,7 +526,7 @@ segments). Both write the same table:
 | Animals | subject, sex, group, use, file | the Recording sheet (sex from the file name), the Group tab |
 | Group | the segments, one row per recording | Compare segments (the last comparison) |
 | Whole | every metric of the analysed window | Analyze |
-| TimeCourse | the valid RR summed in 5 s bins | Analyze |
+| TimeCourse | the valid RR summed in 5 s bins, laid out from the recording start and, over −2 h to +4 h around it, from each named annotation | Analyze |
 | Annotations | label and start of each annotation | the annotations (the stimulation) |
 | Events | pre / post / Δ of each event-locked metric | Time course › Autonomic › Event-locked, saved to the registry |
 
@@ -529,8 +539,11 @@ Excel file at once (close it in Excel first); a table from saved sessions keeps
 them in memory until **Save as Excel…**.
 
 **Compare.** *By*: **No groups** (all animals together), **Group**, or
-**Sex** (an animal without a group or sex is left out, with a note). The
-control group (Control, Vehicle, Saline, Sham, WT…) comes first.
+**Sex** (an animal without a group or sex is left out, with a note; so are
+the unticked ones). The control group (Control, Vehicle, Saline, Sham, WT…)
+comes first. Each recording is one animal of the tests: a subject recorded
+twice counts twice, and a note names it (its Prism rows and curves are named
+*subject (file)*).
 *Analysis*:
 
 - **Pre/Post segments**: *One pair* (two segments chosen) or *All pairs* (every
@@ -544,15 +557,38 @@ control group (Control, Vehicle, Saline, Sham, WT…) comes first.
   between groups, the change Post − Pre (Mann-Whitney for two groups,
   Kruskal-Wallis for more); the mixed ANOVA group × segment.
 - **Time course**: each animal aligned on its own annotation (*Time 0*, the
-  first one with that label), cut in bins (default 60 s, from −10 to +30 min),
-  HR, RR, SDNN or RMSSD, as the change from the animal's own baseline (every
-  bin before 0) when *Δ from baseline* is ticked. The figure shows mean ± SEM per
-  group (*Each animal* adds a thin line per animal). Tests: the test window (0–5 min)
+  first one with that label; a note names the animals with several), cut in
+  bins (default 60 s, from −10 to +30 min), HR (60000 / mean RR, as elsewhere
+  in the app), RR, SDNN or RMSSD, as the change from the animal's own baseline when
+  *Δ from baseline* is ticked. The bins start at the time 0 (…, −60, 0, 60 s…),
+  so none straddles it; *from* and *to* are moved to the nearest 5 s mark
+  (with a note), and a first or last bin cut short by them is noted. The bin size is a multiple of 5 s: another size is rounded to the
+  nearest one (with a note), and a size below 5 s or not a number is refused.
+  Per animal, the **baseline** is the mean of its bins before 0 and the **test
+  window** value the mean of its bins in the window (0–5 min), so a Δ curve
+  averages 0 before the time 0 and the test compares the same kind of value
+  as the curve (an SDNN of 1 min bins, not one SDNN over 10 min); with fewer
+  than half of those bins valid, the animal has no baseline or window value
+  and a note gives how many of its bins have data (left out of the baseline,
+  window and Δ means and the tests, so window − baseline = Δ in the
+  workbook). The window is the bins centred in it, and the labels show those
+  bins (0–5 min with 2 min bins is tested, and labelled, as 0–4 min). A test
+  window past *from* / *to*, or starting before 0 (on the baseline), is noted. The figure shows mean ± SEM per
+  group (*Each animal* adds a thin line per animal). Tests: the test window
   against the baseline within each group, its change between groups, and the
   mixed ANOVA group × time with the Greenhouse-Geisser correction (on the
-  animals with every bin; the others are named). A bin where valid RR cover
-  less than half of it is empty for that animal. The table keeps 5 s sums, so
-  any bin size that is a multiple of 5 s is exact.
+  animals with every bin; the others are named; with more bins than animals
+  a note suggests larger bins). A bin where valid RR cover
+  less than half of it is empty for that animal. The table keeps 5 s sums
+  laid out from each named annotation (from 2 h before it to 4 h after), so
+  the bins of any multiple of 5 s are exact around the time 0, even when the
+  stimulation is not on a 5 s mark. A table made before this (or a recording
+  annotated after it was added) is aligned within ±2.5 s only, with a note:
+  add those recordings again (**➕ Add open recording…** or **⤓ Import a
+  project…**) for exact alignment. So is a time course that goes past the
+  −2 h / +4 h kept around the annotation, and a recording whose annotation
+  bins had to be left out to keep the sheet under Excel's row limit (very
+  long recordings with many annotations).
 - **Whole recording**: each metric compared between groups (one group:
   descriptive only).
 - **Event-locked**: per animal, the mean of its events (all, or one label),
@@ -564,9 +600,24 @@ g** between two groups (the second against the first, the control), shown next
 to the p, and **Cohen's dz** within each group (in the workbook).
 
 The **Results** table gives mean ± SEM (n) per group, the p and the Holm p
-(green: below 0.05). With n ≤ 5 per group a Wilcoxon cannot go below
-2 / 2ⁿ (0.125 at n = 4), and a note says so. **Statistics… (Excel)** saves the
-results, every number behind them (means, SEM, n, Welch / one-way ANOVA
+(green: below 0.05). With several metrics it is cut into metric families, each
+under its header (Heart rate, HRV time domain, frequency domain, non-linear,
+RR asymmetry, Autonomic, ECG intervals, Abnormal events, Quality, Data
+analysed), the metrics in their order inside. The **Data analysed** rows (beats,
+duration, blocks used) say how much data each value rests on: they are shown
+per group but not tested (no p) and are not counted in the Holm correction,
+here and in the Statistics workbook. The table grows to show every row; with all pairs, each pair keeps its own
+sections. The metric of the figure is chosen in two steps: the family, then
+the metric of that family (the group Poincaré is with SD1 / SD2 under HRV
+non-linear); each family remembers the metric last chosen in it, and Up /
+Down step through the list of the focused box. With 8 metrics or fewer (All
+metrics off) a single list is shown instead, in family order. With n ≤ 5 per group a Wilcoxon cannot go below
+2 / 2ⁿ (0.125 at n = 4), nor a Mann-Whitney below 2 / C(n₁ + n₂, n₁) (0.1 for
+3 vs 3), and a note says so. With tied values in small groups both p are the
+exact permutation p (every arrangement of the animals), not the normal
+approximation, so a p is never below the smallest one the note gives. **Statistics… (Excel)** saves the
+results (in the order of the analysis; the Statistics sheet has a **Family**
+column after Metric), every number behind them (means, SEM, n, Welch / one-way ANOVA
 beside the rank tests), the ANOVA, the per-animal values and the settings.
 **Figure…** saves the figure (300 dpi PNG, PDF or SVG). **Prism… (new file /
 template)** writes, per group, one table per metric (one row per animal, Pre and Post or

@@ -91,7 +91,11 @@ def test_added_to_the_main_workbook_without_clashing():
     titles = [ws.title for ws in wb.worksheets]
     assert n == 4 + 2 + 2 and len(set(t.lower() for t in titles)) == len(titles)
     ws = wb[titles[1]]                                        # the comparison, renamed
-    assert [c.value for c in ws[1]][:3] == ["Metric", "Before", "After"]
+    # The Excel sheet only has a Family column after Metric (CSV / Prism: not).
+    assert [c.value for c in ws[1]][:4] == ["Metric", "Family", "Before", "After"]
+    # The first row is Beats: how much data, not a heart rate.
+    assert ws.cell(row=2, column=1).value == "Beats"
+    assert ws.cell(row=2, column=2).value == "Data analysed"
 
 
 def test_prism_file_reads_back(tmp_path):

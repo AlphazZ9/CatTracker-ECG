@@ -13,6 +13,7 @@ references (captured at import time) stay current.
 from __future__ import annotations
 
 import colorsys
+import contextlib
 import dataclasses
 import functools
 import json
@@ -688,6 +689,29 @@ def apply_theme_config(tc: "ThemeConfig") -> None:
     globals().update(_build_fonts(tc))
 
     _sync_to_submodules()
+
+
+@contextlib.contextmanager
+def light_plot_theme():
+    """Draw with the Light theme's plot colours on white, whatever the theme
+    on screen: a figure saved to a file (PNG / PDF / SVG on white paper)
+    must not carry the dark theme's light text and grey axes. PLOT and the
+    matplotlib text colours are put back on exit."""
+    light = _types.SimpleNamespace(is_dark=False,
+                                   _colors=dict(ThemeConfig.PRESETS["Light"]))
+    paper = dict(_make_plot_theme(light), bg="#FFFFFF", axes="#FFFFFF")
+    saved = dict(PLOT)
+    PLOT.update(paper)
+    try:
+        with plt.rc_context({
+                "figure.facecolor": paper["bg"], "axes.facecolor": paper["axes"],
+                "grid.color": paper["grid"], "axes.labelcolor": paper["text"],
+                "xtick.color": paper["muted"], "ytick.color": paper["muted"],
+                "text.color": paper["text"]}):
+            yield PLOT
+    finally:
+        PLOT.clear()
+        PLOT.update(saved)
 
 
 def make_font(size: int = 12, bold: "bool | str" = False) -> "tuple[str, int, str]":

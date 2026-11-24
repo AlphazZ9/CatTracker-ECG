@@ -29,6 +29,7 @@ from typing import Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from ecg.core.metric_families import is_descriptive
 from ecg.io.safe_write import replacing
 
 from ecg.io.subject_name import normalise_sex
@@ -184,6 +185,46 @@ def holm(p: "Sequence[float]") -> "list[float]":
     return adj
 
 
+# Up to this many arrangements, a rank test with tied values is worked out
+# exactly by enumerating them. scipy falls back on the normal approximation
+# there, which with 3 vs 3 animals can give p = 0.047 where no split of 6
+# animals goes below 0.1 (smallest_mann_whitney_p, quoted in the results).
+_EXACT_MAX = 20000
+
+
+def _has_ties(v: "np.ndarray") -> bool:
+    return len(np.unique(v)) < len(v)
+
+
+def _exact_two_sided(stat_all: "np.ndarray", obs: float) -> float:
+    """Two-sided p over every arrangement: twice the smaller one-sided share
+    (as scipy's exact tests), with a small tolerance for the half ranks."""
+    s = np.asarray(stat_all, dtype=float)
+    lo = np.mean(s <= obs + 1e-9)
+    hi = np.mean(s >= obs - 1e-9)
+    return float(min(1.0, 2.0 * min(lo, hi)))
+
+
+def mann_whitney_p(x: "Sequence[float]", y: "Sequence[float]") -> float:
+    """Two-sided Mann-Whitney p of two independent samples: scipy's, except
+    with tied values in small samples, where it is the exact permutation p
+    (every split of the pooled values into groups of these sizes, mid-ranks),
+    so it never goes below smallest_mann_whitney_p."""
+    from itertools import combinations
+    from scipy import stats
+    a = np.asarray(x, dtype=float)
+    b = np.asarray(y, dtype=float)
+    n1, n2 = len(a), len(b)
+    pooled = np.concatenate([a, b])
+    if n1 and n2 and _has_ties(pooled) and math.comb(n1 + n2, n1) <= _EXACT_MAX:
+        ranks = stats.rankdata(pooled)
+        idx = np.array(list(combinations(range(n1 + n2), n1)), dtype=int)
+        return _exact_two_sided(ranks[idx].sum(axis=1), float(ranks[:n1].sum()))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return float(stats.mannwhitneyu(a, b, alternative="two-sided").pvalue)
+
+
 def _wilcoxon(d: "np.ndarray") -> "tuple[float, float]":
     from scipy import stats
     if len(d) < 2 or np.all(d == 0):
@@ -191,7 +232,17 @@ def _wilcoxon(d: "np.ndarray") -> "tuple[float, float]":
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         r = stats.wilcoxon(d, alternative="two-sided")
-    return float(r.statistic), float(r.pvalue)
+    w, p = float(r.statistic), float(r.pvalue)
+    # Tied |differences|: the exact sign-flip p, the zeros dropped as scipy's
+    # default does (older scipy uses the normal approximation there), so p
+    # never goes below smallest_wilcoxon_p.
+    nz = np.asarray(d, dtype=float)
+    nz = nz[nz != 0]
+    if len(nz) and _has_ties(np.abs(nz)) and 2 ** len(nz) <= _EXACT_MAX:
+        ranks = stats.rankdata(np.abs(nz))
+        signs = (np.arange(2 ** len(nz))[:, None] >> np.arange(len(nz))) & 1
+        p = _exact_two_sided((signs * ranks).sum(axis=1), float(ranks[nz > 0].sum()))
+    return w, p
 
 
 def _ttest(d: "np.ndarray") -> float:
@@ -227,7 +278,10 @@ def paired_stats(df: "pd.DataFrame", a: str, b: str,
         ok = np.isfinite(va) & np.isfinite(vb)
         va, vb = va[ok], vb[ok]
         d = vb - va
-        w, p_w = _wilcoxon(d)
+        # Beats, Duration, Blocks used: described, not tested (no p, so not
+        # in the Holm family either).
+        tested = not is_descriptive(name)
+        w, p_w = _wilcoxon(d) if tested else (math.nan, math.nan)
         rows.append({
             "Metric": name, "n": int(ok.sum()),
             # Wilcoxon leaves out zero differences: this is its n.
@@ -237,7 +291,8 @@ def paired_stats(df: "pd.DataFrame", a: str, b: str,
             "Median Δ (B − A)": float(np.median(d)) if len(d) else math.nan,
             "Mean Δ (B − A)": float(np.mean(d)) if len(d) else math.nan,
             "n up / down": f"{int((d > 0).sum())} / {int((d < 0).sum())}",
-            "Wilcoxon W": w, "Wilcoxon p": p_w, "Paired t p": _ttest(d),
+            "Wilcoxon W": w, "Wilcoxon p": p_w,
+            "Paired t p": _ttest(d) if tested else math.nan, "Tested": tested,
         })
     out = pd.DataFrame(rows)
     if len(out):
@@ -251,6 +306,14 @@ def smallest_wilcoxon_p(n: int) -> float:
     return 2.0 / (2 ** n) if n > 0 else math.nan
 
 
+def smallest_mann_whitney_p(n1: int, n2: int) -> float:
+    """The smallest two-sided p an exact Mann-Whitney test can give with
+    groups of *n1* and *n2* (2 / C(n1 + n2, n1): the two groups fully apart)."""
+    if n1 < 1 or n2 < 1:
+        return math.nan
+    return min(1.0, 2.0 / math.comb(n1 + n2, n1))
+
+
 def _report_frames(df: "pd.DataFrame", a: str, b: str, stats: "pd.DataFrame",
                    checks: "Sequence[RowCheck]", excluded: "Sequence[str]" = (),
                    note: str = "") -> "dict[str, pd.DataFrame]":
@@ -261,12 +324,18 @@ def _report_frames(df: "pd.DataFrame", a: str, b: str, stats: "pd.DataFrame",
                      "comparison; Holm correction over the metrics"),
             ("Unit", "the animal: one row per recording, one recording per animal"),
             ("Rows left out", ", ".join(excluded) if excluded else "none")]
-    n = int(stats["n tested (Δ ≠ 0)"].max()) if len(stats) else 0
+    tested = (stats.loc[stats["Tested"].astype(bool)] if len(stats) and "Tested" in stats.columns
+              else stats)
+    n = int(tested["n tested (Δ ≠ 0)"].max()) if len(tested) else 0
     if n:
         info.append(("Smallest possible Wilcoxon p",
                      f"{smallest_wilcoxon_p(n):.3g} (n = {n} animals with a non-zero difference; "
                      "per metric: column n tested)"))
-    info.append(("Metrics tested", ", ".join(stats["Metric"]) if len(stats) else "none"))
+    info.append(("Metrics tested", ", ".join(tested["Metric"]) if len(tested) else "none"))
+    shown = [m for m in (stats["Metric"] if len(stats) else []) if m not in set(tested["Metric"])]
+    if shown:
+        info.append(("Described, not tested", ", ".join(shown) + " (the data analysed: no p, "
+                     "not counted in Holm)"))
     if note:
         info.append(("Note", note))
     # The sex beside the subject when the table has it (tables made before

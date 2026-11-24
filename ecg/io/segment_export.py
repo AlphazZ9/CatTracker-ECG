@@ -27,6 +27,7 @@ from typing import Any, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from ecg.core.metric_families import family_of
 from ecg.io.safe_write import replacing
 
 from ecg.core.segment_plan import (
@@ -236,10 +237,21 @@ def _sheet_name(base: str, used: "set[str]") -> str:
     return name
 
 
+def _with_family(df: "pd.DataFrame") -> "pd.DataFrame":
+    """The comparison with a Family column after Metric (Heart rate, HRV time
+    domain...), for the Excel sheet only: the CSV, the clipboard and the
+    Prism tables keep their layout."""
+    if "Family" in df.columns:
+        return df
+    out = df.copy()
+    out.insert(1, "Family", [family_of(m) for m in out["Metric"]])
+    return out
+
+
 def _sheets(res: ComparisonResult, exported_at: str,
             prefix: str = "") -> "list[tuple[str, pd.DataFrame]]":
     """(title, frame) of every sheet, the comparison first."""
-    out = [(f"{prefix}Comparison", comparison_frame(res)),
+    out = [(f"{prefix}Comparison", _with_family(comparison_frame(res))),
            (f"{prefix}Quality", quality_frame(res)),
            (f"{prefix}Summary", pd.DataFrame(summary_rows(res, exported_at),
                                              columns=["Item", "Value"])),

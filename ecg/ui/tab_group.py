@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from typing import TYPE_CHECKING, Any, Optional
@@ -32,10 +33,11 @@ from ecg.io.subject_name import normalise_sex
 from ecg.ui.group_tab_figure import draw_group_tab_figure
 from ecg.ui.plots import CanvasSlot
 from ecg.ui.tab_keys import TAB_GROUP
+from ecg.ui.widgets import FamilyCombo
 from ecg.ui.theme import (
     BG, BORDER, BORDER2, CARD, GREEN, MUTED, ORANGE, RED, TEXT, THEME, BLUE, CARD_PAD,
     FONT_HINT, FONT_SECTION_HDR, FONT_SMALL, PAGE_GAP, PAGE_PAD_X, PAGE_PAD_Y, SPACE_M,
-    SPACE_S, SPACE_XS, button_style, card_style, combo_style, input_style,
+    SPACE_S, SPACE_XS, button_style, card_style, combo_style, input_style, light_plot_theme,
 )
 
 # Mixin of ECGApp: `self: ECGApp` shows pyright the whole app surface, so a
@@ -51,6 +53,12 @@ ALL_EVENTS = "All events"
 # The last group table opened, remembered per user (read at call time, so a
 # test can point it elsewhere).
 FIG_SIZE = (12.0, 4.6)
+
+
+def _file_tag(analysis: str) -> str:
+    """A file-name-safe tag of an analysis name ('Pre/Post segments' ->
+    'pre_post'): a '/' in the suggested name made the save fail."""
+    return re.sub(r"[^a-z0-9]+", "_", analysis.split()[0].lower()).strip("_") or "group"
 
 
 def recording_lines(results: "Optional[dict]", metric_rows: "Any", annotations: "Any",
@@ -69,13 +77,19 @@ def recording_lines(results: "Optional[dict]", metric_rows: "Any", annotations: 
     whole = gd.whole_frame(metric_rows or [])
     if len(whole):
         out[gd.SHEET_WHOLE] = whole
+    an = gd.annotations_frame(annotations or [])
     ts = rr_timeseries(results) if results else None
-    tc = (gd.time_frame(ts["Time_s"], ts["RR_ms"], ts["valid"])
+    # Fine bins laid out on each named annotation too (an unnamed one cannot
+    # be chosen as the Time 0): a time course aligned on any of them has
+    # exact bin edges.
+    named = an.loc[an["label"].astype(str).str.strip() != "", "t_start"].tolist()
+    tc = (gd.time_frame(ts["Time_s"], ts["RR_ms"], ts["valid"], anchors=named)
           if ts is not None and len(ts) else None)
     if tc is not None and len(tc):
         out[gd.SHEET_TIME] = tc
-    an = gd.annotations_frame(annotations or [])
-    if len(an):
+    # With a new time course its annotations are written too, even none: the
+    # old ones (deleted since) must not stay as a Time 0 its grids miss.
+    if len(an) or gd.SHEET_TIME in out:
         out[gd.SHEET_ANNOT] = an
     ev = gd.events_frame(event_rows or [])
     if len(ev):
@@ -202,6 +216,24 @@ def _float(entry: "Any", default: float) -> float:
     return v if math.isfinite(v) else default
 
 
+def _bin_size(entry: "Any", default: float = 60.0) -> float:
+    """The bin size (s) typed in *entry* (*default* when empty); a text that
+    is not a number, or a size below the table's TC_BIN_S, is refused with a
+    message (gc.analyse_time rounds the rest to a multiple of TC_BIN_S)."""
+    text = str(entry.get()).replace(",", ".").replace("−", "-").strip()
+    if not text:
+        return default
+    try:
+        v = float(text)
+    except ValueError:
+        raise ValueError(f"Bins (s): “{text}” is not a number. Type a bin size in seconds, "
+                         f"a multiple of {gd.TC_BIN_S:g} (e.g. 60).") from None
+    if not math.isfinite(v) or v < gd.TC_BIN_S:
+        raise ValueError(f"Bins (s): {text} s is not a bin size. It must be at least "
+                         f"{gd.TC_BIN_S:g} s, a multiple of {gd.TC_BIN_S:g} (e.g. 60).")
+    return v
+
+
 class TabGroupMixin:
     """ECGApp Group tab construction and handlers."""
 
@@ -258,7 +290,8 @@ class TabGroupMixin:
         subject, sex, filepath, lines = self._group_lines_of_open_recording(comparison)
         if not filepath:
             raise ValueError("Open a recording first.")
-        got = [k for k, v in lines.items() if v is not None]
+        # An empty frame only clears older lines (no annotations any more).
+        got = [k for k, v in lines.items() if v is not None and len(v)]
         if not any(k in got for k in (gd.SHEET_SEGMENTS, gd.SHEET_WHOLE, gd.SHEET_TIME,
                                       gd.SHEET_EVENTS)):
             raise ValueError("Nothing to add yet: run Analyze (whole recording and time "
@@ -422,8 +455,12 @@ class TabGroupMixin:
         _lbl(o_tc, "min vs pre")
         chk_delta = _check(o_tc, "Δ from baseline", "delta")
         chk_lines = _check(o_tc, "Each animal", "lines")
-        tip(e_bin, "Bin size in seconds (the table keeps 5 s sums: any multiple of 5 s is exact)")
-        tip(chk_delta, "Each animal minus its own mean before the time 0 (from 'from' to 0)")
+        tip(e_bin, "Bin size in seconds, a multiple of 5 s (another size is rounded to one). "
+                   "The bins start at the time 0, so none straddles it, and every multiple "
+                   "of 5 s is exact")
+        tip(chk_delta, "Each animal minus its own baseline: the mean of its bins before the "
+                       "time 0 (from 'from' to 0). The test window value is the mean of its "
+                       "bins in the window")
         # Whole recording
         o_wh = ctk.CTkFrame(opts, fg_color="transparent")
         chk_all_wh = _check(o_wh, "All metrics", "all")
@@ -440,8 +477,9 @@ class TabGroupMixin:
 
         # ── Figure ──
         hdr_f, f_body = _card("Figure")
-        cb_fm = ctk.CTkComboBox(hdr_f, width=260, values=[""], state="readonly",
-                                command=lambda _v: _draw(), **combo_style())
+        # Family first, then the metric: the list mixes HR, SD, power... metrics
+        # (All metrics, Whole recording); a short list stays one drop-down.
+        cb_fm = FamilyCombo(hdr_f, width=260, command=lambda _v: _draw(), flat_max=8)
         plot_card = ctk.CTkFrame(f_body, fg_color=CARD, corner_radius=0, height=470)
         plot_card.pack(fill="x")
         plot_card.pack_propagate(False)
@@ -463,6 +501,9 @@ class TabGroupMixin:
         txt.tag_configure("head", font=(THEME.font_family, _fsize, "bold"), foreground=MUTED)
         txt.tag_configure("stripe", background=BG)
         txt.tag_configure("sig", foreground=GREEN)
+        # A metric family's header, as in the Rhythm & HRV table.
+        txt.tag_configure("family", font=(THEME.font_family, _fsize, "bold"), foreground=BLUE,
+                          spacing1=SPACE_S)
         txt.configure(state="disabled")
         txt.pack(fill="x")
         lbl_notes = ctk.CTkLabel(r_body, text="", font=FONT_SMALL, text_color=ORANGE,
@@ -581,6 +622,9 @@ class TabGroupMixin:
             _summary()
             if field_ == "group":
                 _refresh_animals()
+            # Its message is kept through the run it starts (cleared by the
+            # next one, so it does not go stale).
+            data["keep_msg"] = True
             _changed()
 
         def _summary() -> None:
@@ -859,16 +903,28 @@ class TabGroupMixin:
                 return gc.analyse_events(sheets, an, st["by"], ev, metrics,
                                          config=st["ev_config"] or None)
             if not st["stim"]:
+                annot = sheets.get(gd.SHEET_ANNOT)
+                if gd.annotation_labels(annot):
+                    raise ValueError("Choose the Time 0 annotation (the stimulation) to align "
+                                     "the time course on.")
+                if annot is not None and len(annot):
+                    raise ValueError("Choose the Time 0 annotation: those of the table have no "
+                                     "name. Name the stimulation in each recording, then Add "
+                                     "open recording.")
                 raise ValueError("No annotation in the table to align on: annotate the "
                                  "stimulation in each recording, then Add open recording.")
             return gc.analyse_time(
                 sheets, an, st["by"], st["stim"], st["tc_metric"],
-                bin_s=max(5.0, _float(e_bin, 60.0)), start_min=_float(e_from, -10.0),
+                bin_s=_bin_size(e_bin), start_min=_float(e_from, -10.0),
                 end_min=_float(e_to, 30.0),
                 window_min=(_float(e_w0, 0.0), _float(e_w1, 5.0)), delta=st["delta"])
 
         def _changed() -> None:
             _read_options()
+            if not data.pop("keep_msg", False) and lbl_msg.cget("text"):
+                _say("")
+            # An export's message is about the previous result.
+            lbl_out.configure(text="")
             if data["sheets"] is None:
                 if data["res"] is not None or btn_fig.cget("state") == "normal":
                     data["res"] = None
@@ -896,7 +952,7 @@ class TabGroupMixin:
                                                  ha="center", va="center", color="#888"))
                 return
             d = res.display
-            cols = [c for c in d.columns if c != "_p"]
+            cols = [c for c in d.columns if not str(c).startswith("_")]
             import tkinter.font as tkfont
             f_body = tkfont.Font(font=txt.cget("font"))
             f_head = tkfont.Font(font=(THEME.font_family, _fsize, "bold"))
@@ -908,20 +964,36 @@ class TabGroupMixin:
                 stops += [x, "left"]
             txt.configure(tabs=tuple(stops))
             txt.insert("end", "\t".join(cols) + "\n", "head")
-            for i, (_, r) in enumerate(d.iterrows()):
-                tags = ("stripe",) if i % 2 else ()
-                p = r.get("_p")
-                if isinstance(p, float) and math.isfinite(p) and p < 0.05:
-                    tags += ("sig",)
-                txt.insert("end", "\t".join(str(r[c]) for c in cols) + "\n", tags)
-            txt.configure(height=min(24, len(d) + 2), state="disabled")
+            # Several metrics: one section per family (Heart rate, HRV time
+            # domain...), the metrics in their own order inside.
+            n_lines = 1
+            n_heads = 0
+            for head, rows in gc.display_by_family(d):
+                if head:
+                    txt.insert("end", head.upper() + "\n", "family")
+                    n_lines += 1
+                    n_heads += 1
+                for i, (_, r) in enumerate(rows.iterrows()):
+                    tags = ("stripe",) if i % 2 else ()
+                    p = r.get("_p")
+                    if isinstance(p, float) and math.isfinite(p) and p < 0.05:
+                        tags += ("sig",)
+                    txt.insert("end", "\t".join(str(r[c]) for c in cols) + "\n", tags)
+                    n_lines += 1
+            # The headers' space above (spacing1) is not counted in lines.
+            n_lines += -(-n_heads * SPACE_S // max(1, f_body.metrics("linespace") + 6))
+            # Every row shown: the box grows to the whole table and the page
+            # scrolls (a box capped at 30 lines, without a scrollbar, hid
+            # everything past the 30th line with All metrics).
+            txt.configure(height=n_lines + 1, state="disabled")
             lbl_notes.configure(text="\n".join(f"⚠  {n}" for n in res.notes))
             fm = []
             if res.figure.get("kind") in ("paired", "dots"):
                 fm = list(res.figure.get("values", {})) + list(res.figure.get("poincare") or {})
             if fm:
                 cb_fm.configure(values=fm)
-                cb_fm.set(st["fig_metric"] if st["fig_metric"] in fm else fm[0])
+                # Else the first of the first family: Mean HR, not Beats.
+                cb_fm.set(st["fig_metric"] if st["fig_metric"] in fm else cb_fm.first())
                 if not cb_fm.winfo_manager():
                     cb_fm.pack(side="right")
             elif cb_fm.winfo_manager():
@@ -952,7 +1024,7 @@ class TabGroupMixin:
                 return
             path = filedialog.asksaveasfilename(
                 parent=win, title="Save the group statistics", defaultextension=".xlsx",
-                initialfile=f"{_base()}_{res.analysis.split()[0].lower()}_stats.xlsx",
+                initialfile=f"{_base()}_{_file_tag(res.analysis)}_stats.xlsx",
                 initialdir=os.path.dirname(st["path"]) or None,
                 filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
             if not path:
@@ -970,7 +1042,7 @@ class TabGroupMixin:
                 return
             path = filedialog.asksaveasfilename(
                 parent=win, title="Save the group figure", defaultextension=".png",
-                initialfile=f"{_base()}_{res.analysis.split()[0].lower()}.png",
+                initialfile=f"{_base()}_{_file_tag(res.analysis)}.png",
                 initialdir=os.path.dirname(st["path"]) or None,
                 filetypes=[("PNG image (300 dpi)", "*.png"), ("PDF (vector)", "*.pdf"),
                            ("SVG (vector)", "*.svg"), ("All files", "*.*")])
@@ -978,9 +1050,11 @@ class TabGroupMixin:
                 return
             fig = Figure(figsize=FIG_SIZE, dpi=300, facecolor="white", layout="constrained")
             try:
-                draw_group_tab_figure(fig, res, metric=st["fig_metric"] or None,
-                                      show_animals=st["lines"])
-                fig.savefig(path, dpi=300, facecolor="white", bbox_inches="tight")
+                # On white whatever the theme on screen.
+                with light_plot_theme():
+                    draw_group_tab_figure(fig, res, metric=st["fig_metric"] or None,
+                                          show_animals=st["lines"])
+                    fig.savefig(path, dpi=300, facecolor="white", bbox_inches="tight")
             except Exception as exc:
                 messagebox.showerror("Group figure", str(exc), parent=win)
                 return
@@ -999,7 +1073,7 @@ class TabGroupMixin:
                 return
             path = filedialog.asksaveasfilename(
                 parent=win, title="Export to GraphPad Prism", defaultextension=".pzfx",
-                initialfile=f"{_base()}_{res.analysis.split()[0].lower()}.pzfx",
+                initialfile=f"{_base()}_{_file_tag(res.analysis)}.pzfx",
                 initialdir=os.path.dirname(st["path"]) or None,
                 filetypes=[("GraphPad Prism", "*.pzfx"), ("All files", "*.*")])
             if not path:
@@ -1057,7 +1131,8 @@ class TabGroupMixin:
             "The unit is the animal. Within a group: Wilcoxon signed-rank (paired t beside it); "
             "between groups: Mann-Whitney / Kruskal-Wallis on the change (Welch / ANOVA in the "
             "workbook); RM ANOVA: mixed, Greenhouse-Geisser for time. Holm over the metrics "
-            "listed: pick your primary metric in advance."), font=FONT_HINT, text_color=MUTED,
+            "tested (the Data analysed rows — beats, duration, blocks — are described, not "
+            "tested): pick your primary metric in advance."), font=FONT_HINT, text_color=MUTED,
             anchor="w", justify="left")
         lbl_hint.pack(fill="x", pady=(SPACE_S, 0))
         wrapped.append(lbl_hint)
@@ -1067,6 +1142,9 @@ class TabGroupMixin:
         _refresh_animals()
         _buttons_state()
         self._grouptab_reload = _reload
+        # Compare segments' 'Open the Group tab' opens the table its group
+        # Poincaré shows, so the two tabs show the same table.
+        self._grouptab_open = lambda path: _load(path, quiet=True)
         # Nothing is opened by itself: a table chosen in this session (the
         # page rebuilt) comes back.
         if st["path"] and os.path.exists(st["path"]):

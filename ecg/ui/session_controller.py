@@ -103,7 +103,6 @@ def wave_template_from_session(state: dict) -> "WaveTemplate | None":
     return WaveTemplate.from_dict(raw) if isinstance(raw, dict) else None
 
 
-
 PACING_COLOR = "#14B8A6"
 
 
@@ -121,6 +120,23 @@ def pacing_as_annotations(periods: "Any") -> "list[dict]":
                     "label": str(p.get("note") or "").strip() or "Pacing",
                     "color": PACING_COLOR})
     return out
+
+
+def restore_entry(w: Any, val: Any) -> None:
+    """Put *val* back into the entry *w* after a UI rebuild; an empty value
+    shows the entry's placeholder again. CTkEntry.delete wipes the
+    placeholder shown and, on an entry never focused yet (CTk starts it as
+    focused), does not put it back: the analysis window's From / To (whose
+    placeholders "0" and the signal end state the window) came back blank
+    after a theme toggle."""
+    w.delete(0, "end")
+    if str(val):    # an insert, even of "", hides the placeholder
+        w.insert(0, str(val))
+        return
+    show = getattr(w, "_activate_placeholder", None)
+    if callable(show):
+        show()
+
 
 class SessionController:
     def __init__(self, app: "ECGApp") -> None:
@@ -1490,9 +1506,7 @@ class SessionController:
                 w = getattr(self.app, attr, None)
                 if w is None:
                     continue
-                w.delete(0, "end")
-                if str(val):    # an insert, even of "", hides the placeholder
-                    w.insert(0, str(val))
+                restore_entry(w, val)
             except Exception as _exc:
                 log.debug("_restore_ui_state entry %s: %s", attr, _exc)
         # ent_project_name's restored text doesn't auto-propagate to its top-

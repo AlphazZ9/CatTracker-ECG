@@ -1,7 +1,8 @@
 """The group table as a whole experiment (ecg.io.group_data): one workbook,
 one animal per recording; adding a recording again replaces its lines in the
-sheets it writes and keeps its group; the time course is kept as 5 s sums
-from which any coarser bin is exact."""
+sheets it writes and keeps its group; the time course is kept as 5 s sums,
+laid out on the recording start and on each annotation, from which any
+coarser bin anchored on one of them is exact."""
 from __future__ import annotations
 
 import math
@@ -33,7 +34,8 @@ def test_time_frame_sums_give_the_exact_metrics_of_any_coarser_bin():
     lo, hi = 60.0, 120.0
     m = valid & (np.floor(t / 5) * 5 >= lo) & (np.floor(t / 5) * 5 < hi)
     assert gd.window_value(tc, "RR", lo, hi) == pytest.approx(r[m].mean())
-    assert gd.window_value(tc, "HR", lo, hi) == pytest.approx((60000 / r[m]).mean())
+    # HR as in the rest of the app: 60000 / mean RR, not the mean beat-by-beat HR.
+    assert gd.window_value(tc, "HR", lo, hi) == pytest.approx(60000 / r[m].mean())
     assert gd.window_value(tc, "SDNN", lo, hi) == pytest.approx(r[m].std(ddof=1))
     pair = valid[1:] & valid[:-1]
     idx = np.floor(t[1:] / 5) * 5
@@ -200,3 +202,91 @@ def test_a_numeric_subject_read_back_as_float_replaces_its_row(tmp_path):
     append_group_row(p, group_row("", "b.smr", segs, metrics))       # an empty subject
     n, replaced = append_group_row(p, group_row("243", "a.smr", segs, metrics))
     assert (n, replaced) == (2, True)
+
+
+def test_fine_bins_are_laid_out_on_each_annotation_once_per_grid():
+    t, r = _rr(n=3000)
+    # 100 s and 0 share a grid, 1808.37 and 1803.37 too: two grids stored.
+    tc = gd.time_frame(t, r, np.ones(len(r), bool), anchors=[100.0, 203.37, 208.37, "x"])
+    assert gd.tc_anchors([100.0, 203.37, 208.37]) == [0.0, 203.37]
+    assert list(tc.columns) == list(gd.TC_COLUMNS)
+    assert sorted(set(tc["anchor_s"])) == [0.0, 203.37]
+    for a, sub in tc.groupby("anchor_s"):
+        k = (sub["t_s"] - a) / gd.TC_BIN_S
+        assert np.allclose(k, np.round(k))
+        assert int(sub["n_rr"].sum()) == len(r)
+    lines, how = gd.anchor_lines(tc, 208.3702)
+    assert how == gd.ALIGN_EXACT and set(lines["anchor_s"]) == {203.37}
+    lines, how = gd.anchor_lines(tc, 61.0)              # no grid of its own
+    assert how == gd.ALIGN_NO_GRID and set(lines["anchor_s"]) == {0.0}
+
+
+def test_lines_made_before_anchors_are_the_recording_start_grid():
+    t, r = _rr(n=1000)
+    old = gd.time_frame(t, r, np.ones(len(r), bool)).drop(columns="anchor_s")
+    lines, how = gd.anchor_lines(old, 60.0)
+    assert how == gd.ALIGN_EXACT and len(lines) == len(old)
+    lines, how = gd.anchor_lines(old, 61.3)
+    assert how == gd.ALIGN_NO_GRID and len(lines) == len(old)
+
+
+def test_bin_edges_start_at_the_time_0():
+    assert list(gd.bin_edges(-125, 130, 60)) == [-125, -120, -60, 0, 60, 120, 130]
+    assert list(gd.bin_edges(-600, 1800, 60))[:2] == [-600, -540]
+    assert 0.0 in gd.bin_edges(-240, 480, 70)
+    with pytest.raises(ValueError):
+        gd.bin_edges(0, 10, 0)
+
+
+def test_an_annotation_grid_covers_a_span_around_it_only():
+    # 10 h at ~8 beats/s: the start grid over everything, the annotation's
+    # over TC_ANCHOR_SPAN_S around it (a full copy per annotation would pass
+    # Excel's row limit on day-long recordings).
+    t, r = _rr(n=300_000)
+    stim = 5 * 3600 + 3.37
+    tc = gd.time_frame(t, r, np.ones(len(r), bool), anchors=[stim])
+    start = tc.loc[tc["anchor_s"] == 0.0]
+    own = tc.loc[tc["anchor_s"] == stim]
+    lo, hi = gd.TC_ANCHOR_SPAN_S
+    assert len(own) == pytest.approx((hi - lo) / gd.TC_BIN_S, abs=1)
+    assert own["t_s"].min() == pytest.approx(stim + lo)
+    assert own["t_s"].max() + gd.TC_BIN_S == pytest.approx(stim + hi)
+    assert int(start["n_rr"].sum()) == len(r)
+    # Inside the span: exact; past it (where there are beats): the start grid.
+    lines, how = gd.anchor_lines(tc, stim, (-600, 1800))
+    assert how == gd.ALIGN_EXACT and set(lines["anchor_s"]) == {stim}
+    lines, how = gd.anchor_lines(tc, stim, (lo - 600, 1800))
+    assert how == gd.ALIGN_PAST_SPAN and set(lines["anchor_s"]) == {0.0}
+    # Past the span but past the recording too: nothing missing, exact.
+    t2, r2 = _rr(n=30_000)                      # ~1 h
+    tc2 = gd.time_frame(t2, r2, np.ones(len(r2), bool), anchors=[1803.37])
+    assert gd.anchor_lines(tc2, 1803.37, (-5 * 3600, 5 * 3600))[1] == gd.ALIGN_EXACT
+    # Two anchors of one grid far apart: the span of both.
+    tc3 = gd.time_frame(t, r, np.ones(len(r), bool), anchors=[3.37, 9 * 3600 + 3.37])
+    assert set(tc3["anchor_s"]) == {0.0, 3.37}
+    assert gd.anchor_lines(tc3, 9 * 3600 + 3.37, (-600, 1800))[1] == gd.ALIGN_EXACT
+
+
+def test_a_table_past_the_row_limit_drops_annotation_grids_not_the_add(tmp_path, monkeypatch):
+    monkeypatch.setattr(gd, "EXCEL_MAX_ROWS", 2500)
+    t, r = _rr(n=8000)                          # ~16 min: ~193 start rows, as many per grid
+    p = str(tmp_path / "g.xlsx")
+    for i in range(5):
+        an = gd.annotations_frame([{"t_start": 100.0 + 50 * k + 1.1 * (k + 1),
+                                    "label": f"S{k}"} for k in range(6)])
+        tc = gd.time_frame(t, r, np.ones(len(r), bool), anchors=an["t_start"].tolist())
+        gd.add_recording(p, f"{i}", "M", f"{i}.mat", {gd.SHEET_TIME: tc, gd.SHEET_ANNOT: an})
+    sh = gd.read_sheets(p)
+    tc = sh[gd.SHEET_TIME]
+    assert len(tc) < 2500 and len(gd.animals_frame(sh)) == 5
+    # Every recording keeps its whole start grid.
+    start = tc.loc[tc["anchor_s"] == 0.0]
+    assert (start.groupby("subject")["n_rr"].sum() == len(r)).all()
+    assert set(start["subject"].astype(str)) == {"0", "1", "2", "3", "4"}
+    # A recording that lost its grids falls back to the start grid.
+    lost = [s for s in "01234" if not (tc.loc[tc["subject"].astype(str) == s,
+                                              "anchor_s"] != 0.0).any()]
+    assert lost
+    sub = tc.loc[tc["subject"].astype(str) == lost[0]]
+    assert gd.anchor_lines(sub, 101.1)[1] == gd.ALIGN_NO_GRID
+    assert gd.fit_time_course({gd.SHEET_TIME: tc}) == []

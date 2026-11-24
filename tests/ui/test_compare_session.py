@@ -362,3 +362,36 @@ def test_poincare_redrawn_when_the_card_width_changes_its_columns(root, monkeypa
         root.update()
         time.sleep(0.02)
     assert calls[-1] != narrow and calls[-1] > narrow
+
+
+def test_exported_poincare_has_two_panels_a_row(root, monkeypatch, tmp_path):
+    """The exported Poincaré figure puts a Pre/Post pair on each row
+    (2 columns), not the 4 a row of the on-screen view."""
+    seen = []
+    real = cs.draw_poincare_set
+
+    def _spy(fig, segs, colors, **kw):
+        out = real(fig, segs, colors, **kw)
+        seen.append((kw.get("ncols"), tuple(fig.get_size_inches()),
+                     sorted({round(a.get_position().x0, 2) for a in fig.axes
+                             if a.get_visible() and a.has_data()})))
+        return out
+    monkeypatch.setattr(cs, "draw_poincare_set", _spy)
+    monkeypatch.setattr(cs.filedialog, "asksaveasfilename",
+                        lambda *a, **k: str(tmp_path / "fig.png"))
+    from tests.ui.test_prism_export_ui import _enable
+    app = _app()
+    app._set_btn_enabled = _enable
+    frame = _build(app, root)
+    six = [(f"{w} {k}", 50 + 90 * (2 * k - 2 + j), 140 + 90 * (2 * k - 2 + j))
+           for k in (1, 2, 3) for j, w in enumerate(("Pre", "Post"))]
+    _run(app, frame, six)
+    _wait(app, frame)
+    btn = next(w for w in _walk(frame) if isinstance(w, ctk.CTkButton)
+               and w.cget("text") == "Figures…")
+    btn.invoke()
+    ncols, size, xs = seen[-1]
+    assert ncols == 2
+    assert size == pytest.approx((8, 3 * 4.6))      # 2 columns × 3 rows
+    assert len(xs) == 2
+    assert (tmp_path / "fig_poincare.png").exists()
