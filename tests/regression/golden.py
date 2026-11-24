@@ -29,7 +29,8 @@ How
 Tolerance
     Integers, booleans and strings (peak indices, counts, flags, labels) must
     be equal. Floats must satisfy |a - b| <= ATOL + RTOL * |b|, NaN equal to
-    NaN. The tolerance absorbs floating-point summation-order effects of a
+    NaN; values in units of the z-scored signal use the absolute tolerance
+    SIGNAL_ATOL instead of ATOL (see SIGNAL_UNIT_NAMES). The tolerance absorbs floating-point summation-order effects of a
     different BLAS or CPU, not a change of method: a moved algorithm gives
     the same floats to the last bit on the same machine.
 
@@ -64,6 +65,18 @@ SIGNAL_POINTS = 10_000          # per-sample arrays: at most this many stored po
 SIGNAL_MIN_LEN = 200_000        # arrays at least this long count as per-sample
 RTOL = 1e-9
 ATOL = 1e-12
+# Values in units of the z-scored ECG (standard deviation 1): the prepared
+# signal, prominences, amplitudes and beat templates. Their error is an
+# absolute error on the signal scale -- a sample near a zero crossing has a
+# meaningless relative error -- so they get this absolute tolerance, 1e-9 of
+# the signal's standard deviation. Observed between Linux and Windows with
+# the same library versions: about 1e-11 (filtfilt / ecg_clean rounding).
+SIGNAL_ATOL = 1e-9
+SIGNAL_UNIT_NAMES = ("signal_flt", "signal_raw_norm", "all_proms", "thresh_amp",
+                     "beat_template", "beat_matrix", "beat_sd", "peak_amps")
+# Libraries whose version is part of the reference: a different version may
+# legitimately change a result (tests/regression/test_golden_master.py).
+SCIENTIFIC_PACKAGES = ("numpy", "scipy", "pandas", "neurokit2", "scikit-learn", "PyWavelets")
 
 # Detection scenarios: name -> FilterParams overrides. "auto_raw" is the
 # app's startup state (no filtering, Auto detector, threshold 0.5).
@@ -667,6 +680,19 @@ def _compare_value(name: str, ref: Any, new: Any, rtol: float, atol: float) -> "
     return None if ref == new else Difference(name, "value", f"{ref!r} -> {new!r}")
 
 
+def is_signal_unit(name: str) -> bool:
+    """True for a value in units of the z-scored signal (SIGNAL_UNIT_NAMES)."""
+    return any(part in SIGNAL_UNIT_NAMES for part in name.split("/"))
+
+
+def package_changes(manifest: dict) -> "dict[str, tuple]":
+    """{package: (reference version, installed version)} for the
+    SCIENTIFIC_PACKAGES whose installed version is not the reference's."""
+    ref = (manifest.get("environment") or {}).get("packages") or {}
+    now = environment()["packages"]
+    return {p: (ref.get(p), now.get(p)) for p in SCIENTIFIC_PACKAGES if ref.get(p) != now.get(p)}
+
+
 def compare(ref: dict, new: dict, rtol: float = RTOL, atol: float = ATOL) -> "list[Difference]":
     """Every difference between the reference outputs *ref* and *new*."""
     diffs: "list[Difference]" = []
@@ -675,7 +701,8 @@ def compare(ref: dict, new: dict, rtol: float = RTOL, atol: float = ATOL) -> "li
     for name in sorted(set(new) - set(ref)):
         diffs.append(Difference(name, "extra", "computed now, not in the reference"))
     for name in sorted(set(ref) & set(new)):
-        d = _compare_value(name, ref[name], new[name], rtol, atol)
+        a = max(atol, SIGNAL_ATOL) if is_signal_unit(name) else atol
+        d = _compare_value(name, ref[name], new[name], rtol, a)
         if d is not None:
             diffs.append(d)
     return diffs
