@@ -1,9 +1,11 @@
-"""ecg.core is UI-free, including imports that only exist for type checking."""
+"""ecg.core and ecg.services are UI-free, including imports that only exist for
+type checking."""
 import ast
 from pathlib import Path
 
 import ecg.core
 import ecg.core.models
+import ecg.services
 from ecg.core.models import FilterParams, FilterWidgetHost
 
 
@@ -24,6 +26,11 @@ def _ui_imports(path: Path) -> list[str]:
 def test_no_module_in_core_imports_ecg_ui():
     core = Path(ecg.core.__file__).parent
     assert [hit for p in sorted(core.rglob("*.py")) for hit in _ui_imports(p)] == []
+
+
+def test_no_module_in_services_imports_ecg_ui():
+    services = Path(ecg.services.__file__).parent
+    assert [hit for p in sorted(services.rglob("*.py")) for hit in _ui_imports(p)] == []
 
 
 def test_filter_widget_host_declares_the_attributes_from_widgets_requires():
