@@ -155,8 +155,17 @@ class Field(Value):
     def deselect(self) -> None:
         self.set(False)
 
-    def configure(self, **_kw: Any) -> None:
-        pass
+    def configure(self, **kw: Any) -> None:
+        """Only a combobox's values= (its choices) changes anything."""
+        values = kw.get("values")
+        if values is not None and isinstance(self.widget, QtWidgets.QComboBox):
+            cur = self.widget.currentText()
+            self.widget.blockSignals(True)
+            self.widget.clear()
+            self.widget.addItems([str(v) for v in values])
+            i = self.widget.findText(cur)
+            self.widget.setCurrentIndex(max(i, 0))
+            self.widget.blockSignals(False)
 
 
 class _Null:

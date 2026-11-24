@@ -21,6 +21,7 @@ from PySide6 import QtWidgets
 from ecg.core.autonomic import COV_METHODS
 from ecg.core.models import MouseECG
 from ecg.qt.figure_host import Field, StatusLabel, TextBox
+from ecg.qt.theme import current as theme_current
 from ecg.ui.autonomic_view import normalise_autonomic_params
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.addTab(self._epochs_page(host), "Epochs")
         self.addTab(self._sliding_page(host), "Sliding")
         self.addTab(self._autonomic_page(host), "Autonomic")
+        self.addTab(self._event_locked_page(host), "Event-locked")
         self._buttons = (self.btn_epochs, self.btn_sliding, self.btn_auto)
         self.btn_epochs.clicked.connect(ctl.compute_epochs)
         self.btn_sliding.clicked.connect(ctl.compute_rolling_hrv)
@@ -185,6 +187,100 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host.txt_autonomic = TextBox()
         lay.addWidget(host.txt_autonomic, 2)
         return page
+
+    def _event_locked_page(self, host) -> QtWidgets.QWidget:
+        """Time course > Event-locked: EventLockedController (the Tk one) on
+        the host, reading these inputs under the Tk names."""
+        from ecg.ui.event_locked_controller import EventLockedController
+        from ecg.ui.event_locked_view import EVENT_TABLE_COLUMNS, EVENT_TABLE_NOTE, \
+            EVENT_TABLE_TITLE
+        import ecg.ui.event_locked_controller as elc
+        from ecg.qt.figure_host import QtFileDialog
+        elc.filedialog = QtFileDialog                    # Export CSV… under Qt
+        page = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(page)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Events:"))
+        self.cb_evt_label = QtWidgets.QComboBox()
+        self.cb_evt_label.setMinimumWidth(160)
+        row.addWidget(self.cb_evt_label)
+        row.addWidget(QtWidgets.QLabel("Pre (s):"))
+        self.sp_evt_pre = _spin(60.0, 0.5, 36000.0, 5.0, 1)
+        row.addWidget(self.sp_evt_pre)
+        row.addWidget(QtWidgets.QLabel("Post (s):"))
+        self.sp_evt_post = _spin(60.0, 0.5, 36000.0, 5.0, 1)
+        row.addWidget(self.sp_evt_post)
+        self.chk_evt_z = QtWidgets.QCheckBox("z-score")
+        self.chk_evt_z.setToolTip("Traces as z-scores of each event's pre window (display only)")
+        row.addWidget(self.chk_evt_z)
+        self.btn_evt = QtWidgets.QPushButton("Compute event-locked")
+        self.btn_evt.setProperty("primary", True)
+        row.addWidget(self.btn_evt)
+        row.addStretch(1)
+        lay.addLayout(row)
+        host.lbl_evt_status = StatusLabel("")
+        host.lbl_evt_status.setProperty("muted", True)
+        host.lbl_evt_status.setWordWrap(True)
+        lay.addWidget(host.lbl_evt_status)
+        host.cb_evt_label = Field(self.cb_evt_label)
+        host.ent_evt_pre = Field(self.sp_evt_pre)
+        host.ent_evt_post = Field(self.sp_evt_post)
+        host.chk_evt_z = Field(self.chk_evt_z, as_int=True)
+        body = QtWidgets.QHBoxLayout()
+        canvas = host.slot("event_locked", self, 8.0, 5.0)
+        canvas.setMinimumHeight(460)
+        body.addWidget(canvas, 3)
+        right = QtWidgets.QVBoxLayout()
+        host.lbl_evt_table_head = StatusLabel(EVENT_TABLE_TITLE)
+        right.addWidget(host.lbl_evt_table_head)
+        self.tbl_evt = QtWidgets.QTableWidget(0, len(EVENT_TABLE_COLUMNS))
+        self.tbl_evt.setHorizontalHeaderLabels(list(EVENT_TABLE_COLUMNS))
+        self.tbl_evt.verticalHeader().setVisible(False)
+        self.tbl_evt.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        right.addWidget(self.tbl_evt, 1)
+        note = QtWidgets.QLabel(EVENT_TABLE_NOTE)
+        note.setProperty("muted", True)
+        note.setWordWrap(True)
+        right.addWidget(note)
+        bar = QtWidgets.QHBoxLayout()
+        self.btn_evt_save = QtWidgets.QPushButton("Save to cohort registry")
+        self.btn_evt_save.setToolTip("Store this recording's per-event values in the local "
+                                     "registry with the Subject ID and the method / window / "
+                                     "ks / kp")
+        self.btn_evt_csv = QtWidgets.QPushButton("Export CSV…")
+        bar.addWidget(self.btn_evt_save)
+        bar.addWidget(self.btn_evt_csv)
+        bar.addStretch(1)
+        right.addLayout(bar)
+        body.addLayout(right, 2)
+        lay.addLayout(body, 1)
+        host.txt_event_locked = TextBox()
+        lay.addWidget(host.txt_event_locked)
+        host._fill_event_rows = self._fill_event_rows
+        ctl = EventLockedController(host)
+        host.event_ctrl = ctl
+        self.btn_evt.clicked.connect(ctl.compute)
+        self.chk_evt_z.toggled.connect(lambda *_a: ctl.on_zscore_toggle())
+        self.btn_evt_save.clicked.connect(ctl.save_to_registry)
+        self.btn_evt_csv.clicked.connect(ctl.export_csv)
+        ctl.apply_params(host.analysis.event_locked_params)
+        ctl.invalidate(None)
+        return page
+
+    def _fill_event_rows(self, rows) -> None:
+        """The compact per-event table (TimeCourseMixin._fill_event_rows)."""
+        from PySide6 import QtGui
+        t = self.tbl_evt
+        t.setRowCount(0)
+        warn = QtGui.QColor(theme_current().ORANGE)
+        for r, row in enumerate(rows):
+            t.insertRow(r)
+            for c, text in enumerate((row.onset, row.hr, row.csi, row.cpi, row.valid)):
+                item = QtWidgets.QTableWidgetItem(text)
+                if c >= 4 and not row.is_valid:
+                    item.setForeground(warn)
+                t.setItem(r, c, item)
+        t.resizeColumnsToContents()
 
     # ── state ───────────────────────────────────────────────
     def results_changed(self) -> None:

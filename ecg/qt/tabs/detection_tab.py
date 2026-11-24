@@ -380,6 +380,7 @@ class DetectionTab(QtWidgets.QWidget):
         ctl = self.win.figures.analysis_ctrl
         ctl.redraw_autonomic_plot()
         ctl.redraw_windowed_plots()
+        self.win.figures.event_ctrl.on_annotations_changed()
 
     def noise_changed(self) -> None:
         """ECGApp._noise_regions_changed: drawn and counted; HR / HRV leave

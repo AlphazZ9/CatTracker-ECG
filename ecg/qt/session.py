@@ -48,7 +48,7 @@ class QtSession:
         host = window.figures
         host.session = SessionState()
         # What collect_session_state reads with getattr(..., None): absent here.
-        for name in ("sw_show_raw", "ent_project_name", "ent_sex", "event_ctrl",
+        for name in ("sw_show_raw", "ent_project_name", "ent_sex",
                      "_compare_setup_snapshot", "lbl_session_info", "lbl_template_info",
                      "lbl_npeaks", "ent_analysis_t0", "ent_analysis_t1", "cb_qtc_formula",
                      "_show_time_mode", "_restore_compare_setup", "ent_ensemble"):
@@ -164,6 +164,7 @@ class QtSession:
         a.wave_template = bundle.get("wave_template")
         host.analysis_ctrl.invalidate_autonomic(peaks_changed=False)
         host.analysis_ctrl.apply_autonomic_params(bundle.get("autonomic_params"))
+        host.event_ctrl.apply_params(bundle.get("event_locked_params"))
         a.t_start = bundle["analysis_t_start"]
         a.t_end = bundle["analysis_t_end"]
         a.analysed_window = bundle.get("analysed_window") if bundle["results"] is not None else None

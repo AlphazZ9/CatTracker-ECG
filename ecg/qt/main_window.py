@@ -30,9 +30,10 @@ from ecg.qt.tabs.morphology_tab import MorphologyTab
 from ecg.qt.tabs.time_course_tab import TimeCourseTab
 from ecg.qt.tabs.rhythm_tab import RhythmTab
 from ecg.qt.tabs.compare_tab import CompareTab
+from ecg.qt.tabs.group_tab import GroupTab
 from ecg.qt.workers import Job, JobRunner
 from ecg.services.analysis_service import run_core_analysis
-from ecg.ui.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_EVENTS, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER,
+from ecg.ui.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_GROUP, TAB_EVENTS, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER,
                              TAB_REPORT,
                              TAB_TIME_COURSE, TIME_COURSE_MODES)
 
@@ -85,6 +86,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 w = TimeCourseTab(self)
             elif name == TAB_EVENTS:
                 w = EventsTab(self)
+            elif name == TAB_GROUP:
+                w = GroupTab(self)
             elif name == TAB_COMPARE:
                 w = CompareTab(self)
             elif name == TAB_REPORT:
@@ -103,6 +106,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.events: EventsTab = self.tab_widgets[TAB_EVENTS]  # type: ignore[assignment]
         self.report: ReportTab = self.tab_widgets[TAB_REPORT]  # type: ignore[assignment]
         self.compare: CompareTab = self.tab_widgets[TAB_COMPARE]  # type: ignore[assignment]
+        self.group: GroupTab = self.tab_widgets[TAB_GROUP]  # type: ignore[assignment]
         from ecg.qt.dialogs.settings_dialog import SettingsDialog
         from ecg.qt.session import QtSession
         self.settings = SettingsDialog(self)
