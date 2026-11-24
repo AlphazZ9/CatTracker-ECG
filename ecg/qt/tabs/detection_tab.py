@@ -194,6 +194,7 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot.set_signal(s.filtered, fs, s.time)
         self.plot.set_noise_regions(rec.analysis.noise_regions)
         self._show_peaks()
+        self.win.peaks_changed()
         warning = bundle.get("detector_warning")
         self.win.set_status(warning or f"{len(d.rpeaks_ok):,} peaks detected · "
                                        f"{s.filter_text or ''}", warn=bool(warning))
@@ -218,6 +219,7 @@ class DetectionTab(QtWidgets.QWidget):
             d.manual_excluded -= d.manual_added
         d.rpeaks_ok, d.rpeaks_rej, d.thresh_amp = edits.accepted, edits.rejected, edits.thresh_amp
         self._show_peaks()
+        self.win.peaks_changed()
 
     # ── editing by hand ─────────────────────────────────────
     def _edit_toggled(self, on: bool) -> None:
@@ -288,6 +290,11 @@ class DetectionTab(QtWidgets.QWidget):
         a = self.win.recording.analysis
         a.results = None
         a.autonomic_result = None
+
+    def refresh(self) -> None:
+        """Redraw the peaks after the model changed (e.g. Analyze's artifact
+        correction)."""
+        self._show_peaks()
 
     def _show_peaks(self) -> None:
         rec = self.win.recording

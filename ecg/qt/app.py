@@ -28,6 +28,8 @@ def main(argv: "Optional[list[str]]" = None) -> int:
     app.setApplicationName("ECG Analysis")
     pg.setConfigOptions(antialias=False, useOpenGL=False)
     theme.apply(app)
+    from ecg.qt.figure_host import sync_figure_theme
+    sync_figure_theme(theme.current().is_dark)
     win = MainWindow()
     win.btn_theme.setText("Light mode" if theme.current().is_dark else "Dark mode")
     win.show()

@@ -130,7 +130,10 @@ python -m ecg.qt [recording.mat]
 ```
 
 Today: Signal & Detection (open, Detect Peaks, threshold, editing peaks by
-hand with undo / redo, PyQtGraph trace with overview). Its tests (`tests/qt/`, pytest-qt) run headless.
+hand with undo / redo, PyQtGraph trace with overview) and Rhythm & HRV
+(Analyze, then frequency and non-linear HRV in background jobs; the result
+figures and tables come from the Tk interface's own figure code through
+`ecg/qt/figure_host.py`, so they are identical). Its tests (`tests/qt/`, pytest-qt) run headless.
 
 ## Scripting an analysis
 

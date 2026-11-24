@@ -19,11 +19,15 @@ from typing import Any, Callable, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import ecg
+from ecg.core.analysis import analyse_hrv_freq, analyse_hrv_nonlinear
 from ecg.core.recording import Recording
 from ecg.qt import theme
+from ecg.qt.figure_host import FigureHost, sync_figure_theme
 from ecg.qt.tabs.detection_tab import DetectionTab
+from ecg.qt.tabs.rhythm_tab import RhythmTab
 from ecg.qt.workers import Job, JobRunner
-from ecg.ui.tab_keys import TAB_DETECTION, TAB_ORDER
+from ecg.services.analysis_service import run_core_analysis
+from ecg.ui.tab_keys import TAB_DETECTION, TAB_HRV, TAB_ORDER
 
 FILE_FILTER = "Recordings (*.mat *.smr);;All files (*)"
 
@@ -40,6 +44,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.generation = 0
         self.jobs = JobRunner(self)
         self._current_job: "Optional[Job]" = None
+        self.figures = FigureHost(self)          # the shared figure code's "app"
 
         central = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(central)
@@ -47,13 +52,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs = QtWidgets.QTabWidget()
         self.tab_widgets: "dict[str, QtWidgets.QWidget]" = {}
         for name in TAB_ORDER:
-            w = DetectionTab(self) if name == TAB_DETECTION else self._placeholder(name)
+            if name == TAB_DETECTION:
+                w = DetectionTab(self)
+            elif name == TAB_HRV:
+                w = RhythmTab(self)
+            else:
+                w = self._placeholder(name)
             self.tab_widgets[name] = w
             self.tabs.addTab(w, name.replace("&", "&&"))   # "&" alone marks a shortcut
         lay.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
         self.setStatusBar(QtWidgets.QStatusBar())
         self.detection: DetectionTab = self.tab_widgets[TAB_DETECTION]   # type: ignore[assignment]
+        self.rhythm: RhythmTab = self.tab_widgets[TAB_HRV]                # type: ignore[assignment]
 
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Open, self, activated=self.open_dialog)
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self, activated=self.detection.undo)
@@ -71,6 +82,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_open = QtWidgets.QPushButton("Open…")
         self.btn_open.clicked.connect(self.open_dialog)
         row.addWidget(self.btn_open)
+        self.btn_analyze = QtWidgets.QPushButton("Analyze")
+        self.btn_analyze.setProperty("primary", True)
+        self.btn_analyze.setEnabled(False)
+        self.btn_analyze.setToolTip("RR / HR, time-domain HRV and beat template, then frequency "
+                                    "and non-linear HRV")
+        self.btn_analyze.clicked.connect(self.analyze)
+        row.addWidget(self.btn_analyze)
         self.progress = QtWidgets.QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setFixedWidth(220)
@@ -112,11 +130,114 @@ class MainWindow(QtWidgets.QMainWindow):
         self.generation += 1
         self.recording = Recording()
         self.recording.signal.filepath = str(path)
+        self.figures._generation = self.generation
+        self.btn_analyze.setEnabled(False)
+        self.rhythm.clear()
         self.lbl_file.setText(Path(path).name)
         self.lbl_file.setToolTip(str(path))
         self.detection.file_opened()
         self.recording_changed.emit()
         self.set_status(f"Opened {Path(path).name} — click Detect Peaks")
+
+    # ── Analyze ─────────────────────────────────────────────
+    def peaks_changed(self) -> None:
+        """Detection or a hand edit changed the peaks: results are stale."""
+        has_peaks = self.recording.detection.rpeaks_ok is not None
+        self.btn_analyze.setEnabled(has_peaks and len(self.recording.detection.rpeaks_ok) >= 5)
+        if self.recording.analysis.results is None:
+            self.rhythm.clear()
+
+    def analysis_params(self) -> dict:
+        """AnalysisController.run_analysis's snapshot."""
+        ctl = self.figures.analysis_ctrl
+        params = self.detection.params()
+        params["hrv_rr_bounds"] = ctl.hrv_rr_bounds()
+        params["break_tol_samples"] = ctl.break_tol_samples()
+        params["noise_regions"] = [dict(r) for r in self.recording.analysis.noise_regions or []]
+        return params
+
+    def analyze(self) -> None:
+        """Analyze: core analysis, then frequency and non-linear HRV, each
+        drawn when it lands (as the Tk interface's chain)."""
+        rec = self.recording
+        d, s = rec.detection, rec.signal
+        if d.rpeaks_ok is None or len(d.rpeaks_ok) < 5:
+            self.set_status("Too few peaks — adjust the detection first.", warn=True)
+            return
+        self.btn_analyze.setEnabled(False)
+        self.run_job("Analyze", run_core_analysis, d.rpeaks_ok.copy(), s.filtered, s.fs,
+                     self.analysis_params(), rec.analysis.artifact_report,
+                     on_done=self._core_done, on_end=lambda: self.btn_analyze.setEnabled(True))
+
+    def _core_done(self, bundle: dict) -> None:
+        """AnalysisController.on_analysis_done's state writes, then drawing."""
+        a, d = self.recording.analysis, self.recording.detection
+        a.results = bundle["results"]
+        d.rpeaks_ok = bundle["rpeaks_ok"]
+        a.artifact_report = bundle["artifact_report"]
+        a.analysed_window = bundle.get("analysis_window")
+        self.detection.refresh()
+        hr = a.results.get("hr") or {}
+        self.rhythm.lbl_info.setText(
+            f"{len(bundle['rpeaks_analysed']):,} beats analysed · mean HR "
+            f"{hr.get('mean', float('nan')):.1f} bpm")
+        self.figures.plot_ctrl.draw_core_results(on_complete=self._run_freq)
+
+    def _run_freq(self) -> None:
+        ctl, s = self.figures.analysis_ctrl, self.recording.signal
+        rp = self.figures._windowed_peaks()
+        lo, hi = ctl.results_rr_bounds()
+        self.figures.lbl_freq_status.configure(text="Computing…")
+        self.run_job("Frequency HRV", analyse_hrv_freq, rp, s.fs, rr_min_ms=lo, rr_max_ms=hi,
+                     breaks=ctl.hrv_breaks(), bands=ctl.get_freq_bands(),
+                     on_done=self._freq_done)
+
+    def _freq_done(self, df) -> None:
+        r = self.recording.analysis.results
+        if r is None:
+            return
+        r["hrv_freq"] = df
+        text, color = self.figures.analysis_ctrl._freq_status(df, just_computed=True)
+        self.figures.lbl_freq_status.configure(text=text.strip(), text_color=color)
+        pc = self.figures.plot_ctrl
+        pc.run_plot_chain([("PSD", lambda: pc.plot_psd(r)),
+                           ("HRV tables (freq)", lambda: pc.plot_hrv_tables(r)),
+                           ("Metrics", lambda: pc.plot_table_views(r))],
+                          on_complete=self._run_nonlinear)
+
+    def _run_nonlinear(self) -> None:
+        ctl, s = self.figures.analysis_ctrl, self.recording.signal
+        rp = self.figures._windowed_peaks()
+        lo, hi = ctl.results_rr_bounds()
+        self.figures.lbl_nonlin_status.configure(text="Computing SampEn / DFA…")
+        self.run_job("Non-linear HRV", analyse_hrv_nonlinear, rp, s.fs,
+                     max_beats=ctl.entropy_cap(), rr_min_ms=lo, rr_max_ms=hi,
+                     breaks=ctl.hrv_breaks(), on_done=self._nonlinear_done)
+
+    def _nonlinear_done(self, df) -> None:
+        r = self.recording.analysis.results
+        if r is None:
+            return
+        r["hrv_nonlin"] = df
+        text, color = self.figures.analysis_ctrl._nonlin_status(df, just_computed=True)
+        self.figures.lbl_nonlin_status.configure(text=text.strip(), text_color=color)
+        pc = self.figures.plot_ctrl
+        pc.run_plot_chain([("Non-linear metrics", lambda: pc.plot_nonlinear(r)),
+                           ("Metrics", lambda: pc.plot_table_views(r))],
+                          on_complete=lambda: self.set_status("Analysis done"))
+
+    def redraw_results(self) -> None:
+        """Draw the current results again (after a theme change)."""
+        r = self.recording.analysis.results
+        if r is None:
+            return
+        pc = self.figures.plot_ctrl
+        tasks = [("RR / HR tachogram", lambda: pc.plot_rr(r)),
+                 ("HRV tables", lambda: pc.plot_hrv_tables(r)),
+                 ("Poincaré", lambda: pc.plot_nonlinear(r))]
+        if r.get("hrv_freq") is not None and not r["hrv_freq"].empty:
+            tasks.append(("PSD", lambda: pc.plot_psd(r)))
+        pc.run_plot_chain(tasks)
 
     # ── jobs ────────────────────────────────────────────────
     def run_job(self, what: str, fn: Callable[..., Any], *args: Any,
@@ -186,7 +307,9 @@ class MainWindow(QtWidgets.QMainWindow):
         app = QtWidgets.QApplication.instance()
         p = theme.apply(app, theme.LIGHT.name if theme.current().is_dark else theme.DARK.name)
         self.btn_theme.setText("Light mode" if p.is_dark else "Dark mode")
+        sync_figure_theme(p.is_dark)
         self.detection.apply_palette(p)
+        self.redraw_results()
 
     def closeEvent(self, ev: QtGui.QCloseEvent) -> None:
         self.cancel_jobs()
