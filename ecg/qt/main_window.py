@@ -24,10 +24,11 @@ from ecg.core.recording import Recording
 from ecg.qt import theme
 from ecg.qt.figure_host import FigureHost, sync_figure_theme
 from ecg.qt.tabs.detection_tab import DetectionTab
+from ecg.qt.tabs.morphology_tab import MorphologyTab
 from ecg.qt.tabs.rhythm_tab import RhythmTab
 from ecg.qt.workers import Job, JobRunner
 from ecg.services.analysis_service import run_core_analysis
-from ecg.ui.tab_keys import TAB_DETECTION, TAB_HRV, TAB_ORDER
+from ecg.ui.tab_keys import TAB_DETECTION, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER
 
 FILE_FILTER = "Recordings (*.mat *.smr);;All files (*)"
 
@@ -56,6 +57,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 w = DetectionTab(self)
             elif name == TAB_HRV:
                 w = RhythmTab(self)
+            elif name == TAB_MORPHOLOGY:
+                w = MorphologyTab(self)
             else:
                 w = self._placeholder(name)
             self.tab_widgets[name] = w
@@ -65,6 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setStatusBar(QtWidgets.QStatusBar())
         self.detection: DetectionTab = self.tab_widgets[TAB_DETECTION]   # type: ignore[assignment]
         self.rhythm: RhythmTab = self.tab_widgets[TAB_HRV]                # type: ignore[assignment]
+        self.morphology: MorphologyTab = self.tab_widgets[TAB_MORPHOLOGY]  # type: ignore[assignment]
 
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Open, self, activated=self.open_dialog)
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self, activated=self.detection.undo)
@@ -133,6 +137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.figures._generation = self.generation
         self.btn_analyze.setEnabled(False)
         self.rhythm.clear()
+        self.morphology.results_changed()
         self.lbl_file.setText(Path(path).name)
         self.lbl_file.setToolTip(str(path))
         self.detection.file_opened()
@@ -146,6 +151,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_analyze.setEnabled(has_peaks and len(self.recording.detection.rpeaks_ok) >= 5)
         if self.recording.analysis.results is None:
             self.rhythm.clear()
+            self.morphology.results_changed()
 
     def analysis_params(self) -> dict:
         """AnalysisController.run_analysis's snapshot."""
@@ -181,6 +187,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rhythm.lbl_info.setText(
             f"{len(bundle['rpeaks_analysed']):,} beats analysed · mean HR "
             f"{hr.get('mean', float('nan')):.1f} bpm")
+        self.morphology.results_changed()
+        self.morphology.wave_template()       # the saved default, first time (as Tk)
         self.figures.plot_ctrl.draw_core_results(on_complete=self._run_freq)
 
     def _run_freq(self) -> None:
