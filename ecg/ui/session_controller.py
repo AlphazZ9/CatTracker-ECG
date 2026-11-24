@@ -13,7 +13,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from tkinter import messagebox
 
 import numpy as np
@@ -101,6 +101,22 @@ def wave_template_from_session(state: dict) -> "WaveTemplate | None":
     default template is then used at the next Intervals run)."""
     raw = state.get("wave_template")
     return WaveTemplate.from_dict(raw) if isinstance(raw, dict) else None
+
+
+def restore_entry(w: Any, val: Any) -> None:
+    """Put *val* back into the entry *w* after a UI rebuild; an empty value
+    shows the entry's placeholder again. CTkEntry.delete wipes the
+    placeholder shown and, on an entry never focused yet (CTk starts it as
+    focused), does not put it back: the analysis window's From / To (whose
+    placeholders "0" and the signal end state the window) came back blank
+    after a theme toggle."""
+    w.delete(0, "end")
+    if str(val):    # an insert, even of "", hides the placeholder
+        w.insert(0, str(val))
+        return
+    show = getattr(w, "_activate_placeholder", None)
+    if callable(show):
+        show()
 
 
 class SessionController:
@@ -1468,9 +1484,7 @@ class SessionController:
                 w = getattr(self.app, attr, None)
                 if w is None:
                     continue
-                w.delete(0, "end")
-                if str(val):    # an insert, even of "", hides the placeholder
-                    w.insert(0, str(val))
+                restore_entry(w, val)
             except Exception as _exc:
                 log.debug("_restore_ui_state entry %s: %s", attr, _exc)
         # ent_project_name's restored text doesn't auto-propagate to its top-

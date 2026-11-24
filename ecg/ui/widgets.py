@@ -19,7 +19,7 @@ from ecg.ui.theme import (
     CARD, BORDER, TEXT, MUTED, LIGHT, BLUE,
     GREEN, GREEN_MID, AMBER, RED,
     FONT_KPI_LABEL, FONT_KPI_VALUE, FONT_KPI_HERO, FONT_MICRO, FONT_HINT,
-    button_style,
+    button_style, combo_style,
 )
 
 
@@ -156,3 +156,143 @@ class PillGroup(ctk.CTkFrame):
 
     def get(self) -> str:
         return self._value or ""
+
+
+class FamilyCombo(ctk.CTkFrame):
+    """A metric chooser in two steps: the family first (Heart rate, HRV time
+    domain, frequency, non-linear... ecg.core.metric_families), then the
+    metric of that family. Long lists of HR / SD / power metrics are easier
+    to find this way than in one flat list.
+
+    Same .set / .get / .configure(values=...) / .cget("values") as the
+    CTkComboBox it replaces: .set selects without calling *command*, a pick
+    in either combo calls command(metric). Each family remembers the metric
+    last chosen in it. Up / Down step through the list of the focused combo,
+    Return or space opens it.
+
+    *flat_max*: up to that many metrics, one flat list (in family order)
+    instead: two drop-downs to reach one of a handful of metrics is a click
+    too many. 0: always two steps. With no value chosen, the first metric of
+    the first family is shown (a heart rate before a count of beats)."""
+
+    def __init__(self, parent, command=None, values=(), width: int = 260,
+                 family_width: int = 170, flat_max: int = 0, **kw) -> None:
+        super().__init__(parent, fg_color="transparent", **kw)
+        self._command = command
+        self._flat_max = int(flat_max)
+        self._flat = False
+        self._values: "list[str]" = []
+        self._by_family: "dict[str, list[str]]" = {}
+        self._last: "dict[str, str]" = {}
+        self.cb_family = ctk.CTkComboBox(self, width=family_width, values=[""], state="readonly",
+                                         command=self._pick_family, **combo_style())
+        self.cb_family.pack(side="left", padx=(0, 4))
+        self.cb_metric = ctk.CTkComboBox(self, width=width, values=[""], state="readonly",
+                                         command=self._pick_metric, **combo_style())
+        self.cb_metric.pack(side="left")
+        for cb, step in ((self.cb_family, self._step_family), (self.cb_metric, self._step_metric)):
+            entry = getattr(cb, "_entry", None)
+            if entry is None:
+                continue
+            entry.bind("<Up>", lambda _e, s=step: (s(-1), "break")[1])
+            entry.bind("<Down>", lambda _e, s=step: (s(1), "break")[1])
+            for key in ("<Return>", "<space>"):
+                entry.bind(key, lambda _e, c=cb: (c._open_dropdown_menu(), "break")[1])
+        if values:
+            self.set_values(values)
+
+    # ── the CTkComboBox surface ──
+
+    def configure(self, require_redraw=False, **kwargs) -> None:
+        if "values" in kwargs:
+            self.set_values(kwargs.pop("values"))
+        if kwargs or require_redraw:
+            super().configure(require_redraw=require_redraw, **kwargs)
+
+    def cget(self, attribute_name: str):
+        if attribute_name == "values":
+            return list(self._values)
+        return super().cget(attribute_name)
+
+    def set_values(self, values) -> None:
+        """The metrics offered (in their order), sorted into families. The
+        metric shown stays when it is still offered."""
+        from ecg.core.metric_families import by_family
+        cur = self.get()
+        self._values = [str(v) for v in values or [] if str(v)]
+        self._by_family = dict(by_family(self._values))
+        self._last = {f: m for f, m in self._last.items()
+                      if m in self._by_family.get(f, [])}
+        self.cb_family.configure(values=list(self._by_family) or [""])
+        flat = 0 < len(self._values) <= self._flat_max
+        if flat != self._flat:
+            self._flat = flat
+            if flat:
+                self.cb_family.pack_forget()
+            else:
+                self.cb_family.pack(side="left", padx=(0, 4), before=self.cb_metric)
+        self.set(cur if cur in self._values else self.first())
+
+    def first(self) -> str:
+        """The first metric of the first family ("" when none)."""
+        return next((ns[0] for ns in self._by_family.values() if ns), "")
+
+    def _offered(self, fam: str) -> "list[str]":
+        """The metrics of the metric combo: those of *fam*, or every one in
+        family order when the list is flat."""
+        if self._flat:
+            return [m for ns in self._by_family.values() for m in ns]
+        return self._by_family.get(fam, [])
+
+    def set(self, value: str) -> None:
+        from ecg.core.metric_families import family_of
+        value = str(value or "")
+        if value not in self._values:
+            self.cb_family.set("")
+            self.cb_metric.configure(values=[""])
+            self.cb_metric.set("")
+            return
+        fam = family_of(value)
+        self._last[fam] = value
+        self.cb_family.set(fam)
+        self.cb_metric.configure(values=self._offered(fam) or [value])
+        self.cb_metric.set(value)
+
+    def get(self) -> str:
+        v = self.cb_metric.get()
+        return v if v in self._values else ""
+
+    def family(self) -> str:
+        return self.cb_family.get()
+
+    # ── picks ──
+
+    def _pick_family(self, fam: str) -> None:
+        names = self._by_family.get(fam)
+        if not names:
+            return
+        m = self._last.get(fam, names[0])
+        self.set(m if m in names else names[0])
+        if self._command is not None:
+            self._command(self.get())
+
+    def _pick_metric(self, value: str) -> None:
+        self.set(value)
+        if self._command is not None:
+            self._command(self.get())
+
+    def _step_family(self, d: int) -> None:
+        fams = list(self._by_family)
+        if fams:
+            i = fams.index(self.family()) if self.family() in fams else -d
+            new = fams[max(0, min(len(fams) - 1, i + d))]
+            if new != self.family():
+                self._pick_family(new)
+
+    def _step_metric(self, d: int) -> None:
+        names = self._offered(self.family())
+        if names:
+            i = names.index(self.get()) if self.get() in names else -d
+            new = names[max(0, min(len(names) - 1, i + d))]
+            if new != self.get():
+                self._pick_metric(new)
