@@ -14,7 +14,6 @@ import numpy as np
 
 from ecg.core.models import FilterParams
 from ecg.ui import session_controller as sc_module
-from ecg.ui import signal_controller as sig_module
 from ecg.ui.app_helpers import HelpersMixin
 from ecg.ui.detection_controller import DetectionController
 from ecg.ui.session_controller import SessionController
@@ -62,7 +61,8 @@ def test_sg_detector_receives_the_typed_window(monkeypatch):
     def _fake_sg(sig, fs, sg_window_ms, **kw):
         seen["sg_window_ms"] = sg_window_ms
         return np.array([10, 20], dtype=int), np.ones(2), 0.5
-    monkeypatch.setattr(sig_module, "detect_peaks_sg_derivative", _fake_sg)
+    from ecg.core import pipeline
+    monkeypatch.setattr(pipeline, "detect_peaks_sg_derivative", _fake_sg)
     params = _snapshot(monkeypatch, "6")
     SignalController._preview_bundle(np.sin(np.arange(4000) / 10.0), FS, params)
     assert seen["sg_window_ms"] == 6.0

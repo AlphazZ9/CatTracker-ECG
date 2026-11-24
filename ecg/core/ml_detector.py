@@ -80,6 +80,13 @@ NO_MODEL_MESSAGE = (
     "then click Train model…")
 
 
+# Status-bar text of Detect Peaks with the ML Detector and no trained model
+# (ecg.core.pipeline.detect_candidates). The status bar is too narrow on a
+# laptop screen for the whole how-to: it only points at the ML DETECTOR
+# section, whose status line says what to do (ecg.ui.ml_examples.status_text).
+NO_MODEL_STATUS = "ML Detector: no model trained yet — see ML DETECTOR (Signal quality)"
+
+
 class NoModelError(RuntimeError):
     """detect_peaks_ml without a trained model (a RuntimeError, as before)."""
 

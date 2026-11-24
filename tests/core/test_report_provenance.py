@@ -121,9 +121,10 @@ def test_provenance_rows_cover_everything_needed_to_reproduce():
 
 
 def test_preview_bundle_records_the_filters_applied(monkeypatch):
+    from ecg.core import pipeline
     from ecg.ui.signal_controller import SignalController
-    monkeypatch.setattr(SignalController, "_preview_bundle",
-                        staticmethod(lambda sig, fs, params, cb=None: {"no_filter_mode": False}))
+    monkeypatch.setattr(pipeline, "detect_candidates",
+                        lambda sig, fs, params, cb=None: {"no_filter_mode": False})
     params = {"no_filter": False, "lp": 1.0, "hp": 100.0, "notch": False,
               "clean_method": "neurokit"}
     bundle = SignalController.compute_preview_bundle(np.zeros(10), 1000, params)

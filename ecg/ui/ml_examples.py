@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from ecg.core.ml_detector import MIN_EXAMPLES_RECOMMENDED, MIN_EXAMPLES_REQUIRED
+from ecg.core.ml_detector import MIN_EXAMPLES_RECOMMENDED, MIN_EXAMPLES_REQUIRED, NO_MODEL_STATUS  # noqa: F401  (re-exported)
 
 TONE_OK = "ok"
 TONE_MUTED = "muted"
@@ -37,10 +37,8 @@ TIP_UPDATE = ("The peaks were edited after this recording was added: saves the "
 TIP_TRAIN = ("How to train, the list of training examples, and the Train button "
              "(retrain after adding or removing examples).")
 
-# Method = ML Detector without a trained model. The status bar is too narrow
-# on a laptop screen for the whole how-to: it only points at the ML DETECTOR
-# section, whose status line says what to do (status_text(ml_selected=True)).
-NO_MODEL_STATUS = "ML Detector: no model trained yet — see ML DETECTOR (Signal quality)"
+# Method = ML Detector without a trained model: NO_MODEL_STATUS, defined in
+# ecg.core.ml_detector (the preparation pipeline reports it), imported above.
 
 # A training example cannot be removed while a job runs (it may be writing it).
 BUSY_MESSAGE = "Another operation is already running — please wait"
