@@ -17,7 +17,9 @@ bout en bout**, les mêmes nombres qu'avec la version de référence (6.2.0).
 les méthodes des contrôleurs appelées par les boutons (Detect Peaks, Analyze,
 Epochs, Sliding…) tournent sur une application factice qui ne contient que
 l'état (`ecg/ui/state.py`) et aucun widget. Les paramètres sont ceux de
-l'application au démarrage. Le code scientifique exécuté est donc celui de
+la structure `FilterParams` (détecteur Auto, sans filtrage, seuil 0,5) et les
+valeurs initiales des champs de l'interface. Le menu Method de l'interface Tk
+démarre, lui, sur SG + Derivative : ce réglage est le scénario « SG + Derivative ». Le code scientifique exécuté est donc celui de
 l'application, sans modification.
 
 ## Ce qui est calculé et comparé
@@ -25,7 +27,7 @@ l'application, sans modification.
 | Étape | Scénarios |
 |---|---|
 | Import | signal, canal retenu, liste des canaux, fs lue dans le fichier |
-| Préparation + détection | Auto sans filtre (démarrage), Auto filtré, Auto filtré + notch 50 Hz, SG + Derivative, Wavelet, Envelope Max : signal préparé (échantillonné), candidats, proéminences, pics acceptés / rejetés, seuil, polarité, texte des filtres |
+| Préparation + détection | Auto sans filtre (défauts de `FilterParams`), Auto filtré, Auto filtré + notch 50 Hz, SG + Derivative, Wavelet, Envelope Max : signal préparé (échantillonné), candidats, proéminences, pics acceptés / rejetés, seuil, polarité, texte des filtres |
 | Qualité | score 0–100 avant et après l'analyse |
 | Revue des artefacts | candidats proposés (fenêtre 11 battements, écart 20 %) |
 | Analyze | RR, FC, HRV temporelle, template de battement, corrélation par battement |

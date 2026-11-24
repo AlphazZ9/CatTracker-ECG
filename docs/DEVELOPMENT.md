@@ -123,7 +123,8 @@ launching the GUI.
 
 The scientific code runs without the interface: `ecg.core` (algorithms),
 `ecg.io` (files) and `ecg.services` (the app's actions). An example analyses
-one recording with the app's start-up settings and writes a summary, the RR
+one recording with the default parameters (FilterParams: Auto detector, no
+filtering, threshold 0.5) and writes a summary, the RR
 series and the epochs:
 
 ```bash

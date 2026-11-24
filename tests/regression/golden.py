@@ -82,7 +82,9 @@ SIGNAL_UNIT_NAMES = ("signal_flt", "signal_raw_norm", "all_proms", "thresh_amp",
 SCIENTIFIC_PACKAGES = ("numpy", "scipy", "pandas", "neurokit2", "scikit-learn", "PyWavelets")
 
 # Detection scenarios: name -> FilterParams overrides. "auto_raw" is the
-# app's startup state (no filtering, Auto detector, threshold 0.5).
+# FilterParams defaults (no filtering, Auto detector, threshold 0.5) -- the
+# analyses below run on it. (The Tk Method box itself starts on SG +
+# Derivative: that start is the "sg_derivative" scenario.)
 DETECTION_SCENARIOS: "dict[str, dict]" = {
     "auto_raw":          {},
     "auto_filtered":     {"no_filter": False},
@@ -207,7 +209,7 @@ def _new_app(path: "str | Path") -> _StubApp:
 
 def _params(**overrides: Any) -> dict:
     """The parameter dict Detect Peaks hands its worker (snapshot_params)
-    with the start-up widget values, plus *overrides* (FilterParams fields)."""
+    with the FilterParams defaults, plus *overrides* (FilterParams fields)."""
     from ecg.core.models import FilterParams
     fp = FilterParams()
     for key, value in overrides.items():
@@ -426,7 +428,7 @@ def run_pipeline(path: "str | Path", channel: str = "ECG",
              lambda a=app, o=overrides, n=name: _bundle_outputs(
                  a.signal_ctrl.preview_worker(_params(**o)), raw_norm=(n == "auto_raw")))
 
-    # ── The main recording: start-up settings ───────────────────
+    # ── The main recording: FilterParams defaults (Auto detector) ──
     app = _new_app(path)
     _land_preview(app, app.signal_ctrl.preview_worker(_params()))
 

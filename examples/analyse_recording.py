@@ -9,9 +9,10 @@ Writes, in the output folder:
     rr.csv            every RR interval: end time (s), RR (ms), valid or not
     epochs.csv        HRV per 60 s epoch
 
-The steps are those of the app's buttons, with the settings the app starts
-with (no filtering, Auto detector, threshold 0.5, RR 66.7-333.3 ms, no
-artifact correction): Detect Peaks (ecg.core.pipeline, then the threshold of
+The steps are those of the app's buttons, with the default parameters
+(FilterParams: no filtering, Auto detector, threshold 0.5, RR 66.7-333.3 ms,
+no artifact correction; note the Tk Method box starts on SG + Derivative --
+set params["detection_method"] = "sg_derivative" for that): Detect Peaks (ecg.core.pipeline, then the threshold of
 ecg.core.peak_editing), Analyze (ecg.services.analysis_service), then
 frequency and non-linear HRV and Epochs. Nothing here imports the
 interface; change the settings below to script your own protocol.
