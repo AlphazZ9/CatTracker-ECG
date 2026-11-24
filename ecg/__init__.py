@@ -16,6 +16,9 @@ ecg/
     wave_template.py — beat-template calibration and wave delineation
     ml_detector.py   — classical-ML R-peak detector, trainable from
                        reviewed recordings
+  services/
+    analysis_service.py — Analyze without the UI (artifact correction,
+                       analysis window, analyse_core)
   io/
     loaders.py       — .mat / HDF5 signal loading
     session.py       — session save/load (JSON)

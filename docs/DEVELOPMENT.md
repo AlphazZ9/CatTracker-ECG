@@ -71,6 +71,9 @@ ecg-analysis            # after `pip install -e .`
 │   │   ├── wave_template.py  # beat-template calibration & delineation
 │   │   └── ml_detector.py    # classical-ML R-peak detector, trainable from
 │   │                         # reviewed recordings, hold-out confusion matrix
+│   ├── services/          # the app's actions on ecg.core, without the UI
+│   │   └── analysis_service.py # Analyze: artifact correction, analysis
+│   │                         # window, analyse_core
 │   ├── io/                # file formats and persistence
 │   │   ├── loaders.py        # .mat / HDF5 signal loading
 │   │   ├── session.py        # session save/load (JSON)
@@ -105,7 +108,8 @@ ecg-analysis            # after `pip install -e .`
 └── README.md / README.fr.md
 ```
 
-`ecg.core` has no dependency on `ecg.ui` or `ecg.io` — the detection and HRV
+`ecg.core` has no dependency on `ecg.ui` or `ecg.io`, and `ecg.services`
+none on `ecg.ui` — the detection and HRV
 algorithms are pure functions that can be tested, scripted, or reused without
 launching the GUI.
 
