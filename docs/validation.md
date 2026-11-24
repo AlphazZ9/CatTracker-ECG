@@ -49,18 +49,27 @@ sessions, Compare segments et Event-locked (ils demandent des annotations).
   exacte**.
 - Flottants : |a − b| ≤ 1e-12 + 1e-9 × |b|, NaN égal à NaN.
 - Valeurs exprimées en unités du signal normalisé (signal préparé,
-  proéminences, seuil, amplitudes, template de battement) : |a − b| ≤ 1e-9 +
-  1e-9 × |b|. Le signal est un z-score (écart-type 1), donc 1e-9 est une
-  erreur absolue de 1e-9 écart-type. Près d'un passage par zéro, l'erreur
+  proéminences, seuil, amplitudes, template de battement) : |a − b| ≤ 1e-7 +
+  1e-9 × |b|. Le signal est un z-score (écart-type 1), donc 1e-7 est une
+  erreur absolue de 1e-7 écart-type. Près d'un passage par zéro, l'erreur
   relative d'un échantillon n'a pas de sens.
 
-**Pourquoi cette tolérance sur le signal** (24/11/2026). À la première exécution
-de la CI sous Windows, avec exactement les mêmes versions de bibliothèques que
-sous Linux, le signal filtré différait d'environ 1e-11 sur des échantillons
-proches de zéro (arrondi de `filtfilt` / `ecg_clean`). Les pics, la HRV, les
-intervalles et toutes les autres sorties étaient identiques. La tolérance du
-signal a été fixée à 1e-9, soit une marge de 100 fois au-dessus de l'écart
-observé.
+**Pourquoi cette tolérance sur le signal.** Avec exactement les mêmes versions
+de bibliothèques que sous Linux, le signal filtré diffère sous Windows sur des
+échantillons isolés, et l'écart dépend de la machine de CI :
+
+| Date | Exécution | Écart maximal observé |
+|---|---|---|
+| 24/11/2026 | PR #2, runner Windows | ~1e-11 |
+| 24/11/2026 | PR #4, autre runner Windows | 1,3e-9 |
+
+Les passe-haut très bas (0,5 Hz d'`ecg_clean`, borne basse du passe-bande à
+2 kHz) sont des filtres mal conditionnés : ils amplifient les différences
+d'arrondi du processeur. Les pics, la HRV, les intervalles et toutes les autres
+sorties restaient identiques. Une première tolérance de 1e-9, calibrée sur une
+seule machine, s'est révélée trop serrée ; elle est fixée à 1e-7. Une vraie
+modification reste détectée : normaliser avec ddof = 1 (écart d'environ 2e-6)
+change toujours 75 sorties, dont 52 en unités du signal.
 
 **Versions des bibliothèques.** La référence enregistre les versions de numpy,
 scipy, pandas, neurokit2, scikit-learn et PyWavelets. Si l'une d'elles diffère

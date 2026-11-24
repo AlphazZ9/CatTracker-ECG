@@ -68,10 +68,13 @@ ATOL = 1e-12
 # Values in units of the z-scored ECG (standard deviation 1): the prepared
 # signal, prominences, amplitudes and beat templates. Their error is an
 # absolute error on the signal scale -- a sample near a zero crossing has a
-# meaningless relative error -- so they get this absolute tolerance, 1e-9 of
-# the signal's standard deviation. Observed between Linux and Windows with
-# the same library versions: about 1e-11 (filtfilt / ecg_clean rounding).
-SIGNAL_ATOL = 1e-9
+# meaningless relative error -- so they get this absolute tolerance, 1e-7 of
+# the signal's standard deviation. Observed between Linux and Windows runners
+# with the same library versions: 1e-11 on one, 1.3e-9 on another -- the
+# low high-pass cut-offs (ecg_clean, band-pass) are ill-conditioned filters
+# that amplify the CPU's rounding. A real change of method is far larger
+# (normalising with ddof=1, ~2e-6, still changes 75 outputs).
+SIGNAL_ATOL = 1e-7
 SIGNAL_UNIT_NAMES = ("signal_flt", "signal_raw_norm", "all_proms", "thresh_amp",
                      "beat_template", "beat_matrix", "beat_sd", "peak_amps")
 # Libraries whose version is part of the reference: a different version may
