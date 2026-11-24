@@ -18,7 +18,7 @@ from ecg.core.autonomic import COV_METHODS
 from ecg.io import db
 from ecg.io.session import _SessionEncoder, _session_decode_hook
 from ecg.ui import event_locked_controller as elc_module
-from ecg.ui import session_controller as sc_module
+from ecg.services import session_service  # where restore reloads the signal
 from ecg.ui.analysis_controller import AnalysisController
 from ecg.ui.event_locked_controller import EventLockedController
 from ecg.ui.session_controller import SessionController
@@ -399,7 +399,7 @@ def test_session_round_trip_restores_the_panel_parameters(monkeypatch):
     assert state["event_locked_params"] == {"label": "saline", "pre_s": 30.0,
                                             "post_s": 25.0, "zscore": True}
     state = json.loads(json.dumps(state, cls=_SessionEncoder), object_hook=_session_decode_hook)
-    monkeypatch.setattr(sc_module, "load_mat_signal",
+    monkeypatch.setattr(session_service, "load_mat_signal",
                         lambda path, ch=None: (np.zeros(1000), "ECG", None, FS))
     app._compute_preview_bundle = lambda sig, fs, params: {}
     bundle = SessionController(app).restore_session_worker(state)

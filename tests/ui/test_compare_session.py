@@ -243,7 +243,7 @@ def test_rows_survive_a_rebuild_for_new_peaks(root):
 
 def test_session_state_holds_the_setup_and_the_worker_passes_it(monkeypatch):
     from tests.ui.test_event_locked_controller import _computed, FS
-    from ecg.ui import session_controller as sc_module
+    from ecg.services import session_service  # where restore reloads the signal
     app, _ = _computed()
     app.sl_thr = None
     app._qtc_formula = lambda: "mitchell"
@@ -254,7 +254,7 @@ def test_session_state_holds_the_setup_and_the_worker_passes_it(monkeypatch):
     state = SessionController(app).collect_session_state()
     assert state["compare_segments"] == setup
     state = json.loads(json.dumps(state, cls=_SessionEncoder), object_hook=_session_decode_hook)
-    monkeypatch.setattr(sc_module, "load_mat_signal",
+    monkeypatch.setattr(session_service, "load_mat_signal",
                         lambda path, ch=None: (np.zeros(1000), "ECG", None, FS))
     app._compute_preview_bundle = lambda sig, fs, params: {}
     bundle = SessionController(app).restore_session_worker(state)

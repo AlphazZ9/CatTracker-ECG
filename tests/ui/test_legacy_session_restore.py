@@ -14,7 +14,7 @@ from ecg.core import analysis, wave_template
 from ecg.core.models import MouseECG
 from ecg.io.loaders import _serialise_results
 from ecg.io.session import _SessionEncoder, _session_decode_hook
-from ecg.ui import session_controller as sc_module
+from ecg.services import session_service  # where restore reloads the signal
 from ecg.ui.analysis_controller import AnalysisController
 from ecg.ui.plot_controller import PlotController
 from ecg.ui.session_controller import SessionController
@@ -44,7 +44,7 @@ def test_restoring_an_old_session_recomputes_mean_hr_and_flags_the_spectrum(monk
     state["results"] = _serialise_results(core)
     state = json.loads(json.dumps(state, cls=_SessionEncoder), object_hook=_session_decode_hook)
 
-    monkeypatch.setattr(sc_module, "load_mat_signal",
+    monkeypatch.setattr(session_service, "load_mat_signal",
                         lambda path, ch=None: (np.zeros(1000), "ECG", None, FS))
     app._compute_preview_bundle = lambda sig, fs, params: {}
     bundle = SessionController(app).restore_session_worker(state)

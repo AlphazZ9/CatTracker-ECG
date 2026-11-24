@@ -101,6 +101,9 @@ SLIDING_ALL_METRICS = ("HR", "SDNN", "RMSSD", "pNN6", "SD1", "SD2", "CCD",
                        "SD1_LW", "SD2_LW", "LF_nu", "HF_nu", "LF_HF")
 EPOCH_ALL_METRICS = ("HR", "SDNN", "RMSSD", "pNN6", "SD1", "SD2", "LF_nu", "HF_nu", "LF_HF")
 ANALYSIS_WINDOW_S = (20.0, 120.0)
+# Noisy regions marked by hand ({t_start, t_end} in s): the synthetic
+# recording's EMG burst (95-96.5 s) and a stretch of clean signal.
+NOISE_REGIONS_S = ({"t_start": 40.0, "t_end": 45.5}, {"t_start": 95.0, "t_end": 96.5})
 
 
 # ════════════════════════════════════════════════════════════
@@ -122,6 +125,11 @@ class _Null:
 
     def __getitem__(self, key: Any) -> "_Null":
         return self
+
+    def __iter__(self):
+        # Iterating a widget (its children, its items) yields nothing: with
+        # __getitem__ alone, Python's fallback iteration would never stop.
+        return iter(())
 
 
 class _Entry:
@@ -465,6 +473,18 @@ def run_pipeline(path: "str | Path", channel: str = "ECG",
     step("window/frequency", lambda: _freq(app))
     step("window/epochs", lambda: _epochs(app))
     step("window/sliding", lambda: _sliding(app, SLIDING_DEFAULT_METRICS))
+
+    # ── Noisy regions marked by hand (their RR left out of HR / HRV) ──
+    app = _new_app(path)
+    _land_preview(app, app.signal_ctrl.preview_worker(_params()))
+    app.analysis.noise_regions = [dict(r) for r in NOISE_REGIONS_S]
+    step("noise/core", lambda: _analyze(app))
+    step("noise/frequency", lambda: _freq(app))
+    step("noise/nonlinear", lambda: _nonlinear(app))
+    step("noise/epochs", lambda: _epochs(app, EPOCH_ALL_METRICS))
+    step("noise/sliding", lambda: _sliding(app, SLIDING_ALL_METRICS))
+    step("noise/events", lambda: _arrhythmias(app))
+    step("noise/autonomic", lambda: _autonomic(app, lf_hf=False))
 
     return out, timings
 

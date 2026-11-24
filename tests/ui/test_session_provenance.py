@@ -16,7 +16,7 @@ import pytest
 from ecg.core import wave_template
 from ecg.core.models import FilterParams
 from ecg.io.session import _SessionEncoder, _session_decode_hook
-from ecg.ui import session_controller as sc_module
+from ecg.services import session_service  # where restore reloads the signal
 from ecg.ui.session_controller import SessionController
 
 from tests.core.test_legacy_results import _core
@@ -50,7 +50,7 @@ def _app_with_results():
 def _restore(monkeypatch, app, state):
     state = json.loads(json.dumps(state, cls=_SessionEncoder),
                        object_hook=_session_decode_hook)
-    monkeypatch.setattr(sc_module, "load_mat_signal",
+    monkeypatch.setattr(session_service, "load_mat_signal",
                         lambda path, ch=None: (np.zeros(int(FILE_S * FS)), "ECG", None, FS))
     seen: list = []
     app._compute_preview_bundle = lambda sig, fs, params: seen.append((len(sig), params)) or {}

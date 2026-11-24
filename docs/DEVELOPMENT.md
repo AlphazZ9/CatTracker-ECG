@@ -51,6 +51,8 @@ ecg-analysis            # after `pip install -e .`
 │   ├── __init__.py       # package version, architecture overview
 │   ├── __main__.py       # `python -m ecg` entry point
 │   ├── core/             # pure NumPy/SciPy/pandas — no UI, no file I/O
+│   │   ├── recording.py      # state of one recording: signal (raw read-only),
+│   │   │                     # detection, analysis; units
 │   │   ├── models.py         # species physiology constants, experimental-context
 │   │   │                     # reference ranges (built-in + user-editable custom),
 │   │   │                     # shared dataclasses
@@ -72,8 +74,11 @@ ecg-analysis            # after `pip install -e .`
 │   │   └── ml_detector.py    # classical-ML R-peak detector, trainable from
 │   │                         # reviewed recordings, hold-out confusion matrix
 │   ├── services/          # the app's actions on ecg.core, without the UI
-│   │   └── analysis_service.py # Analyze: artifact correction, analysis
-│   │                         # window, analyse_core
+│   │   ├── analysis_service.py  # Analyze: artifact correction, analysis
+│   │   │                     # window, analyse_core
+│   │   ├── events_service.py    # abnormal-event classification (Events)
+│   │   ├── autonomic_service.py # CSI / CPI and SPWVD LF / HF (Autonomic)
+│   │   └── session_service.py   # the recording's side of a .ecgsession
 │   ├── io/                # file formats and persistence
 │   │   ├── loaders.py        # .mat / HDF5 signal loading
 │   │   ├── session.py        # session save/load (JSON)
@@ -99,6 +104,7 @@ ecg-analysis            # after `pip install -e .`
 │       ├── widgets.py         # reusable widget factories (stat tiles, quality gauge)
 │       ├── wave_editor.py     # wave-template mini editor
 │       └── state.py           # UI-facing state dataclasses
+├── examples/            # analysing a recording from a script
 ├── ecg_app.py             # thin backward-compatible entry point
 ├── setup.py               # `pip install -e .` packaging
 ├── requirements.txt
@@ -112,6 +118,20 @@ ecg-analysis            # after `pip install -e .`
 none on `ecg.ui` — the detection and HRV
 algorithms are pure functions that can be tested, scripted, or reused without
 launching the GUI.
+
+## Scripting an analysis
+
+The scientific code runs without the interface: `ecg.core` (algorithms),
+`ecg.io` (files) and `ecg.services` (the app's actions). An example analyses
+one recording with the app's start-up settings and writes a summary, the RR
+series and the epochs:
+
+```bash
+python examples/analyse_recording.py path/to/recording.mat --out results
+```
+
+`tests/regression/test_script_example.py` checks that it gives the app's
+own numbers.
 
 ## Notes for contributors
 

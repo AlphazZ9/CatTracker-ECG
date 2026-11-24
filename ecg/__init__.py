@@ -6,6 +6,7 @@ Package layout
 ecg/
   core/
     models.py        — physiology constants, dataclasses, typed dicts
+    recording.py     — state of one recording (signal, detection, analysis)
     filtering.py     — bandpass, notch, normalise, downsample helpers
     pipeline.py      — signal preparation and R-peak candidates (Detect Peaks)
     peak_editing.py  — accepted peaks after an edit, signal-quality score
@@ -19,6 +20,9 @@ ecg/
   services/
     analysis_service.py — Analyze without the UI (artifact correction,
                        analysis window, analyse_core)
+    events_service.py   — abnormal-event classification (Events tab)
+    autonomic_service.py — CSI / CPI and SPWVD LF / HF (Autonomic view)
+    session_service.py  — the recording's side of a session (save / restore)
   io/
     loaders.py       — .mat / HDF5 signal loading
     session.py       — session save/load (JSON)
