@@ -113,6 +113,12 @@ class DetectionTab(QtWidgets.QWidget):
                                        "of HR / HRV; right click a noisy region to remove it")
         self.btn_mark_noise.toggled.connect(self._mark_noise_toggled)
         edit_bar.addWidget(self.btn_mark_noise)
+        self.btn_review = QtWidgets.QPushButton("Review artifacts…")
+        self.btn_review.setEnabled(False)
+        self.btn_review.setToolTip("Find the RR artifacts (non-physiological, ectopic, "
+                                   "duplicate) and decide for each: keep or remove")
+        self.btn_review.clicked.connect(self._review)
+        edit_bar.addWidget(self.btn_review)
         self.btn_annotations = QtWidgets.QPushButton("Annotations")
         self.btn_annotations.setToolTip("Labelled periods of the recording (drug, stimulus, "
                                         "sleep...): drawn on the traces and the time course")
@@ -169,6 +175,7 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_edit.setEnabled(False)
         self.btn_mark_noise.setChecked(False)
         self.btn_mark_noise.setEnabled(False)
+        self.btn_review.setEnabled(False)
         self._update_undo_buttons()
         self.plot.clear()
         self.lbl_peaks.setText("Peaks: —")
@@ -212,6 +219,7 @@ class DetectionTab(QtWidgets.QWidget):
         rec.analysis.results = None
         self.btn_edit.setEnabled(True)
         self.btn_mark_noise.setEnabled(True)
+        self.btn_review.setEnabled(True)
         self._update_undo_buttons()
         self.plot.set_signal(s.filtered, fs, s.time)
         self.plot.set_noise_regions(rec.analysis.noise_regions)
@@ -359,6 +367,10 @@ class DetectionTab(QtWidgets.QWidget):
         a = self.win.recording.analysis
         a.results = None
         a.autonomic_result = None
+
+    def _review(self) -> None:
+        from ecg.qt.dialogs.artifact_review import review_artifacts
+        review_artifacts(self.win)
 
     # ── annotations and noisy regions ───────────────────────
     def update_period_counts(self) -> None:

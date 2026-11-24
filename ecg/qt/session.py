@@ -188,6 +188,7 @@ class QtSession:
         det = win.detection
         det.btn_edit.setEnabled(True)
         det.btn_mark_noise.setEnabled(True)
+        det.btn_review.setEnabled(True)
         det.btn_edit.setChecked(bool(bundle["edit_mode"]))
         thr = float(bundle["thresh_frac"])
         for w in (det.sp_thr, det.sl_thr):

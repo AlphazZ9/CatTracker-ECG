@@ -64,6 +64,11 @@ class MorphologyTab(QtWidgets.QScrollArea):
         self.chk_permissive.setToolTip("Accept intervals up to twice the strict physiological "
                                        "bounds")
         row.addWidget(self.chk_permissive)
+        self.btn_template = QtWidgets.QPushButton("Wave template…")
+        self.btn_template.setToolTip("The P / Q / S / T search windows of this recording, on "
+                                     "its mean beat")
+        self.btn_template.clicked.connect(self._edit_template)
+        row.addWidget(self.btn_template)
         self.btn_measure = QtWidgets.QPushButton("Measure intervals")
         self.btn_measure.setProperty("primary", True)
         self.btn_measure.setEnabled(False)
@@ -112,6 +117,10 @@ class MorphologyTab(QtWidgets.QScrollArea):
             if notice:
                 QtWidgets.QMessageBox.warning(self, "Saved default template not used", notice)
         return a.wave_template
+
+    def _edit_template(self) -> None:
+        from ecg.qt.dialogs.wave_editor import open_editor
+        open_editor(self.win)
 
     # ── Measure intervals ───────────────────────────────────
     def results_changed(self) -> None:

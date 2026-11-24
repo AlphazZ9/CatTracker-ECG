@@ -138,6 +138,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_settings.setToolTip("Channel, crop, filters, RR bounds, artifact correction")
         self.btn_settings.clicked.connect(lambda: (self.settings.show(), self.settings.raise_()))
         row.addWidget(self.btn_settings)
+        self.btn_ml = QtWidgets.QPushButton("ML detector…")
+        self.btn_ml.setToolTip("Training examples and training of the ML R-peak detector")
+        self.btn_ml.clicked.connect(self.open_ml_dialog)
+        row.addWidget(self.btn_ml)
         self.btn_save = QtWidgets.QPushButton("Save Session")
         self.btn_save.setToolTip("Save the peaks, edits, results and settings of this recording; "
                                  "they are offered again when the file is reopened")
@@ -219,6 +223,10 @@ class MainWindow(QtWidgets.QMainWindow):
         return subject or DEFAULT_SUBJECT
 
     # ── Analyze ─────────────────────────────────────────────
+    def open_ml_dialog(self) -> None:
+        from ecg.qt.dialogs.ml_training import MLTrainingDialog
+        MLTrainingDialog(self).exec()
+
     def results_restored(self) -> None:
         """Results brought back by a session: shown as after Analyze."""
         a = self.recording.analysis
