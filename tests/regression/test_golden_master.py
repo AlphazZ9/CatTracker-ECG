@@ -33,12 +33,21 @@ MAX_SHOWN = 40
 
 
 def _assert_identical(recording: Path, ref_dir: Path) -> None:
-    diffs, _ = golden.check(recording, ref_dir)
-    if diffs:
-        shown = "\n".join(str(d) for d in diffs[:MAX_SHOWN])
-        more = f"\n… and {len(diffs) - MAX_SHOWN} more" if len(diffs) > MAX_SHOWN else ""
-        pytest.fail(f"{recording.name}: {len(diffs)} output(s) differ from the reference:\n"
-                    f"{shown}{more}")
+    """Fail on any difference -- unless a scientific library is not the
+    version the reference was made with (the CI job on the newest
+    libraries): then a difference may be the library's own change, and the
+    test is an expected failure that lists the versions and the outputs."""
+    diffs, manifest = golden.check(recording, ref_dir)
+    if not diffs:
+        return
+    shown = "\n".join(str(d) for d in diffs[:MAX_SHOWN])
+    more = f"\n… and {len(diffs) - MAX_SHOWN} more" if len(diffs) > MAX_SHOWN else ""
+    report = f"{recording.name}: {len(diffs)} output(s) differ from the reference:\n{shown}{more}"
+    changed = golden.package_changes(manifest)
+    if changed:
+        versions = ", ".join(f"{p} {a} -> {b}" for p, (a, b) in changed.items())
+        pytest.xfail(f"library versions differ from the reference ({versions}); {report}")
+    pytest.fail(report)
 
 
 def test_synthetic_recording_matches_its_reference():
@@ -89,6 +98,18 @@ def test_compare_reports_missing_extra_shape_and_type():
     new = {"new": 1, "p": np.array([1, 2, 3]), "f": np.array([1]), "s": np.array([1.0])}
     kinds = sorted(d.kind for d in golden.compare(ref, new))
     assert kinds == ["extra", "missing", "shape", "type", "type"]
+
+
+def test_signal_values_use_an_absolute_tolerance_on_the_signal_scale():
+    """A sample near zero of the z-scored signal: 1e-11 off is rounding, not
+    a change (seen between Linux and Windows); a non-signal value that close
+    to zero must still match to ATOL."""
+    ref = {"detect/x/signal_flt/samples": np.array([1e-3, 0.5]), "hr/sd": np.array([1e-3])}
+    new = {"detect/x/signal_flt/samples": np.array([1e-3 + 1e-11, 0.5]),
+           "hr/sd": np.array([1e-3 + 1e-11])}
+    assert [d.name for d in golden.compare(ref, new)] == ["hr/sd"]
+    big = {"detect/x/signal_flt/samples": np.array([1e-3 + 1e-7, 0.5]), "hr/sd": ref["hr/sd"]}
+    assert [d.name for d in golden.compare(ref, big)] == ["detect/x/signal_flt/samples"]
 
 
 def test_flatten_keeps_long_signals_as_a_stride_and_statistics():

@@ -48,6 +48,25 @@ sessions, Compare segments et Event-locked (ils demandent des annotations).
 - Entiers, booléens, textes (indices des pics, comptages, libellés) : **égalité
   exacte**.
 - Flottants : |a − b| ≤ 1e-12 + 1e-9 × |b|, NaN égal à NaN.
+- Valeurs exprimées en unités du signal normalisé (signal préparé,
+  proéminences, seuil, amplitudes, template de battement) : |a − b| ≤ 1e-9 +
+  1e-9 × |b|. Le signal est un z-score (écart-type 1), donc 1e-9 est une
+  erreur absolue de 1e-9 écart-type. Près d'un passage par zéro, l'erreur
+  relative d'un échantillon n'a pas de sens.
+
+**Pourquoi cette tolérance sur le signal** (24/11/2026). À la première exécution
+de la CI sous Windows, avec exactement les mêmes versions de bibliothèques que
+sous Linux, le signal filtré différait d'environ 1e-11 sur des échantillons
+proches de zéro (arrondi de `filtfilt` / `ecg_clean`). Les pics, la HRV, les
+intervalles et toutes les autres sorties étaient identiques. La tolérance du
+signal a été fixée à 1e-9, soit une marge de 100 fois au-dessus de l'écart
+observé.
+
+**Versions des bibliothèques.** La référence enregistre les versions de numpy,
+scipy, pandas, neurokit2, scikit-learn et PyWavelets. Si l'une d'elles diffère
+lors de la vérification, une différence est signalée comme « échec attendu »
+(xfail), avec les versions et les valeurs changées : c'est le cas du job CI
+« newest deps ». Avec les mêmes versions, toute différence est un échec.
 
 La tolérance absorbe les effets d'ordre de sommation d'une autre bibliothèque
 BLAS ou d'un autre processeur. Un algorithme simplement déplacé donne les
@@ -104,3 +123,12 @@ la référence. Dans ce cas :
 | Date | Version | Changement | Valeurs touchées | Justification |
 |---|---|---|---|---|
 | — | 6.2.0 | Référence initiale | — | — |
+
+## Changements de bibliothèques observés (non acceptés)
+
+| Date | Bibliothèques | Valeurs touchées |
+|---|---|---|
+| 24/11/2026 | neurokit2 0.2.13 → 0.3.0 (avec numpy 2.5.5, scipy 1.18.1, pandas 3.1.1, scikit-learn 1.9.1) | `HRV_TINN` 0 → 46,875 ms ; `HRV_PSS` 0,908 → 0,824 (et 0,905 → 0,819 après correction des artefacts) ; signal filtré à environ 5e-10 près |
+
+Ne pas relever `neurokit2` dans `packaging/constraints.txt` sans examiner ces
+changements : TINN et PSS figurent dans les exports.
