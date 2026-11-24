@@ -57,6 +57,8 @@ ecg-analysis            # after `pip install -e .`
 │   │   ├── filtering.py      # bandpass, notch, normalize, downsample
 │   │   ├── pipeline.py       # Detect Peaks preparation: filters, ecg_clean,
 │   │   │                     # polarity, the five detectors' candidates
+│   │   ├── peak_editing.py   # accepted peaks after a threshold change or a
+│   │   │                     # manual edit; signal-quality score
 │   │   ├── detection.py      # R-peak detection, RR artifacts, rhythm /
 │   │   │                     # abnormal-event classification (incl. AV delay)
 │   │   ├── analysis.py       # HRV time/freq/non-linear (incl. multiscale
