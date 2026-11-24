@@ -14,9 +14,15 @@ its lines in every sheet it writes, never in the others):
 * ``Whole``: the whole-recording metrics, one column per metric.
 * ``TimeCourse``: the valid RR intervals summed in TC_BIN_S bins (count,
   sums and sums of squares of RR, HR and successive differences): enough to
-  recompute the mean HR / RR, SDNN and RMSSD of any coarser bin exactly, so
-  the bin size and the time 0 stay free in the Group tab without the RR
-  series of every animal in the workbook.
+  recompute the HR (60000 / mean RR), mean RR, SDNN and RMSSD of any coarser
+  bin exactly, so the bin size and the time 0 stay free in the Group tab
+  without the RR series of every animal in the workbook. The fine bins are laid out once
+  per anchor (``anchor_s``: the recording start, 0, over the whole
+  recording, and the start of each named annotation, over TC_ANCHOR_SPAN_S
+  around it), as anchor + k * TC_BIN_S, so a bin edge that is a multiple
+  of TC_BIN_S from the chosen time 0 is exact. Anchors TC_BIN_S apart (or a
+  multiple of it) share the same fine bins and are stored once. A table
+  made before ``anchor_s`` has the recording-start bins only.
 * ``Annotations``: the recording's annotations (the time 0 of a time course).
 * ``Events``: the event-locked results of the recording (one line per
   event: pre, post and Δ of each metric), from the event registry.
@@ -53,10 +59,19 @@ KEY = ("subject", "file")
 EXCEL_MAX_ROWS = 1_048_576          # rows of an Excel sheet, header included
 
 # Fine bin of the TimeCourse sheet (s): a coarse bin of the Group tab takes
-# the fine bins whose centre falls in it (an error of TC_BIN_S / 2 at most).
+# the fine bins whose centre falls in it -- exact when the fine bins are
+# anchored on the time 0 (anchor_s), within TC_BIN_S / 2 otherwise.
 TC_BIN_S = 5.0
-TC_COLUMNS = ("t_s", "n_rr", "sum_rr", "sumsq_rr", "sum_hr", "sumsq_hr",
+TC_COLUMNS = ("anchor_s", "t_s", "n_rr", "sum_rr", "sumsq_rr", "sum_hr", "sumsq_hr",
               "n_diff", "sumsq_diff")
+# Two anchors whose offset is a multiple of TC_BIN_S to within this (s) share
+# their fine bins; a time 0 matches an anchor to within it too.
+ANCHOR_TOL_S = 1e-3
+# The span (s, from the anchor) over which an annotation's own fine bins are
+# laid out: a time course rarely goes further, and a grid over a whole
+# day-long recording per annotation would pass Excel's row limit. Past it the
+# recording-start grid is used (within TC_BIN_S / 2, with a note).
+TC_ANCHOR_SPAN_S = (-2 * 3600.0, 4 * 3600.0)
 
 # Time-course metrics: name -> unit.
 TC_METRICS = {"HR": "bpm", "RR": "ms", "SDNN": "ms", "RMSSD": "ms"}
@@ -75,13 +90,22 @@ def _key_text(df: "pd.DataFrame") -> "pd.DataFrame":
     return df
 
 
-def read_sheets(path: str) -> "dict[str, pd.DataFrame]":
+def read_sheets(path: str, only: "Optional[Sequence[str]]" = None) -> "dict[str, pd.DataFrame]":
     """Every sheet of the group table at *path*: the known ones (SHEETS) with
     subject and file as text, and any other sheet the user added (notes, a
     Prism import...) as it is, written back by write_sheets. A workbook
-    without a subject / file column in a known sheet is refused."""
-    xl = pd.read_excel(path, sheet_name=None)
+    without a subject / file column in a known sheet is refused. *only*:
+    just those of the sheets (the ones the workbook has), for a reader that
+    needs a few -- the TimeCourse sheet of a big table takes most of the
+    time to read; never written back."""
+    if only is None:
+        xl = pd.read_excel(path, sheet_name=None)
+    else:
+        with pd.ExcelFile(path) as book:
+            xl = {name: book.parse(name) for name in book.sheet_names if name in only}
     out = {name: _key_text(df) for name, df in xl.items() if name in SHEETS}
+    if only is not None and not out:
+        return {}                   # none of those sheets: the caller says what is missing
     if not out or not any(all(c in df.columns for c in KEY) for df in out.values()):
         raise ValueError(f"{os.path.basename(path)} is not a group table "
                          "(no subject / file columns)")
@@ -190,7 +214,8 @@ def write_sheets(path: str, sheets: "Mapping[str, pd.DataFrame]") -> None:
             if df is None:
                 continue
             df = _ordered(df)
-            sort = [c for c in ("subject", "file", "t_s", "onset_s", "t_start") if c in df.columns]
+            sort = [c for c in ("subject", "file", "anchor_s", "t_s", "onset_s", "t_start")
+                    if c in df.columns]
             df = df.sort_values(sort, kind="stable").reset_index(drop=True)
             df.to_excel(xw, sheet_name=name, index=False)
         for name, df in sheets.items():
@@ -261,6 +286,33 @@ def _add_to_sheets(sheets: "dict[str, pd.DataFrame]", subject: str, sex: str, fi
     return replaced
 
 
+def fit_time_course(sheets: "dict[str, pd.DataFrame]") -> "list[tuple[str, str]]":
+    """Keep the TimeCourse sheet of *sheets* under Excel's row limit by
+    dropping the annotation grids (anchor_s off the recording-start grid) of
+    the recordings that have the most of them, until it fits; those
+    recordings are then aligned on the recording-start grid (within
+    TC_BIN_S / 2, the Group tab says so) rather than the whole add being
+    refused. Returns the (subject, file) whose grids were dropped."""
+    tc = sheets.get(SHEET_TIME)
+    if tc is None or len(tc) < EXCEL_MAX_ROWS or "anchor_s" not in tc.columns:
+        return []
+    a = pd.to_numeric(tc["anchor_s"], errors="coerce").fillna(0.0).to_numpy(float)
+    k = a / TC_BIN_S
+    extra = np.abs(k - np.round(k)) * TC_BIN_S >= ANCHOR_TOL_S     # not _same_grid(a, 0)
+    key = tc["subject"].astype(str) + "\x00" + tc["file"].astype(str)
+    counts = key[extra].value_counts()
+    drop = np.zeros(len(tc), dtype=bool)
+    rows, dropped = len(tc), []
+    for k, n in counts.items():
+        if rows < EXCEL_MAX_ROWS:
+            break
+        drop |= extra & (key == k).to_numpy()
+        rows -= int(n)
+        dropped.append(tuple(k.split("\x00", 1)))
+    sheets[SHEET_TIME] = tc.loc[~drop].reset_index(drop=True)
+    return dropped
+
+
 def add_recording(path: str, subject: str, sex: str, file: str,
                   new: "Mapping[str, Optional[pd.DataFrame]]") -> "tuple[int, bool]":
     """Add one recording to the group table at *path* (created if it does not
@@ -270,6 +322,7 @@ def add_recording(path: str, subject: str, sex: str, file: str,
     (animals in the table, whether the recording was replaced)."""
     sheets = read_sheets(path) if os.path.exists(path) else {}
     replaced = _add_to_sheets(sheets, subject, sex, file, new)
+    fit_time_course(sheets)
     write_sheets(path, sheets)
     return len(sheets[SHEET_ANIMALS]), replaced
 
@@ -281,6 +334,7 @@ def add_recordings(path: str, items: "Iterable[tuple[str, str, str, Mapping]]") 
     sheets = read_sheets(path) if os.path.exists(path) else {}
     replaced = sum(_add_to_sheets(sheets, s, x, f, new) for s, x, f, new in items)
     if SHEET_ANIMALS in sheets:
+        fit_time_course(sheets)
         write_sheets(path, sheets)
     return len(sheets.get(SHEET_ANIMALS, ())), int(replaced)
 
@@ -316,19 +370,46 @@ def whole_frame(metric_rows: "Iterable[Any]") -> "pd.DataFrame":
     return pd.DataFrame([row]) if row else pd.DataFrame()
 
 
-def time_frame(t_s: "Sequence[float]", rr_ms: "Sequence[float]", valid: "Sequence[bool]",
-               bin_s: float = TC_BIN_S) -> "pd.DataFrame":
-    """The TimeCourse lines of one recording: per *bin_s* bin (``t_s``: its
-    start, s from the recording start) the count, sum and sum of squares of
-    the valid RR (ms) and of their HR (bpm), and of the successive
-    differences between two valid intervals (``n_diff``, ``sumsq_diff``),
-    each counted in the bin of the interval's end time."""
-    t = np.asarray(t_s, dtype=float)
-    rr = np.asarray(rr_ms, dtype=float)
-    ok = np.asarray(valid, dtype=bool) & np.isfinite(rr) & np.isfinite(t) & (rr > 0)
-    if not ok.any():
-        return pd.DataFrame(columns=list(TC_COLUMNS))
-    b = np.floor(t / bin_s).astype(np.int64)
+def _same_grid(a: float, b: float, bin_s: float = TC_BIN_S) -> bool:
+    """Whether the bin grids anchored on *a* and *b* (s) coincide: their offset
+    is a multiple of *bin_s* to within ANCHOR_TOL_S."""
+    k = (a - b) / bin_s
+    return abs(k - round(k)) * bin_s < ANCHOR_TOL_S
+
+
+def _anchor_grids(anchors: "Iterable[Any]", bin_s: float = TC_BIN_S
+                  ) -> "list[tuple[float, float, float]]":
+    """(grid anchor, from, to) s of each distinct bin grid of *anchors*: the
+    recording start (0, everything) first, then each finite anchor whose grid
+    no earlier one has, over TC_ANCHOR_SPAN_S around every anchor that shares
+    it."""
+    lo_s, hi_s = TC_ANCHOR_SPAN_S
+    out = [[0.0, -math.inf, math.inf]]
+    for a in (() if anchors is None else anchors):
+        try:
+            a = float(a)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(a):
+            continue
+        g = next((g for g in out if _same_grid(a, g[0], bin_s)), None)
+        if g is None:
+            out.append([a, a + lo_s, a + hi_s])
+        else:
+            g[1], g[2] = min(g[1], a + lo_s), max(g[2], a + hi_s)
+    return [tuple(g) for g in out]
+
+
+def tc_anchors(anchors: "Iterable[Any]", bin_s: float = TC_BIN_S) -> "list[float]":
+    """The distinct bin grids of *anchors* (s): 0 (the recording start) first,
+    then each finite anchor whose grid no earlier one has."""
+    return [g[0] for g in _anchor_grids(anchors, bin_s)]
+
+
+def _time_frame_one(t: np.ndarray, rr: np.ndarray, ok: np.ndarray, bin_s: float,
+                    anchor: float, span: "tuple[float, float]" = (-math.inf, math.inf)
+                    ) -> "pd.DataFrame":
+    b = np.floor((t - anchor) / bin_s).astype(np.int64)
     lo = int(b[ok].min())
     nb = int(b[ok].max()) - lo + 1
     idx = b - lo
@@ -339,7 +420,8 @@ def time_frame(t_s: "Sequence[float]", rr_ms: "Sequence[float]", valid: "Sequenc
     def _sum(x: np.ndarray, m: np.ndarray) -> np.ndarray:
         return np.bincount(idx[m], weights=x[m], minlength=nb)[:nb]
 
-    out = {"t_s": (np.arange(nb) + lo) * bin_s,
+    out = {"anchor_s": np.full(nb, anchor),
+           "t_s": anchor + (np.arange(nb) + lo) * bin_s,
            "n_rr": _sum(w, ok), "sum_rr": _sum(rrv, ok), "sumsq_rr": _sum(rrv ** 2, ok),
            "sum_hr": _sum(hr, ok), "sumsq_hr": _sum(hr ** 2, ok)}
     pair = ok[1:] & ok[:-1]
@@ -349,7 +431,30 @@ def time_frame(t_s: "Sequence[float]", rr_ms: "Sequence[float]", valid: "Sequenc
     out["n_diff"] = np.bincount(pidx[sel], minlength=nb)[:nb].astype(float)
     out["sumsq_diff"] = np.bincount(pidx[sel], weights=(d ** 2)[sel], minlength=nb)[:nb]
     df = pd.DataFrame(out)
-    df = df.loc[df["n_rr"] > 0].reset_index(drop=True)
+    # The span is cut on whole bins, after the sums, so its edge bins keep
+    # the successive differences that reach back past it.
+    return df.loc[(df["n_rr"] > 0) & (df["t_s"] >= span[0] - ANCHOR_TOL_S)
+                  & (df["t_s"] + bin_s <= span[1] + ANCHOR_TOL_S)]
+
+
+def time_frame(t_s: "Sequence[float]", rr_ms: "Sequence[float]", valid: "Sequence[bool]",
+               bin_s: float = TC_BIN_S, anchors: "Iterable[Any]" = ()) -> "pd.DataFrame":
+    """The TimeCourse lines of one recording: per *bin_s* bin (``t_s``: its
+    start, s from the recording start) the count, sum and sum of squares of
+    the valid RR (ms) and of their HR (bpm), and of the successive
+    differences between two valid intervals (``n_diff``, ``sumsq_diff``),
+    each counted in the bin of the interval's end time. The bins are laid
+    out from the recording start (``anchor_s`` 0) and again, over
+    TC_ANCHOR_SPAN_S around it, from each of *anchors* (the annotation
+    starts, s) with a grid of its own (tc_anchors), so a time course aligned
+    on any of them has exact bin edges."""
+    t = np.asarray(t_s, dtype=float)
+    rr = np.asarray(rr_ms, dtype=float)
+    ok = np.asarray(valid, dtype=bool) & np.isfinite(rr) & np.isfinite(t) & (rr > 0)
+    if not ok.any():
+        return pd.DataFrame(columns=list(TC_COLUMNS))
+    df = pd.concat([_time_frame_one(t, rr, ok, bin_s, a, (lo, hi))
+                    for a, lo, hi in _anchor_grids(anchors, bin_s)], ignore_index=True)
     df["n_rr"] = df["n_rr"].astype(int)
     df["n_diff"] = df["n_diff"].astype(int)
     return df
@@ -436,19 +541,27 @@ def annotation_labels(annot: "Optional[pd.DataFrame]") -> "list[str]":
     return [shown[k] for k in sorted(counts, key=lambda k: (-counts[k], k))]
 
 
+def onsets_named(onsets: "Sequence[tuple[str, float]]", label: str) -> "list[float]":
+    """The starts, in order, of the annotations named *label* (case and
+    spacing insensitive)."""
+    norm = " ".join(label.split()).casefold()
+    return [t for lab, t in onsets if " ".join(lab.split()).casefold() == norm]
+
+
 def onset_of(onsets: "Sequence[tuple[str, float]]", label: str, which: int = 0
              ) -> "Optional[float]":
     """The start of the *which*-th (0: first) annotation named *label* (case
     and spacing insensitive), None when the recording has none."""
-    norm = " ".join(label.split()).casefold()
-    hits = [t for lab, t in onsets if " ".join(lab.split()).casefold() == norm]
+    hits = onsets_named(onsets, label)
     return hits[which] if 0 <= which < len(hits) else None
 
 
 def _metric_from_sums(metric: str, n: float, s_rr: float, ss_rr: float, s_hr: float,
                       n_d: float, ss_d: float) -> float:
     if metric == "HR":
-        return s_hr / n if n > 0 else math.nan
+        # 60000 / mean RR, as the rest of the app (the Whole sheet's mean HR),
+        # not the mean of the beat-by-beat HR (which sits a little higher).
+        return 60000.0 * n / s_rr if n > 0 and s_rr > 0 else math.nan
     if metric == "RR":
         return s_rr / n if n > 0 else math.nan
     if metric == "SDNN":
@@ -461,11 +574,55 @@ def _metric_from_sums(metric: str, n: float, s_rr: float, ss_rr: float, s_hr: fl
     raise ValueError(f"unknown time-course metric {metric!r}")
 
 
+# How anchor_lines met the time 0: on a grid of its own (exact), on the
+# recording-start grid because the table has none for it, or because the
+# time course goes past the span its own grid covers.
+ALIGN_EXACT, ALIGN_NO_GRID, ALIGN_PAST_SPAN = "exact", "no grid", "past span"
+
+
+def anchor_lines(tc: "pd.DataFrame", t0_s: float,
+                 span: "Optional[tuple[float, float]]" = None
+                 ) -> "tuple[pd.DataFrame, str]":
+    """(lines, how): the TimeCourse lines of one recording laid out on the
+    grid of its time 0 *t0_s* (s), and ALIGN_EXACT. When it has no such grid
+    (a table made before anchor_s, or an annotation added after the time
+    course: ALIGN_NO_GRID), or that grid stops short of the part of *span*
+    (from, to s relative to the time 0) the recording covers
+    (ALIGN_PAST_SPAN), the recording-start lines -- their bins then meet the
+    time 0 within TC_BIN_S / 2."""
+    if "anchor_s" in tc.columns:
+        a = pd.to_numeric(tc["anchor_s"], errors="coerce").fillna(0.0).to_numpy(float)
+    else:
+        a = np.zeros(len(tc))
+    grids = list(dict.fromkeys(a.tolist()))
+    start = next((g for g in grids if _same_grid(0.0, g)), grids[0] if grids else 0.0)
+    whole = tc.loc[a == start]
+    g = next((g for g in grids if _same_grid(t0_s, g)), None)
+    if g is None:
+        return whole, ALIGN_NO_GRID
+    own = tc.loc[a == g]
+    if g == start or span is None or not len(whole) or not len(own):
+        return own, ALIGN_EXACT
+    # The part of the span with beats (from the whole-recording grid) must
+    # lie in the own grid's lines; a fine bin of slack, the grids being up
+    # to one apart.
+    t_all = whole["t_s"].to_numpy(float)
+    need0 = max(t0_s + span[0], float(t_all.min()))
+    need1 = min(t0_s + span[1], float(t_all.max()) + TC_BIN_S)
+    if need1 <= need0:
+        return own, ALIGN_EXACT
+    t_own = own["t_s"].to_numpy(float)
+    if need0 < float(t_own.min()) - TC_BIN_S or need1 > float(t_own.max()) + 2 * TC_BIN_S:
+        return whole, ALIGN_PAST_SPAN
+    return own, ALIGN_EXACT
+
+
 def window_value(tc: "pd.DataFrame", metric: str, t0: float, t1: float,
                  min_coverage: float = 0.5) -> float:
-    """*metric* over the fine bins of *tc* (one recording, times relative to
-    its time 0) whose centre lies in [t0, t1) s; NaN when the valid RR cover
-    less than *min_coverage* of the window."""
+    """*metric* over the fine bins of *tc* (the lines of one recording on one
+    grid, see anchor_lines, times relative to its time 0) whose centre lies
+    in [t0, t1) s; NaN when the valid RR cover less than *min_coverage* of
+    the window."""
     c = tc["t_s"].to_numpy(float) + TC_BIN_S / 2
     m = (c >= t0) & (c < t1)
     if not m.any():
@@ -480,18 +637,36 @@ def window_value(tc: "pd.DataFrame", metric: str, t0: float, t1: float,
                              float(s["sumsq_diff"].sum()))
 
 
+def bin_edges(start_s: float, end_s: float, bin_s: float) -> np.ndarray:
+    """The edges of *bin_s* bins anchored on the time 0 (every k * bin_s)
+    covering [start_s, end_s] s; the first and last bins are cut at
+    *start_s* and *end_s* when these are not on the grid."""
+    if not (bin_s > 0) or not (end_s > start_s):
+        raise ValueError("bins: the size must be > 0 and the end after the start")
+    # The small slack keeps -600 / 60 from becoming -10.000000001.
+    k0 = math.floor(start_s / bin_s + 1e-9)
+    k1 = math.ceil(end_s / bin_s - 1e-9)
+    edges = np.arange(k0, k1 + 1, dtype=float) * bin_s
+    edges[0], edges[-1] = start_s, end_s
+    return edges
+
+
+def binned_values(rel: "pd.DataFrame", metric: str, edges: "Sequence[float]",
+                  min_coverage: float = 0.5) -> np.ndarray:
+    """*metric* in each bin [edges[i], edges[i + 1]) of *rel* (one grid's
+    lines, times relative to the time 0)."""
+    e = np.asarray(edges, dtype=float)
+    return np.array([window_value(rel, metric, a, b, min_coverage)
+                     for a, b in zip(e[:-1], e[1:])])
+
+
 def binned_series(tc: "pd.DataFrame", metric: str, t0_s: float, start_s: float, end_s: float,
                   bin_s: float, min_coverage: float = 0.5) -> "tuple[np.ndarray, np.ndarray]":
     """(bin starts in s relative to the time 0, values) of *metric* for one
     recording's TimeCourse lines *tc*, its time 0 at *t0_s* s, bins of
-    *bin_s* from *start_s* to *end_s*. A bin covered less than
-    *min_coverage* by valid RR is NaN."""
-    if bin_s <= 0 or end_s <= start_s:
-        raise ValueError("bins: the size must be > 0 and the end after the start")
-    edges = np.arange(start_s, end_s + 1e-9, bin_s)
-    if len(edges) < 2:
-        edges = np.array([start_s, start_s + bin_s])
-    starts = edges[:-1]
-    rel = tc.assign(t_s=tc["t_s"].to_numpy(float) - t0_s)
-    vals = np.array([window_value(rel, metric, a, a + bin_s, min_coverage) for a in starts])
-    return starts, vals
+    *bin_s* anchored on the time 0 (bin_edges) from *start_s* to *end_s*.
+    A bin covered less than *min_coverage* by valid RR is NaN."""
+    edges = bin_edges(start_s, end_s, bin_s)
+    lines, _how = anchor_lines(tc, t0_s, (start_s, end_s))
+    rel = lines.assign(t_s=lines["t_s"].to_numpy(float) - t0_s)
+    return edges[:-1], binned_values(rel, metric, edges, min_coverage)

@@ -267,3 +267,125 @@ def test_import_a_project_from_its_saved_sessions(tmp_path, sessions):
     # Imported again: replaced, never doubled.
     n, added, _ = tg.import_project(p, "BNST")
     assert n == 2
+
+
+def _notes(frame) -> str:
+    return "\n".join(w.cget("text") for w in _walk(frame) if isinstance(w, ctk.CTkLabel)
+                     and "⚠" in str(w.cget("text")))
+
+
+@pytest.mark.parametrize("typed, expect", [
+    ("abc", "not a number"), ("0", "at least 5 s"), ("-30", "at least 5 s"),
+    ("3", "at least 5 s")])
+def test_an_invalid_bin_size_is_refused_with_a_message(root, tmp_path, typed, expect):
+    p = _table(tmp_path, n=4)
+    _app, frame = _page(root, {"path": p, "analysis": gc.AN_TIME, "by": gc.BY_GROUP,
+                               "stim": "Stim", "bin": typed, "from": "-4", "to": "8",
+                               "w0": "0", "w1": "2"})
+    text = _results_text(frame)
+    assert "Bins (s)" in text and expect in text, text
+    assert _button(frame, "Figure…").cget("state") == "disabled"
+
+
+def test_a_bin_size_off_the_5_s_grid_is_rounded_and_said(root, tmp_path):
+    p = _table(tmp_path, n=4)
+    _app, frame = _page(root, {"path": p, "analysis": gc.AN_TIME, "by": gc.BY_GROUP,
+                               "stim": "Stim", "bin": "32", "from": "-4", "to": "8",
+                               "w0": "0", "w1": "2"})
+    assert "RM ANOVA" in _results_text(frame)
+    assert "rounded to 30 s" in _notes(frame)
+
+
+def test_recording_lines_lay_the_time_course_out_on_each_annotation():
+    rng = np.random.default_rng(0)
+    rr = 120 + rng.normal(0, 2, 3000)
+    t = np.cumsum(rr) / 1000
+    results = {"rr_ms": rr, "rr_t_s": t, "rr_valid": np.ones(len(rr), bool), "hr": {}}
+    lines = recording_lines(results, [], [{"t_start": 103.37, "label": "Stim"},
+                                          {"t_start": 200.0, "label": "Other"}], [])
+    tc = lines[gd.SHEET_TIME]
+    # 200 s is on the recording-start grid: two grids, each with every beat.
+    assert sorted(set(tc["anchor_s"])) == [0.0, 103.37]
+    assert (tc.groupby("anchor_s")["n_rr"].sum() == 3000).all()
+
+
+
+def test_recording_lines_grid_named_annotations_and_clear_deleted_ones(tmp_path, monkeypatch):
+    rng = np.random.default_rng(0)
+    rr = 120 + rng.normal(0, 2, 3000)
+    t = np.cumsum(rr) / 1000
+    results = {"rr_ms": rr, "rr_t_s": t, "rr_valid": np.ones(len(rr), bool), "hr": {}}
+    # An unnamed annotation cannot be the Time 0: no grid of its own.
+    lines = recording_lines(results, [], [{"t_start": 103.37, "label": "Stim"},
+                                          {"t_start": 151.11, "label": "  "}], [])
+    assert sorted(set(lines[gd.SHEET_TIME]["anchor_s"])) == [0.0, 103.37]
+    # A new time course with no annotation any more writes an empty
+    # Annotations frame: re-adding drops the deleted Time 0.
+    none = recording_lines(results, [], [], [])
+    assert gd.SHEET_ANNOT in none and not len(none[gd.SHEET_ANNOT])
+    p = str(tmp_path / "g.xlsx")
+    gd.add_recording(p, "201", "M", "201.mat", lines)
+    gd.add_recording(p, "201", "M", "201.mat", none)
+    sh = gd.read_sheets(p)
+    an = sh.get(gd.SHEET_ANNOT)
+    assert an is None or not len(an)
+    # Without results (Compare segments only) the annotations are kept.
+    assert gd.SHEET_ANNOT not in recording_lines(None, [], [], [])
+    app = _open_recording(tmp_path, monkeypatch)
+    app.analysis.annotations = []
+    _n, _rep, what = TabGroupMixin._add_open_recording_to_group_table(
+        app, str(tmp_path / "h.xlsx"))
+    assert "annotations" not in what
+
+
+def _labels(frame, start):
+    return [w.cget("text") for w in _walk(frame) if isinstance(w, ctk.CTkLabel)
+            and str(w.cget("text")).startswith(start)]
+
+
+def test_an_empty_time_0_asks_to_choose_it(root, tmp_path):
+    p = _table(tmp_path, n=4)
+    _app, frame = _page(root, {"path": p, "analysis": gc.AN_TIME, "by": gc.BY_GROUP,
+                               "stim": "Stim", "from": "-4", "to": "8", "w0": "0", "w1": "2"})
+    cb = next(w for w in _walk(frame) if isinstance(w, ctk.CTkComboBox)
+              and "Stim" in w.cget("values"))
+    cb.set("")
+    cb._command("")
+    text = _results_text(frame)
+    assert "Choose the Time 0 annotation" in text and "no annotation" not in text.lower()
+
+
+def test_a_status_message_is_cleared_by_the_next_run(root, tmp_path):
+    p = _table(tmp_path, n=4)
+    _app, frame = _page(root, {"path": p, "analysis": gc.AN_WHOLE, "by": gc.BY_GROUP})
+    combos = [w for w in _walk(frame) if isinstance(w, ctk.CTkComboBox)
+              and w.cget("values") and "Control" in w.cget("values")]
+    combos[0].set("Vehicle")
+    combos[0]._command("Vehicle")
+    # The save runs the analysis: its message stays through that run...
+    assert any("group saved" in t for t in _labels(frame, "✓"))
+    seg = next(w for w in _walk(frame) if isinstance(w, ctk.CTkSegmentedButton)
+               and gc.BY_NONE in w._value_list)
+    seg.set(gc.BY_NONE)
+    seg._command(gc.BY_NONE)
+    # ...and is gone after the next one.
+    assert not any("group saved" in t for t in _labels(frame, "✓"))
+    assert gc.ALL_LABEL in _results_text(frame)
+
+
+
+def test_the_added_message_is_cleared_by_the_next_user_run(root, tmp_path, monkeypatch):
+    rec = _open_recording(tmp_path, monkeypatch)
+    p = str(tmp_path / "g.xlsx")
+    monkeypatch.setattr(tg.filedialog, "asksaveasfilename", lambda *a, **k: p)
+    app, frame = _page(root, {"path": "", "analysis": gc.AN_WHOLE, "by": gc.BY_NONE})
+    app._add_open_recording_to_group_table = (
+        lambda path, **k: TabGroupMixin._add_open_recording_to_group_table(rec, path, **k))
+    _button(frame, "➕  Add open recording…").invoke()
+    assert any("added to g.xlsx" in t for t in _labels(frame, "✓"))
+    seg = next(w for w in _walk(frame) if isinstance(w, ctk.CTkSegmentedButton)
+               and gc.BY_NONE in w._value_list)
+    seg.set(gc.BY_SEX)
+    seg._command(gc.BY_SEX)
+    # The add ran its own analysis already: the user's first run clears it.
+    assert not any("added to" in t for t in _labels(frame, "✓"))

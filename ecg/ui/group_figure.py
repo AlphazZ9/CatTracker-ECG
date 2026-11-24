@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Ellipse
 
+from ecg.ui.group_tab_figure import label_line_ends, spread_labels
 from ecg.ui.plots import style_axes
 from ecg.ui.theme import PLOT
 
@@ -70,12 +71,16 @@ def draw_group_figure(fig, df: "pd.DataFrame", a: str, b: str,
         ax = fig.add_subplot(gs[0, k])
         style_axes(ax)
         ax.plot(lim, lim, "--", color=muted, lw=0.8, zorder=1)
-        for x, e1, e2, name in zip(rr[tag], s1[tag], s2[tag], ids):
+        for x, e1, e2 in zip(rr[tag], s1[tag], s2[tag]):
             ax.add_patch(Ellipse((x, x), 2 * e2, 2 * e1, angle=45, fill=False, ec=col,
                                  lw=0.9, alpha=0.5, zorder=2))
             ax.plot(x, x, "o", ms=3, color=col, alpha=0.7, zorder=3)
-            ax.annotate(name, (x, x), xytext=(5, -9), textcoords="offset points",
-                        fontsize=7, color=muted)
+        # Name tags below-right of each centre, pushed apart where two
+        # animals have close mean RR (they printed on top of each other).
+        gap = 0.045 * (lim[1] - lim[0])
+        for x, yt, name in zip(rr[tag], spread_labels(rr[tag] - gap * 0.6, gap), ids):
+            ax.text(x + 0.012 * (lim[1] - lim[0]), yt, name, fontsize=7, va="center",
+                    color=PLOT.get("text", "#222"), alpha=0.75, zorder=6)
         m = float(rr[tag].mean())
         ax.add_patch(Ellipse((m, m), 2 * float(s2[tag].mean()), 2 * float(s1[tag].mean()),
                              angle=45, fill=False, ec=col, lw=2.6, zorder=4))
@@ -134,6 +139,7 @@ def draw_all_pairs_figure(fig, res, metric: str = MAIN_METRIC, title: str = "",
         return False
     axes = fig.subplots(1, len(pairs), sharey=True, squeeze=False)[0]
     holm_col = "Wilcoxon p (Holm, all pairs)" if res.holm_across else "Wilcoxon p (Holm)"
+    tags: "list[tuple]" = []
     for ax, pr in zip(axes, pairs):
         style_axes(ax)
         g = pr.used
@@ -141,10 +147,9 @@ def draw_all_pairs_figure(fig, res, metric: str = MAIN_METRIC, title: str = "",
         vb = pd.to_numeric(g[f"{metric} {pr.b}"], errors="coerce").to_numpy(float)
         ok = np.isfinite(va) & np.isfinite(vb)
         ids = [str(s) for s in g["subject"]] if "subject" in g.columns else [""] * len(g)
-        for p0, p1, name in zip(va[ok], vb[ok], np.asarray(ids, dtype=object)[ok]):
+        for p0, p1 in zip(va[ok], vb[ok]):
             ax.plot([0, 1], [p0, p1], "-o", color=muted, ms=3.5, lw=0.9, alpha=0.8)
-            ax.annotate(name, (1, p1), xytext=(4, 0), textcoords="offset points",
-                        fontsize=6.5, color=muted, va="center")
+        tags.append((ax, list(zip(np.asarray(ids, dtype=object)[ok], vb[ok]))))
         if ok.any():
             ax.plot([0, 1], [np.median(va[ok]), np.median(vb[ok])], "-", color=color, lw=2.6)
         ax.set_xticks([0, 1], [pr.name_a, pr.name_b], fontsize=8)
@@ -157,6 +162,10 @@ def draw_all_pairs_figure(fig, res, metric: str = MAIN_METRIC, title: str = "",
         ax.set_title(f"{pr.title}\nn = {int(ok.sum())} · p = {_p_text(p)}"
                      f" (Holm{' all' if res.holm_across else ''} {_p_text(ph)})", fontsize=9)
     axes[0].set_ylabel(metric, fontsize=9)
+    # The name tags once the shared y range is set, apart where they would overlap.
+    for ax, items in tags:
+        label_line_ends(ax, [(str(n), float(y)) for n, y in items], 1.0, fontsize=6.5,
+                        color=muted, dx=0.03)
     for ax in axes[len(pairs):]:
         ax.set_axis_off()
     fig.suptitle((title + "  ·  " if title else "")
