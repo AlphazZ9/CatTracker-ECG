@@ -116,6 +116,57 @@ class _Slots(dict):
         return slot
 
 
+class _MainThreadCaller(QtCore.QObject):
+    """Runs a callable on the main thread, whichever thread asks (the Tk
+    controllers' workers report progress through app.after(0, fn))."""
+    call = QtCore.Signal(object)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.call.connect(lambda fn: fn(), QtCore.Qt.ConnectionType.QueuedConnection)
+
+
+class QtMessageBox:
+    """tkinter.messagebox for the Tk controllers running under Qt: the same
+    calls, Qt boxes (no Tk window is ever opened)."""
+
+    @staticmethod
+    def _box(icon, title: str, message: str) -> None:
+        box = QtWidgets.QMessageBox(icon, str(title), str(message),
+                                    parent=QtWidgets.QApplication.activeWindow())
+        box.open()
+
+    @classmethod
+    def showwarning(cls, title: str = "", message: str = "", **_k: Any) -> str:
+        cls._box(QtWidgets.QMessageBox.Icon.Warning, title, message)
+        return "ok"
+
+    @classmethod
+    def showerror(cls, title: str = "", message: str = "", **_k: Any) -> str:
+        cls._box(QtWidgets.QMessageBox.Icon.Critical, title, message)
+        return "ok"
+
+    @classmethod
+    def showinfo(cls, title: str = "", message: str = "", **_k: Any) -> str:
+        cls._box(QtWidgets.QMessageBox.Icon.Information, title, message)
+        return "ok"
+
+    @staticmethod
+    def askyesno(title: str = "", message: str = "", **_k: Any) -> bool:
+        return QtWidgets.QMessageBox.question(
+            QtWidgets.QApplication.activeWindow(), str(title), str(message)) \
+            == QtWidgets.QMessageBox.StandardButton.Yes
+
+
+def _use_qt_message_boxes() -> None:
+    """The Tk controller modules the Qt interface reuses show Qt boxes."""
+    import ecg.ui.analysis_controller as ac
+    import ecg.ui.plot_controller as pc
+    for mod in (ac, pc):
+        if hasattr(mod, "messagebox"):
+            mod.messagebox = QtMessageBox
+
+
 class FigureHost:
     """What PlotController / AnalysisController read on their "app"."""
 
@@ -134,6 +185,8 @@ class FigureHost:
         self._safe_float = lambda w, d: _safe_float(w, d)
         from ecg.ui.analysis_controller import AnalysisController
         from ecg.ui.plot_controller import PlotController
+        _use_qt_message_boxes()
+        self._main_caller = _MainThreadCaller()
 
         class _QtPlotController(PlotController):
             """The Rhythm & HRV metric table is a Qt table: the shared table
@@ -200,8 +253,20 @@ class FigureHost:
         self._window._progress(int(pct), msg)
 
     def after(self, ms: int, fn: "Optional[Callable]" = None) -> None:
-        if fn is not None:
+        if fn is None:
+            return
+        app = QtCore.QCoreApplication.instance()
+        if app is not None and QtCore.QThread.currentThread() is not app.thread():
+            self._main_caller.call.emit(fn)        # from a worker thread: queued
+        else:
             QtCore.QTimer.singleShot(int(ms), fn)
+
+    def _start_async_result(self, button: Any, busy_label: str, worker: Callable[[], Any],
+                            on_done: Callable[[Any], None]) -> None:
+        """AsyncMixin._start_async_result: *worker()* in a background job,
+        *on_done(result)* on the main thread."""
+        self._window.run_job(busy_label.rstrip("…").strip() or "Computing", worker,
+                             progress=False, on_done=on_done)
 
     def after_idle(self, fn: "Optional[Callable]" = None) -> None:
         if fn is not None:

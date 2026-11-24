@@ -25,12 +25,29 @@ from ecg.qt import theme
 from ecg.qt.figure_host import FigureHost, sync_figure_theme
 from ecg.qt.tabs.detection_tab import DetectionTab
 from ecg.qt.tabs.morphology_tab import MorphologyTab
+from ecg.qt.tabs.time_course_tab import TimeCourseTab
 from ecg.qt.tabs.rhythm_tab import RhythmTab
 from ecg.qt.workers import Job, JobRunner
 from ecg.services.analysis_service import run_core_analysis
-from ecg.ui.tab_keys import TAB_DETECTION, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER
+from ecg.ui.tab_keys import (TAB_DETECTION, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER,
+                             TAB_TIME_COURSE, TIME_COURSE_MODES)
 
 FILE_FILTER = "Recordings (*.mat *.smr);;All files (*)"
+
+
+class _TabSwitcher:
+    """app.tabs.set(name) / .get() of the Tk interface, on the Qt tab widget."""
+
+    def __init__(self, tabs: QtWidgets.QTabWidget) -> None:
+        self._tabs = tabs
+
+    def set(self, name: str) -> None:
+        for i in range(self._tabs.count()):
+            if self._tabs.tabText(i).replace("&&", "&") == name:
+                self._tabs.setCurrentIndex(i)
+
+    def get(self) -> str:
+        return self._tabs.tabText(self._tabs.currentIndex()).replace("&&", "&")
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -59,6 +76,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 w = RhythmTab(self)
             elif name == TAB_MORPHOLOGY:
                 w = MorphologyTab(self)
+            elif name == TAB_TIME_COURSE:
+                w = TimeCourseTab(self)
             else:
                 w = self._placeholder(name)
             self.tab_widgets[name] = w
@@ -69,6 +88,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.detection: DetectionTab = self.tab_widgets[TAB_DETECTION]   # type: ignore[assignment]
         self.rhythm: RhythmTab = self.tab_widgets[TAB_HRV]                # type: ignore[assignment]
         self.morphology: MorphologyTab = self.tab_widgets[TAB_MORPHOLOGY]  # type: ignore[assignment]
+        self.time_course: TimeCourseTab = self.tab_widgets[TAB_TIME_COURSE]  # type: ignore[assignment]
+        # What the Tk controllers call to show a tab / a Time course mode.
+        self.figures.tabs = _TabSwitcher(self.tabs)
+        self.figures._show_time_mode = lambda mode: self.time_course.setCurrentIndex(
+            TIME_COURSE_MODES.index(mode) if mode in TIME_COURSE_MODES else 0)
 
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Open, self, activated=self.open_dialog)
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self, activated=self.detection.undo)
@@ -138,6 +162,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_analyze.setEnabled(False)
         self.rhythm.clear()
         self.morphology.results_changed()
+        self.time_course.results_changed()
         self.lbl_file.setText(Path(path).name)
         self.lbl_file.setToolTip(str(path))
         self.detection.file_opened()
@@ -152,6 +177,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.recording.analysis.results is None:
             self.rhythm.clear()
             self.morphology.results_changed()
+        self.time_course.results_changed()
 
     def analysis_params(self) -> dict:
         """AnalysisController.run_analysis's snapshot."""
@@ -188,6 +214,7 @@ class MainWindow(QtWidgets.QMainWindow):
             f"{len(bundle['rpeaks_analysed']):,} beats analysed · mean HR "
             f"{hr.get('mean', float('nan')):.1f} bpm")
         self.morphology.results_changed()
+        self.time_course.results_changed()
         self.morphology.wave_template()       # the saved default, first time (as Tk)
         self.figures.plot_ctrl.draw_core_results(on_complete=self._run_freq)
 
