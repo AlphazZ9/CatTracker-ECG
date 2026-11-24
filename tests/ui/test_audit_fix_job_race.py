@@ -18,6 +18,7 @@ import pytest
 
 from ecg.core import analysis
 from ecg.ui import session_controller as sc_module
+from ecg.services import session_service  # where restore reloads the signal
 from ecg.ui.app_async import recording_changed
 from ecg.ui.freshness import UP_TO_DATE
 from ecg.ui.session_controller import SessionController
@@ -231,7 +232,7 @@ def test_restore_worker_reads_the_file_it_was_started_for(monkeypatch):
     def _load(path, channel):
         read.append(path)
         raise IOError("stop here")
-    monkeypatch.setattr(sc_module, "load_mat_signal", _load)
+    monkeypatch.setattr(session_service, "load_mat_signal", _load)
     app = SimpleNamespace(signal=SignalState(filepath="C:/data/B.mat"))
     with pytest.raises(RuntimeError):
         SessionController(app).restore_session_worker({"fs": 1000}, "C:/data/A.mat")

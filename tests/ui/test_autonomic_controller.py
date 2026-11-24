@@ -17,7 +17,7 @@ from ecg.core.autonomic import COV_METHODS, compute_autonomic_indices
 from ecg.io.session import _SessionEncoder, _session_decode_hook
 from ecg.services import autonomic_service  # where compute_autonomic runs the indices
 from ecg.core import peak_editing as dc_module  # where run_detection applies the threshold
-from ecg.ui import session_controller as sc_module
+from ecg.services import session_service  # where restore reloads the signal
 from ecg.ui.analysis_controller import AnalysisController
 from ecg.ui.autonomic_view import default_autonomic_params
 from ecg.ui.detection_controller import DetectionController
@@ -414,7 +414,7 @@ def test_session_round_trip_restores_the_parameters(monkeypatch):
                                          "min_pairs": 10}
     state = json.loads(json.dumps(state, cls=_SessionEncoder), object_hook=_session_decode_hook)
 
-    monkeypatch.setattr(sc_module, "load_mat_signal",
+    monkeypatch.setattr(session_service, "load_mat_signal",
                         lambda path, ch=None: (np.zeros(1000), "ECG", None, FS))
     app._compute_preview_bundle = lambda sig, fs, params: {}
     bundle = SessionController(app).restore_session_worker(state)
@@ -429,7 +429,7 @@ def test_a_session_without_autonomic_params_restores_nothing(monkeypatch):
     app = _session_app()
     state = SessionController(app).collect_session_state()
     del state["autonomic_params"]
-    monkeypatch.setattr(sc_module, "load_mat_signal",
+    monkeypatch.setattr(session_service, "load_mat_signal",
                         lambda path, ch=None: (np.zeros(1000), "ECG", None, FS))
     app._compute_preview_bundle = lambda sig, fs, params: {}
     bundle = SessionController(app).restore_session_worker(state)

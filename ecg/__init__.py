@@ -22,6 +22,7 @@ ecg/
                        analysis window, analyse_core)
     events_service.py   — abnormal-event classification (Events tab)
     autonomic_service.py — CSI / CPI and SPWVD LF / HF (Autonomic view)
+    session_service.py  — the recording's side of a session (save / restore)
   io/
     loaders.py       — .mat / HDF5 signal loading
     session.py       — session save/load (JSON)

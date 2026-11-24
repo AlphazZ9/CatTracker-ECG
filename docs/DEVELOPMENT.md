@@ -77,7 +77,8 @@ ecg-analysis            # after `pip install -e .`
 │   │   ├── analysis_service.py  # Analyze: artifact correction, analysis
 │   │   │                     # window, analyse_core
 │   │   ├── events_service.py    # abnormal-event classification (Events)
-│   │   └── autonomic_service.py # CSI / CPI and SPWVD LF / HF (Autonomic)
+│   │   ├── autonomic_service.py # CSI / CPI and SPWVD LF / HF (Autonomic)
+│   │   └── session_service.py   # the recording's side of a .ecgsession
 │   ├── io/                # file formats and persistence
 │   │   ├── loaders.py        # .mat / HDF5 signal loading
 │   │   ├── session.py        # session save/load (JSON)

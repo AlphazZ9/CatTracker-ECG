@@ -588,14 +588,14 @@ def test_session_without_any_record_leaves_the_ticks():
 
 
 def test_session_round_trip_carries_the_ticks(monkeypatch):
-    from ecg.ui import session_controller as sc_module
+    from ecg.services import session_service  # where restore reloads the signal
     from ecg.ui.session_controller import SessionController
     from tests.ui.test_autonomic_controller import _session_app
     app = _session_app()
     app._epoch_metrics = {"HR": _Box(True), "SD1": _Box(True), "LF_HF": _Box(False)}
     state = SessionController(app).collect_session_state()
     assert state["epoch_metrics"] == {"HR": True, "SD1": True, "LF_HF": False}
-    monkeypatch.setattr(sc_module, "load_mat_signal",
+    monkeypatch.setattr(session_service, "load_mat_signal",
                         lambda path, ch=None: (np.zeros(1000), "ECG", None, FS))
     app._compute_preview_bundle = lambda sig, fs, params: {}
     bundle = SessionController(app).restore_session_worker(state)

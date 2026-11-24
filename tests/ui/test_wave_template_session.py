@@ -21,7 +21,7 @@ import pytest
 from ecg.core import wave_template
 from ecg.core.wave_template import WaveTemplate
 from ecg.io.session import _SessionEncoder, _session_decode_hook
-from ecg.ui import session_controller as sc_module
+from ecg.services import session_service  # where restore reloads the signal
 from ecg.ui import wave_editor as we_module
 from ecg.ui.analysis_controller import AnalysisController
 from ecg.ui.session_controller import (
@@ -126,7 +126,7 @@ def test_a_saved_default_is_used_read_only(_profile):
 # ── session ───────────────────────────────────────────────────────────────
 
 def _restore(app, state, monkeypatch):
-    monkeypatch.setattr(sc_module, "load_mat_signal",
+    monkeypatch.setattr(session_service, "load_mat_signal",
                         lambda path, ch=None: (np.zeros(1000), "ECG", None, FS))
     app._compute_preview_bundle = lambda sig, fs, params: {}
     return SessionController(app).restore_session_worker(state)
