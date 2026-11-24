@@ -29,9 +29,10 @@ from ecg.qt.tabs.report_tab import ReportTab
 from ecg.qt.tabs.morphology_tab import MorphologyTab
 from ecg.qt.tabs.time_course_tab import TimeCourseTab
 from ecg.qt.tabs.rhythm_tab import RhythmTab
+from ecg.qt.tabs.compare_tab import CompareTab
 from ecg.qt.workers import Job, JobRunner
 from ecg.services.analysis_service import run_core_analysis
-from ecg.ui.tab_keys import (TAB_DETECTION, TAB_EVENTS, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER,
+from ecg.ui.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_EVENTS, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER,
                              TAB_REPORT,
                              TAB_TIME_COURSE, TIME_COURSE_MODES)
 
@@ -62,6 +63,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1400, 860)
         self.setMinimumSize(1100, 640)
         self.recording = Recording()
+        self.session_dirty = False
         self.generation = 0
         self.jobs = JobRunner(self)
         self._current_job: "Optional[Job]" = None
@@ -83,6 +85,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 w = TimeCourseTab(self)
             elif name == TAB_EVENTS:
                 w = EventsTab(self)
+            elif name == TAB_COMPARE:
+                w = CompareTab(self)
             elif name == TAB_REPORT:
                 w = ReportTab(self)
             else:
@@ -98,6 +102,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.time_course: TimeCourseTab = self.tab_widgets[TAB_TIME_COURSE]  # type: ignore[assignment]
         self.events: EventsTab = self.tab_widgets[TAB_EVENTS]  # type: ignore[assignment]
         self.report: ReportTab = self.tab_widgets[TAB_REPORT]  # type: ignore[assignment]
+        self.compare: CompareTab = self.tab_widgets[TAB_COMPARE]  # type: ignore[assignment]
+        from ecg.qt.dialogs.settings_dialog import SettingsDialog
+        from ecg.qt.session import QtSession
+        self.settings = SettingsDialog(self)
+        self.session = QtSession(self)
         self.tabs.currentChanged.connect(
             lambda i: self.report.refresh() if self.tabs.widget(i) is self.report else None)
         # What the Tk controllers call to show a tab / a Time course mode.
@@ -121,6 +130,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_open = QtWidgets.QPushButton("Open…")
         self.btn_open.clicked.connect(self.open_dialog)
         row.addWidget(self.btn_open)
+        self.btn_settings = QtWidgets.QPushButton("Settings…")
+        self.btn_settings.setToolTip("Channel, crop, filters, RR bounds, artifact correction")
+        self.btn_settings.clicked.connect(lambda: (self.settings.show(), self.settings.raise_()))
+        row.addWidget(self.btn_settings)
+        self.btn_save = QtWidgets.QPushButton("Save Session")
+        self.btn_save.setToolTip("Save the peaks, edits, results and settings of this recording; "
+                                 "they are offered again when the file is reopened")
+        self.btn_save.setEnabled(False)
+        self.btn_save.clicked.connect(lambda: self.session.save())
+        row.addWidget(self.btn_save)
         self.btn_analyze = QtWidgets.QPushButton("Analyze")
         self.btn_analyze.setProperty("primary", True)
         self.btn_analyze.setEnabled(False)
@@ -162,13 +181,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if path:
             self.open_path(path)
 
-    def open_path(self, path: str) -> None:
+    def open_path(self, path: str, check_session: bool = True) -> None:
         """Make *path* the recording; results of jobs still running for the
         previous one are discarded when they land."""
         self.cancel_jobs()
         self.generation += 1
         self.recording = Recording()
         self.recording.signal.filepath = str(path)
+        self.session_dirty = False
         self.figures._generation = self.generation
         self.btn_analyze.setEnabled(False)
         self.rhythm.clear()
@@ -179,8 +199,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_file.setText(Path(path).name)
         self.lbl_file.setToolTip(str(path))
         self.detection.file_opened()
+        self.compare.file_opened()
+        self.btn_save.setEnabled(False)
         self.recording_changed.emit()
         self.set_status(f"Opened {Path(path).name} — click Detect Peaks")
+        if check_session:
+            self.session.check(str(path))
 
     def subject(self) -> str:
         """The subject ID of the recording: from its file name, as the Tk
@@ -191,8 +215,20 @@ class MainWindow(QtWidgets.QMainWindow):
         return subject or DEFAULT_SUBJECT
 
     # ── Analyze ─────────────────────────────────────────────
+    def results_restored(self) -> None:
+        """Results brought back by a session: shown as after Analyze."""
+        a = self.recording.analysis
+        hr = a.results.get("hr") or {}
+        n = len(self.figures._windowed_peaks() if self.figures._windowed_peaks() is not None else [])
+        self.rhythm.lbl_info.setText(f"{n:,} beats analysed · mean HR "
+                                     f"{hr.get('mean', float('nan')):.1f} bpm (from the session)")
+        self.morphology.results_changed()
+        self.time_course.results_changed()
+        self.figures.plot_ctrl.draw_all_results()
+
     def peaks_changed(self) -> None:
         """Detection or a hand edit changed the peaks: results are stale."""
+        self.btn_save.setEnabled(self.recording.signal.filtered is not None)
         has_peaks = self.recording.detection.rpeaks_ok is not None
         self.btn_analyze.setEnabled(has_peaks and len(self.recording.detection.rpeaks_ok) >= 5)
         if self.recording.analysis.results is None:
@@ -200,6 +236,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.morphology.results_changed()
         self.time_course.results_changed()
         self.events.peaks_changed()
+        self.compare.peaks_changed()
 
     def analysis_params(self) -> dict:
         """AnalysisController.run_analysis's snapshot."""
@@ -230,6 +267,7 @@ class MainWindow(QtWidgets.QMainWindow):
         d.rpeaks_ok = bundle["rpeaks_ok"]
         a.artifact_report = bundle["artifact_report"]
         a.analysed_window = bundle.get("analysis_window")
+        self._auto_epochs = bool(bundle.get("auto_epochs", False))
         self.detection.refresh()
         hr = a.results.get("hr") or {}
         self.rhythm.lbl_info.setText(
@@ -281,7 +319,15 @@ class MainWindow(QtWidgets.QMainWindow):
         pc = self.figures.plot_ctrl
         pc.run_plot_chain([("Non-linear metrics", lambda: pc.plot_nonlinear(r)),
                            ("Metrics", lambda: pc.plot_table_views(r))],
-                          on_complete=lambda: self.set_status("Analysis done"))
+                          on_complete=self._analysis_chain_done)
+
+    def _analysis_chain_done(self) -> None:
+        """The end of Analyze; the epochs last when asked (Settings: "Compute
+        epochs after Analyze", AnalysisController.on_analysis_done)."""
+        self.set_status("Analysis done")
+        if getattr(self, "_auto_epochs", False):
+            self._auto_epochs = False
+            self.figures.analysis_ctrl.compute_epochs()
 
     def redraw_results(self) -> None:
         """Draw the current results again (after a theme change)."""

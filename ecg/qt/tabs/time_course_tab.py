@@ -20,7 +20,7 @@ from PySide6 import QtWidgets
 
 from ecg.core.autonomic import COV_METHODS
 from ecg.core.models import MouseECG
-from ecg.qt.figure_host import StatusLabel, TextBox, Value
+from ecg.qt.figure_host import Field, StatusLabel, TextBox
 from ecg.ui.autonomic_view import normalise_autonomic_params
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
             cb = QtWidgets.QCheckBox(label)
             cb.setChecked(metric in defaults)
             row.addWidget(cb)
-            out[metric] = Value(cb.isChecked)
+            out[metric] = Field(cb)
         return out
 
     def _results(self, lay: QtWidgets.QVBoxLayout, host, slot: str) -> TextBox:
@@ -105,8 +105,8 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host._epoch_metrics = self._metrics_row(mrow, EPOCH_DEFAULTS)
         mrow.addStretch(1)
         lay.addLayout(mrow)
-        host.ent_epoch = Value(self.sp_epoch.value)
-        host.ent_overlap = Value(self.sp_overlap.value)
+        host.ent_epoch = Field(self.sp_epoch)
+        host.ent_overlap = Field(self.sp_overlap)
         host.txt_epochs = self._results(lay, host, "epochs")
         return page
 
@@ -131,8 +131,8 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host._roll_metrics = self._metrics_row(mrow, SLIDING_DEFAULTS)
         mrow.addStretch(1)
         lay.addLayout(mrow)
-        host.ent_roll_win = Value(self.sp_roll_win.value)
-        host.ent_roll_step = Value(self.sp_roll_step.value)
+        host.ent_roll_win = Field(self.sp_roll_win)
+        host.ent_roll_step = Field(self.sp_roll_step)
         host.txt_rolling = self._results(lay, host, "rolling_hrv")
         return page
 
@@ -173,12 +173,12 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host.lbl_auto_status.setWordWrap(True)
         lay.addWidget(host.lbl_auto_status)
         # AnalysisController reads them as entries / a combobox / a check box.
-        host.ent_auto_win = Value(self.sp_auto_win.value)
-        host.ent_auto_minpairs = Value(self.sp_auto_pairs.value)
-        host.cb_auto_method = Value(self.cb_auto_method.currentText)
-        host.ent_auto_ks = Value(self.sp_ks.value)
-        host.ent_auto_kp = Value(self.sp_kp.value)
-        host.chk_auto_lfhf = Value(lambda: 1 if self.chk_lfhf.isChecked() else 0)
+        host.ent_auto_win = Field(self.sp_auto_win)
+        host.ent_auto_minpairs = Field(self.sp_auto_pairs)
+        host.cb_auto_method = Field(self.cb_auto_method)
+        host.ent_auto_ks = Field(self.sp_ks)
+        host.ent_auto_kp = Field(self.sp_kp)
+        host.chk_auto_lfhf = Field(self.chk_lfhf, as_int=True)
         canvas = host.slot("autonomic", self, 12.0, 5.0)
         canvas.setMinimumHeight(460)
         lay.addWidget(canvas, 3)

@@ -44,6 +44,7 @@ class EcgPlot(QtWidgets.QWidget):
 
     time_clicked = QtCore.Signal(float, str)        # time (s), "left" / "right" / "other"
     window_changed = QtCore.Signal(float, float)    # t0, t1 (s)
+    span_drawn = QtCore.Signal(float, float)        # a left drag in span mode: t0, t1 (s)
 
     def __init__(self, parent: "QtWidgets.QWidget | None" = None) -> None:
         super().__init__(parent)
@@ -51,6 +52,7 @@ class EcgPlot(QtWidgets.QWidget):
         self._signal: "Optional[np.ndarray]" = None
         self._time: "Optional[np.ndarray]" = None
         self._regions: "list[pg.LinearRegionItem]" = []
+        self._annotations: list = []
         self._syncing = False
 
         lay = QtWidgets.QVBoxLayout(self)
@@ -88,7 +90,14 @@ class EcgPlot(QtWidgets.QWidget):
         self.overview.addItem(self.band)
         self.band.sigRegionChanged.connect(self._band_moved)
         self.detail.sigXRangeChanged.connect(self._detail_moved)
+        self.detail.sigYRangeChanged.connect(lambda *_a: self._place_labels())
         self.detail.scene().sigMouseClicked.connect(self._clicked)
+        # Span mode (Mark Noise): a left drag draws a span instead of panning.
+        self.span_mode = False
+        self._span: "Optional[pg.LinearRegionItem]" = None
+        vb = self.detail.getViewBox()
+        self._pan_drag = vb.mouseDragEvent
+        vb.mouseDragEvent = self._drag
         self.apply_palette(theme.current())
 
     # ── data ────────────────────────────────────────────────
@@ -131,7 +140,39 @@ class EcgPlot(QtWidgets.QWidget):
             self.detail.addItem(item)
             self._regions.append(item)
 
+    def set_annotations(self, annotations: "list[dict]") -> None:
+        """Shade the annotated periods ({t_start, t_end, label, color}) in
+        their colour, with their label."""
+        for item in self._annotations:
+            self.detail.removeItem(item)
+        self._annotations = []
+        for a in annotations or []:
+            t0, t1 = float(a["t_start"]), float(a["t_end"])
+            color = a.get("color") or "#888888"
+            item = pg.LinearRegionItem(values=(t0, t1), movable=False,
+                                       brush=pg.mkBrush(_alpha(color, 40)),
+                                       pen=pg.mkPen(color))
+            item.setZValue(-20)
+            self.detail.addItem(item)
+            self._annotations.append(item)
+            if a.get("label"):
+                text = pg.TextItem(str(a["label"]), color=color, anchor=(0, 0))
+                text.setZValue(-19)
+                text.t_start = t0
+                self.detail.addItem(text)
+                self._annotations.append(text)
+        self._place_labels()
+
+    def _place_labels(self) -> None:
+        """The labels at the top of the view, whatever its y range."""
+        top = self.detail.viewRange()[1][1]
+        for item in self._annotations:
+            if isinstance(item, pg.TextItem):
+                item.setPos(item.t_start, top)
+
     def clear(self) -> None:
+        self.set_annotations([])
+        self.set_noise_regions([])
         self._signal = self._time = None
         for item in (self.trace, self.over_trace):
             item.setData([], [])
@@ -178,6 +219,25 @@ class EcgPlot(QtWidgets.QWidget):
         self.detail.setYRange(lo - pad, hi + pad, padding=0)
 
     # ── interaction ─────────────────────────────────────────
+    def _drag(self, ev, axis=None) -> None:
+        if not self.span_mode or ev.button() != QtCore.Qt.MouseButton.LeftButton:
+            self._pan_drag(ev, axis)
+            return
+        ev.accept()
+        vb = self.detail.getViewBox()
+        x0 = vb.mapSceneToView(ev.buttonDownScenePos()).x()
+        x1 = vb.mapSceneToView(ev.scenePos()).x()
+        a, b = sorted((float(x0), float(x1)))
+        if self._span is None:
+            self._span = pg.LinearRegionItem(values=(a, b), movable=False,
+                                             brush=pg.mkBrush(_alpha("#9AA0A6", 90)))
+            self.detail.addItem(self._span)
+        self._span.setRegion((a, b))
+        if ev.isFinish():
+            self.detail.removeItem(self._span)
+            self._span = None
+            self.span_drawn.emit(a, b)
+
     def _clicked(self, ev) -> None:
         if self._signal is None or not self.detail.sceneBoundingRect().contains(ev.scenePos()):
             return

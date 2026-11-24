@@ -89,6 +89,76 @@ class Value:
         return self._getter()
 
 
+class Field(Value):
+    """A Qt input read and written with the Tk calls the controllers use
+    (get, set, delete(0, "end") / insert(0, v), select / deselect,
+    configure). *data*: a combobox's get() / set() use the item data
+    instead of the text; *as_int*: a check box reads 1 / 0 (a Tk IntVar)."""
+
+    def __init__(self, widget: QtWidgets.QWidget, data: bool = False,
+                 as_int: bool = False) -> None:
+        self.widget = widget
+        self._data = data
+        self._as_int = as_int
+        super().__init__(self._read)
+
+    def _read(self) -> Any:
+        w = self.widget
+        if isinstance(w, QtWidgets.QLineEdit):
+            return w.text()
+        if isinstance(w, (QtWidgets.QSpinBox, QtWidgets.QDoubleSpinBox)):
+            return w.value()
+        if isinstance(w, QtWidgets.QAbstractButton):
+            on = w.isChecked()
+            return int(on) if self._as_int else on
+        if isinstance(w, QtWidgets.QComboBox):
+            return w.currentData() if self._data else w.currentText()
+        raise TypeError(type(w).__name__)
+
+    def set(self, value: Any) -> None:
+        w = self.widget
+        if isinstance(w, QtWidgets.QLineEdit):
+            w.setText("" if value is None else str(value))
+        elif isinstance(w, QtWidgets.QSpinBox):
+            w.setValue(int(round(float(value))))
+        elif isinstance(w, QtWidgets.QDoubleSpinBox):
+            w.setValue(float(value))
+        elif isinstance(w, QtWidgets.QAbstractButton):
+            w.setChecked(bool(value))
+        elif isinstance(w, QtWidgets.QComboBox):
+            i = w.findData(value) if self._data else -1
+            if i < 0:
+                i = w.findText(str(value))
+            if i < 0 and not self._data:
+                i = w.findData(value)
+            if i >= 0:
+                w.setCurrentIndex(i)
+        else:
+            raise TypeError(type(w).__name__)
+
+    def delete(self, *_a: Any) -> None:
+        if isinstance(self.widget, QtWidgets.QLineEdit):
+            self.widget.clear()
+
+    def insert(self, _index: Any, value: Any) -> None:
+        if isinstance(self.widget, QtWidgets.QLineEdit):
+            self.widget.setText(str(value) + self.widget.text())
+        else:
+            try:
+                self.set(value)
+            except (TypeError, ValueError):
+                pass
+
+    def select(self) -> None:
+        self.set(True)
+
+    def deselect(self) -> None:
+        self.set(False)
+
+    def configure(self, **_kw: Any) -> None:
+        pass
+
+
 class _Null:
     """Any Tk-only widget PlotController may touch (KPI tiles, the Detection
     bar...): every attribute is itself, every call returns None."""
@@ -344,6 +414,11 @@ class FigureHost:
         *on_done(result)* on the main thread."""
         self._window.run_job(busy_label.rstrip("…").strip() or "Computing", worker,
                              progress=False, on_done=on_done)
+
+    @property
+    def _peak_distance_ms(self) -> float:
+        """The recording's peak distance (the Tk app's property of the same name)."""
+        return self._window.recording.signal.peak_distance_ms
 
     def after_idle(self, fn: "Optional[Callable]" = None) -> None:
         if fn is not None:

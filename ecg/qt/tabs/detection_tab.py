@@ -106,10 +106,28 @@ class DetectionTab(QtWidgets.QWidget):
         self.lbl_edit = QtWidgets.QLabel("")
         self.lbl_edit.setProperty("muted", True)
         edit_bar.addWidget(self.lbl_edit, 1)
+        self.btn_mark_noise = QtWidgets.QPushButton("Mark Noise")
+        self.btn_mark_noise.setCheckable(True)
+        self.btn_mark_noise.setEnabled(False)
+        self.btn_mark_noise.setToolTip("Drag over a noisy stretch to leave its RR intervals out "
+                                       "of HR / HRV; right click a noisy region to remove it")
+        self.btn_mark_noise.toggled.connect(self._mark_noise_toggled)
+        edit_bar.addWidget(self.btn_mark_noise)
+        self.btn_annotations = QtWidgets.QPushButton("Annotations")
+        self.btn_annotations.setToolTip("Labelled periods of the recording (drug, stimulus, "
+                                        "sleep...): drawn on the traces and the time course")
+        self.btn_annotations.clicked.connect(lambda: self.open_periods("annotation"))
+        edit_bar.addWidget(self.btn_annotations)
+        self.btn_noise = QtWidgets.QPushButton("Noisy regions")
+        self.btn_noise.setToolTip("Stretches too noisy to trust: their RR intervals are left "
+                                  "out of HR / HRV at the next Analyze")
+        self.btn_noise.clicked.connect(lambda: self.open_periods("noise"))
+        edit_bar.addWidget(self.btn_noise)
         lay.addLayout(edit_bar)
 
         self.plot = EcgPlot()
         self.plot.time_clicked.connect(self._clicked)
+        self.plot.span_drawn.connect(self._noise_drawn)
         lay.addWidget(self.plot, 1)
         self._update_undo_buttons()
 
@@ -123,14 +141,14 @@ class DetectionTab(QtWidgets.QWidget):
         return float(self.sp_thr.value())
 
     def params(self) -> dict:
-        """The Detect Peaks snapshot (as SessionController.snapshot_params)."""
-        fp = FilterParams(detection_method=self.cb_method.currentData(),
-                          no_filter=not self.chk_filter.isChecked(),
-                          thresh=self.threshold())
-        params = fp.to_dict()
+        """The Detect Peaks snapshot -- SessionController.snapshot_params:
+        FilterParams.from_widgets on the Tk widget names the window's
+        FigureHost publishes (this tab and the Settings dialog)."""
+        host = self.win.figures
+        params = FilterParams.from_widgets(host).to_dict()
         params["analysis_t_start"] = self.win.recording.analysis.t_start
         params["analysis_t_end"] = self.win.recording.analysis.t_end
-        params["sg_window_ms"] = 20.0
+        params["sg_window_ms"] = host._safe_float(getattr(host, "ent_sg_window_ms", None), 20.0)
         return params
 
     def _set_threshold(self, value: float, from_slider: bool) -> None:
@@ -149,10 +167,13 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_detect.setEnabled(True)
         self.btn_edit.setChecked(False)
         self.btn_edit.setEnabled(False)
+        self.btn_mark_noise.setChecked(False)
+        self.btn_mark_noise.setEnabled(False)
         self._update_undo_buttons()
         self.plot.clear()
         self.lbl_peaks.setText("Peaks: —")
         self.lbl_quality.setText("Quality: —")
+        self.update_period_counts()
 
     def detect(self) -> None:
         path = self.win.recording.signal.filepath
@@ -190,9 +211,11 @@ class DetectionTab(QtWidgets.QWidget):
         d.edit_redo.clear()
         rec.analysis.results = None
         self.btn_edit.setEnabled(True)
+        self.btn_mark_noise.setEnabled(True)
         self._update_undo_buttons()
         self.plot.set_signal(s.filtered, fs, s.time)
         self.plot.set_noise_regions(rec.analysis.noise_regions)
+        self.plot.set_annotations(rec.analysis.annotations)
         self._show_peaks()
         self.win.peaks_changed()
         warning = bundle.get("detector_warning")
@@ -227,8 +250,54 @@ class DetectionTab(QtWidgets.QWidget):
         self.lbl_edit.setText("Left click: exclude / include · right click: add / remove · "
                               "Ctrl+Z / Ctrl+Y" if on else "")
 
+    # ── Mark Noise (DetectionController.toggle_noise_mode / _noise_press /
+    #    on_detail_release) ──────────────────────────────────
+    NOISE_MIN_S = 0.05          # a shorter drag is a click, not a region
+
+    def _mark_noise_toggled(self, on: bool) -> None:
+        self.plot.span_mode = on
+        self.btn_mark_noise.setText("Mark Noise ON" if on else "Mark Noise")
+        if on:
+            if not self.btn_edit.isChecked():
+                self.btn_edit.setChecked(True)
+            self.win.set_status("Mark Noise ON — drag over a noisy stretch to leave its RR "
+                                "intervals out of HR / HRV; right-click a noisy region to "
+                                "remove it.", warn=True)
+        else:
+            self.win.set_status("Mark Noise OFF — clicks edit peaks again.")
+
+    def _noise_drawn(self, a: float, b: float) -> None:
+        s = self.win.recording.signal
+        if s.fs and s.filtered is not None:
+            b = min(b, len(s.filtered) / float(s.fs))
+        a = max(a, 0.0)
+        if b - a < self.NOISE_MIN_S:
+            return
+        regions = self.win.recording.analysis.noise_regions
+        regions.append({"t_start": round(a, 3), "t_end": round(b, 3), "note": ""})
+        regions.sort(key=lambda r: float(r["t_start"]))
+        self.win.session_dirty = True
+        self.noise_changed()
+        self.win.set_status(f"Noisy region {a:.2f}–{b:.2f} s marked: its RR intervals are left "
+                            "out of HR / HRV at the next Analyze.")
+
+    def _noise_click(self, t: float, button: str) -> None:
+        if button != "right":
+            return
+        regions = self.win.recording.analysis.noise_regions
+        hit = [i for i, r in enumerate(regions) if float(r["t_start"]) <= t <= float(r["t_end"])]
+        if hit:
+            for i in reversed(hit):
+                del regions[i]
+            self.win.session_dirty = True
+            self.noise_changed()
+            self.win.set_status(f"Noisy region at {t:.2f} s removed.")
+
     def _clicked(self, t: float, button: str) -> None:
         """A click on the trace in edit mode (DetectionController.on_detail_click)."""
+        if self.btn_mark_noise.isChecked():
+            self._noise_click(t, button)
+            return
         if not self.btn_edit.isChecked():
             return
         rec = self.win.recording
@@ -290,6 +359,36 @@ class DetectionTab(QtWidgets.QWidget):
         a = self.win.recording.analysis
         a.results = None
         a.autonomic_result = None
+
+    # ── annotations and noisy regions ───────────────────────
+    def update_period_counts(self) -> None:
+        a = self.win.recording.analysis
+        n_ann, n_noise = len(a.annotations or []), len(a.noise_regions or [])
+        self.btn_annotations.setText(f"Annotations ({n_ann})" if n_ann else "Annotations")
+        self.btn_noise.setText(f"Noisy regions ({n_noise})" if n_noise else "Noisy regions")
+
+    def open_periods(self, kind: str) -> None:
+        from ecg.qt.dialogs.periods_dialog import PeriodsManager
+        changed = self.annotations_changed if kind == "annotation" else self.noise_changed
+        PeriodsManager(self.win, kind, changed).exec()
+
+    def annotations_changed(self) -> None:
+        """ECGApp._update_ann_count: drawn here and on the Autonomic, Epochs
+        and Sliding plots (no-op without a result)."""
+        self.plot.set_annotations(self.win.recording.analysis.annotations)
+        self.update_period_counts()
+        ctl = self.win.figures.analysis_ctrl
+        ctl.redraw_autonomic_plot()
+        ctl.redraw_windowed_plots()
+
+    def noise_changed(self) -> None:
+        """ECGApp._noise_regions_changed: drawn and counted; HR / HRV leave
+        their RR intervals out from the next Analyze."""
+        self.plot.set_noise_regions(self.win.recording.analysis.noise_regions)
+        self.update_period_counts()
+        if self.win.recording.analysis.results is not None:
+            self.win.set_status("Noisy regions changed — click Analyze to update the results.",
+                                warn=True)
 
     def refresh(self) -> None:
         """Redraw the peaks after the model changed (e.g. Analyze's artifact
