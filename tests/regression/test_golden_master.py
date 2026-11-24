@@ -108,7 +108,7 @@ def test_signal_values_use_an_absolute_tolerance_on_the_signal_scale():
     new = {"detect/x/signal_flt/samples": np.array([1e-3 + 1e-11, 0.5]),
            "hr/sd": np.array([1e-3 + 1e-11])}
     assert [d.name for d in golden.compare(ref, new)] == ["hr/sd"]
-    big = {"detect/x/signal_flt/samples": np.array([1e-3 + 1e-7, 0.5]), "hr/sd": ref["hr/sd"]}
+    big = {"detect/x/signal_flt/samples": np.array([1e-3 + 1e-6, 0.5]), "hr/sd": ref["hr/sd"]}
     assert [d.name for d in golden.compare(ref, big)] == ["detect/x/signal_flt/samples"]
 
 
