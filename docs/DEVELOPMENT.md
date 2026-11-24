@@ -51,6 +51,8 @@ ecg-analysis            # after `pip install -e .`
 │   ├── __init__.py       # package version, architecture overview
 │   ├── __main__.py       # `python -m ecg` entry point
 │   ├── core/             # pure NumPy/SciPy/pandas — no UI, no file I/O
+│   │   ├── recording.py      # state of one recording: signal (raw read-only),
+│   │   │                     # detection, analysis; units
 │   │   ├── models.py         # species physiology constants, experimental-context
 │   │   │                     # reference ranges (built-in + user-editable custom),
 │   │   │                     # shared dataclasses

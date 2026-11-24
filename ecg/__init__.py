@@ -6,6 +6,7 @@ Package layout
 ecg/
   core/
     models.py        — physiology constants, dataclasses, typed dicts
+    recording.py     — state of one recording (signal, detection, analysis)
     filtering.py     — bandpass, notch, normalise, downsample helpers
     pipeline.py      — signal preparation and R-peak candidates (Detect Peaks)
     peak_editing.py  — accepted peaks after an edit, signal-quality score
