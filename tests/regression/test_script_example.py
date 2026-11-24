@@ -26,23 +26,34 @@ def _example():
 
 
 def test_script_gives_the_apps_results(tmp_path):
+    """Same tolerance and same library-version rule as the reference
+    (tests/regression/test_golden_master.py)."""
     ex = _example()
     assert ex.main([str(FIXTURE), "--out", str(tmp_path)]) == 0
-    ref, _ = golden.load(ROOT / "tests" / "regression" / "reference", "synthetic_mouse_ecg")
+    ref, manifest = golden.load(ROOT / "tests" / "regression" / "reference", "synthetic_mouse_ecg")
     out = ex.analyse(FIXTURE)
-    assert np.array_equal(out["peaks"], ref["detect/auto_raw/rpeaks_ok"])
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    new = {"detect/auto_raw/rpeaks_ok": out["peaks"],
+           "epochs/default/RMSSD": out["epochs"]["RMSSD"].to_numpy(),
+           "analysis/core/results/hr/mean": summary["hr_mean_bpm"],
+           "analysis/frequency/HRV_LFHF": np.array([summary["lf_hf"]]),
+           "analysis/nonlinear/HRV_DFA_alpha1": np.array([summary["dfa_alpha1"]])}
     # The app's results dict also receives the frequency, non-linear and
     # interval frames computed after Analyze (as the reference holds them):
-    # compare the core part here, frequency / non-linear below.
+    # the core part is compared here, frequency / non-linear above.
     later = ("/hrv_freq/", "/hrv_nonlin/", "/intervals/")
-    flat = {k: v for k, v in golden.flatten(out["results"], "analysis/core/results").items()
-            if not any(x in k for x in later)}
-    assert golden.compare({k: ref[k] for k in flat}, flat, rtol=0, atol=0) == []
-    assert np.allclose(out["epochs"]["RMSSD"], ref["epochs/default/RMSSD"], rtol=0, atol=0)
-    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
-    assert summary["hr_mean_bpm"] == ref["analysis/core/results/hr/mean"]
-    assert summary["lf_hf"] == float(ref["analysis/frequency/HRV_LFHF"][0])
-    assert summary["dfa_alpha1"] == float(ref["analysis/nonlinear/HRV_DFA_alpha1"][0])
+    new.update({k: v for k, v in golden.flatten(out["results"], "analysis/core/results").items()
+                if not any(x in k for x in later)})
+    tol = manifest.get("tolerance", {})
+    diffs = golden.compare({k: ref[k] for k in new}, new,
+                           tol.get("rtol", golden.RTOL), tol.get("atol", golden.ATOL))
+    if diffs:
+        changed = golden.package_changes(manifest)
+        report = "\n".join(str(d) for d in diffs[:20])
+        if changed:
+            versions = ", ".join(f"{p} {a} -> {b}" for p, (a, b) in changed.items())
+            pytest.xfail(f"library versions differ from the reference ({versions}):\n{report}")
+        pytest.fail(f"{len(diffs)} result(s) of the script differ from the app's:\n{report}")
     assert (tmp_path / "rr.csv").exists() and (tmp_path / "epochs.csv").exists()
 
 
