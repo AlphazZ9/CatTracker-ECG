@@ -24,6 +24,8 @@ def isolated_sessions(tmp_path, monkeypatch):
     monkeypatch.setattr(io_session, "SESSION_DIR", tmp_path / "sessions")
     import ecg.io.db as db
     monkeypatch.setattr(db, "_DB_PATH", tmp_path / "registry.db")
+    monkeypatch.setattr(db, "_schema_ready", False)
+    monkeypatch.setattr(db, "_schema_retry_at", 0.0)
     return tmp_path
 
 

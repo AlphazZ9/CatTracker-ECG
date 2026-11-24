@@ -22,6 +22,8 @@ def test_add_and_remove_training_example(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(ml, "TRAINING_DATA_DIR", tmp_path / "ml_training")
     monkeypatch.setattr(ml, "MODEL_PATH", tmp_path / "model.skops")
     monkeypatch.setattr(db, "_DB_PATH", tmp_path / "registry.db")
+    monkeypatch.setattr(db, "_schema_ready", False)
+    monkeypatch.setattr(db, "_schema_retry_at", 0.0)
     w = MainWindow()
     qtbot.addWidget(w)
     w.open_path(str(FIXTURE), check_session=False)
