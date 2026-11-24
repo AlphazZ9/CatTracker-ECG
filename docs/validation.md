@@ -38,6 +38,7 @@ l'application, sans modification.
 | Édition des pics | 3 pics exclus et 1 ajouté à la main, puis reconstruction |
 | Correction automatique des artefacts | Analyze, fréquentiel, non linéaire, époques, glissante, événements, édition |
 | Fenêtre d'analyse 20–120 s | Analyze, fréquentiel, époques, glissante |
+| Zones bruitées (40–45,5 s et 95–96,5 s) | Analyze, fréquentiel, non linéaire, époques, glissante, événements, autonomique |
 
 Ne sont pas couverts : le détecteur ML (il dépend du modèle entraîné sur
 chaque poste), les exports Excel / PDF / Prism (comparés à la phase 4), les
@@ -132,6 +133,7 @@ la référence. Dans ce cas :
 | Date | Version | Changement | Valeurs touchées | Justification |
 |---|---|---|---|---|
 | — | 6.2.0 | Référence initiale | — | — |
+| 24/11/2026 | 6.2.0 | Scénario « zones bruitées » ajouté | 538 valeurs nouvelles ; les 1 666 existantes inchangées | Référence enregistrée de nouveau avec le code de la version 6.2.0 (commit `df556ec`, avant toute extraction), et non avec le code en cours de migration |
 
 ## Changements de bibliothèques observés (non acceptés)
 
