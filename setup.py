@@ -25,6 +25,7 @@ setup(
         "Pillow",
         "scikit-learn",
         "skops",
+        "PyWavelets",
     ],
     extras_require={
         "h5": ["h5py"],
