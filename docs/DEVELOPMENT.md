@@ -110,6 +110,11 @@ launching the GUI.
   HRV interval validation, segment statistics, and ML persistence/splitting;
   GUI workflows, file-format variations, and wave delineation still need
   broader integration coverage.
+- `tests/regression/` holds the reference ("golden master") outputs of the
+  whole pipeline: a synthetic recording is checked on every run, and real
+  recordings, kept outside the repository, with
+  `python tools/golden_master.py check <files.mat> --ref <folder>`. See
+  [validation.md](validation.md) (in French) before changing a number.
 - The UI is a single large window (`ecg/ui/app.py`) delegating to per-concern
   controllers in `ecg/ui/*_controller.py` — see each controller's docstring
   for its area of responsibility.
