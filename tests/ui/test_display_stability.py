@@ -199,25 +199,14 @@ def test_placeholders_wait_for_their_tab_while_the_app_builds(root):
     assert slot.fig.axes[0].get_title() == "data"
 
 
-def test_the_group_table_is_read_when_its_tab_is_opened(root, tmp_path):
-    """The remembered group table was read at start-up (1.5 s for a big one)
-    even if the Group tab was never opened."""
-    from ecg.io import group_data as gd
+def test_no_group_table_is_opened_at_start_up(root):
+    """Nothing is read at start-up: the Group tab opens empty."""
     from ecg.ui.tab_group import TabGroupMixin
-    from ecg.ui.tab_keys import TAB_GROUP
-    p = str(tmp_path / "g.xlsx")
-    gd.add_recording(p, "1", "F", "a.smr", {gd.SHEET_WHOLE: pd.DataFrame([{"HR (bpm)": 1.0}])})
-    current = ["Signal & Detection"]
-    app = SimpleNamespace(_bind_hover_tip=lambda *a, **k: None, tabs=SimpleNamespace(
-        get=lambda: current[0], set_state=lambda *a, **k: None),
-        _grouptab_state={"path": p})
+    app = SimpleNamespace(_bind_hover_tip=lambda *a, **k: None)
     frame = ctk.CTkFrame(root)
     TabGroupMixin._build_group_page(app, frame)
-    assert app._grouptab_pending_load is not None
-    current[0] = TAB_GROUP
-    app._grouptab_pending_load()
     texts = [str(w.cget("text")) for w in _all(frame) if isinstance(w, ctk.CTkLabel)]
-    assert any("g.xlsx" in t and "1 animals" in t for t in texts)
+    assert "No group table open" in texts and app._grouptab_state["path"] == ""
 
 
 def _all(w):

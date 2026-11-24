@@ -545,7 +545,7 @@ def combo_style(**overrides) -> "dict":
 
 
 def chip_style(active: bool = False) -> "dict":
-    """A rounded chip of the detection bar (Filters, Annotations, Pacing):
+    """A rounded chip of the detection bar (Filters, Annotations, Noise):
     white bordered, or the strip blue with a blue edge while it is open /
     applies something."""
     h = int(round(BTN_H * THEME.font_scale))
@@ -792,7 +792,7 @@ _SYNC_MODULES = (
     "ecg.ui.poincare_figure", "ecg.ui.group_figure", "ecg.ui.group_tab_figure",
     "ecg.ui.tab_detection", "ecg.ui.tab_hrv", "ecg.ui.tab_time_course", "ecg.ui.tab_events",
     "ecg.ui.tab_morphology", "ecg.ui.tab_report", "ecg.ui.tab_group",
-    "ecg.ui.tabbar", "ecg.ui.context_strip",
+    "ecg.ui.tabbar", "ecg.ui.context_strip", "ecg.ui.annotation_suggest_dialog",
 )
 
 

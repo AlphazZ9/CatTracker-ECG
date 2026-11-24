@@ -41,7 +41,7 @@ COMPUTING = "computing"
 
 _BASIS_TEXT = {
     "peaks":   "peaks changed",
-    "removed": "removed beats changed",
+    "removed": "removed beats or noisy regions changed",
     "window":  "analysis window changed",
     "rr":      "RR bounds changed",
 }

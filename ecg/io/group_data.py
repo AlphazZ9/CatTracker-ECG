@@ -261,6 +261,30 @@ def _add_to_sheets(sheets: "dict[str, pd.DataFrame]", subject: str, sex: str, fi
     return replaced
 
 
+def add_to_sheets(sheets: "dict[str, pd.DataFrame]", subject: str, sex: str, file: str,
+                  new: "Mapping[str, Optional[pd.DataFrame]]") -> bool:
+    """add_recording on a table held in memory (*sheets*, changed in place),
+    for a group made from saved sessions before it is saved as Excel.
+    Returns whether the recording was there already."""
+    return _add_to_sheets(sheets, subject, sex, file, new)
+
+
+def remove_recording(sheets: "dict[str, pd.DataFrame]", subject: str, file: str) -> bool:
+    """Take a recording (subject and file) out of every sheet of the table
+    (the Animals list included), in place. Returns whether it was there."""
+    subject, file = subject_text(subject), str(file)
+    was = False
+    for name in SHEETS:
+        df = sheets.get(name)
+        if df is None or not len(df):
+            continue
+        same = (df["subject"].astype(str) == subject) & (df["file"].astype(str) == file)
+        if same.any():
+            was = True
+            sheets[name] = df.loc[~same].reset_index(drop=True)
+    return was
+
+
 def add_recording(path: str, subject: str, sex: str, file: str,
                   new: "Mapping[str, Optional[pd.DataFrame]]") -> "tuple[int, bool]":
     """Add one recording to the group table at *path* (created if it does not

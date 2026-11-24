@@ -13,11 +13,9 @@ Mixin of ECGApp (see ecg/ui/app.py).
 """
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
-from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from typing import TYPE_CHECKING, Any, Optional
@@ -52,7 +50,6 @@ log = logging.getLogger("ecg")
 ALL_EVENTS = "All events"
 # The last group table opened, remembered per user (read at call time, so a
 # test can point it elsewhere).
-PREFS_PATH = Path.home() / ".ecg_group_table.json"
 FIG_SIZE = (12.0, 4.6)
 
 
@@ -128,12 +125,14 @@ def session_lines(filepath: str) -> "tuple[str, str, dict] | str":
     return subject, normalise_sex(fields.get("sex") or ""), lines
 
 
-def import_project(path: str, project: str) -> "tuple[int, list[str], list[str]]":
-    """Add every saved recording of *project* to the group table at *path*,
-    written once. Returns (animals in the table, the recordings added, the
-    ones left out with why)."""
+def project_items(project: str) -> "tuple[list, list[str], list[str]]":
+    """The group-table lines of every saved recording of *project*: (items
+    (subject, sex, file, lines), the subjects found, the recordings left out
+    with why)."""
     from ecg.io import db
-    items, added, skipped = [], [], []
+    items: "list" = []
+    added: "list[str]" = []
+    skipped: "list[str]" = []
     for rec in db.project_recordings(project):
         fp = str(rec.get("filepath") or "")
         got = session_lines(fp)
@@ -144,6 +143,24 @@ def import_project(path: str, project: str) -> "tuple[int, list[str], list[str]]
         subject, sex, lines = got
         items.append((subject, sex, fp, lines))
         added.append(subject)
+    return items, added, skipped
+
+
+def project_sheets(project: str) -> "tuple[dict, list[str], list[str]]":
+    """A group table held in memory, made from the saved sessions of
+    *project* (no Excel file): (sheets, subjects, left out)."""
+    items, added, skipped = project_items(project)
+    sheets: "dict" = {}
+    for subject, sex, fp, lines in items:
+        gd.add_to_sheets(sheets, subject, sex, fp, lines)
+    return sheets, added, skipped
+
+
+def import_project(path: str, project: str) -> "tuple[int, list[str], list[str]]":
+    """Add every saved recording of *project* to the group table at *path*,
+    written once. Returns (animals in the table, the recordings added, the
+    ones left out with why)."""
+    items, added, skipped = project_items(project)
     if not items:
         return 0, added, skipped
     n, _replaced = gd.add_recordings(path, items)
@@ -153,11 +170,11 @@ def import_project(path: str, project: str) -> "tuple[int, list[str], list[str]]
 def ask_project(parent: "Any", names: "list[str]") -> "Optional[str]":
     """The project to import, chosen in a small dialog; None when cancelled."""
     win = ctk.CTkToplevel(parent)
-    win.title("Import a project")
+    win.title("Group from saved sessions")
     win.transient(parent.winfo_toplevel())
     chosen: "list[Optional[str]]" = [None]
     ctk.CTkLabel(win, text="Every saved session of the project (Recording sheet → Project) "
-                           "goes into the group table:", font=FONT_SMALL, text_color=MUTED,
+                           "makes the group (Save as Excel… keeps it as a file):", font=FONT_SMALL, text_color=MUTED,
                  wraplength=360, justify="left").pack(padx=16, pady=(16, 8), anchor="w")
     cb = ctk.CTkComboBox(win, width=360, values=names, state="readonly", **combo_style())
     cb.set(names[0])
@@ -168,27 +185,13 @@ def ask_project(parent: "Any", names: "list[str]") -> "Optional[str]":
     def _ok() -> None:
         chosen[0] = cb.get()
         win.destroy()
-    ctk.CTkButton(row, text="Import", width=0, command=_ok,
+    ctk.CTkButton(row, text="Load", width=0, command=_ok,
                   **button_style("primary")).pack(side="right")
     ctk.CTkButton(row, text="Cancel", width=0, command=win.destroy,
                   **button_style("secondary")).pack(side="right", padx=(0, SPACE_S))
     win.grab_set()
     parent.wait_window(win)
     return chosen[0]
-
-
-def load_last_table() -> str:
-    try:
-        return str(json.loads(PREFS_PATH.read_text(encoding="utf-8")).get("path", ""))
-    except Exception:
-        return ""
-
-
-def save_last_table(path: str) -> None:
-    try:
-        PREFS_PATH.write_text(json.dumps({"path": path}), encoding="utf-8")
-    except Exception as exc:
-        log.debug("group table preference not saved: %s", exc)
 
 
 def _float(entry: "Any", default: float) -> float:
@@ -246,9 +249,12 @@ class TabGroupMixin:
         return subject or os.path.splitext(os.path.basename(filepath))[0], sex, filepath, lines
 
     def _add_open_recording_to_group_table(self: ECGApp, path: str,
-                                           comparison: "Any" = None) -> "tuple[int, bool, str]":
-        """Write the recording open to the group table at *path*. Returns
-        (animals in the table, replaced, what was written)."""
+                                           comparison: "Any" = None,
+                                           sheets: "Optional[dict]" = None
+                                           ) -> "tuple[int, bool, str]":
+        """Write the recording open to the group table at *path* (or, with
+        *sheets*, to that table held in memory). Returns (animals in the
+        table, replaced, what was written)."""
         subject, sex, filepath, lines = self._group_lines_of_open_recording(comparison)
         if not filepath:
             raise ValueError("Open a recording first.")
@@ -257,7 +263,11 @@ class TabGroupMixin:
                                       gd.SHEET_EVENTS)):
             raise ValueError("Nothing to add yet: run Analyze (whole recording and time "
                              "course), Compare segments or the event-locked analysis first.")
-        n, replaced = gd.add_recording(path, subject, sex, filepath, lines)
+        if sheets is not None:
+            replaced = gd.add_to_sheets(sheets, subject, sex, filepath, lines)
+            n = len(sheets[gd.SHEET_ANIMALS])
+        else:
+            n, replaced = gd.add_recording(path, subject, sex, filepath, lines)
         names = {gd.SHEET_SEGMENTS: "segments", gd.SHEET_WHOLE: "whole recording",
                  gd.SHEET_TIME: "time course", gd.SHEET_EVENTS: "events",
                  gd.SHEET_ANNOT: "annotations"}
@@ -271,8 +281,8 @@ class TabGroupMixin:
         self._grouptab_state (they survive a rebuild)."""
         st = getattr(self, "_grouptab_state", None)
         if st is None:
-            st = self._grouptab_state = {"path": load_last_table()}
-        for k, v in (("path", ""), ("by", gc.BY_GROUP), ("analysis", gc.AN_SEGMENTS),
+            st = self._grouptab_state = {}
+        for k, v in (("path", ""), ("name", ""), ("by", gc.BY_GROUP), ("analysis", gc.AN_SEGMENTS),
                      ("a", ""), ("b", ""), ("stim", ""), ("tc_metric", "HR"), ("bin", "60"),
                      ("from", "-10"), ("to", "30"), ("w0", "0"), ("w1", "5"), ("delta", True),
                      ("lines", False), ("all", False), ("pairs", gc.PAIRS_ONE), ("leave_out", True),
@@ -304,6 +314,12 @@ class TabGroupMixin:
 
         def _say(text: str, color: str = MUTED) -> None:
             lbl_msg.configure(text=text, text_color=color)
+
+        def _table_name() -> str:
+            """The table's file name, or its project when held in memory."""
+            if st["path"]:
+                return os.path.basename(st["path"])
+            return f"{st['name'] or 'group'} (not saved)"
 
         # ── Animals ──
         _hdr_an, an_body = _card("Animals")
@@ -477,7 +493,9 @@ class TabGroupMixin:
                              anchor="w").grid(row=0, column=c, sticky="w", padx=(0, SPACE_M))
             an_grid.grid_columnconfigure(4, weight=1)
             if an is None or an.empty:
-                ctk.CTkLabel(an_grid, text="No animal yet: Add open recording…",
+                ctk.CTkLabel(an_grid, text="No group table: Open Excel…, From saved sessions… "
+                             "or Add open recording…" if data["sheets"] is None
+                             else "No animal left: Add open recording…",
                              font=FONT_SMALL, text_color=MUTED).grid(row=1, column=0,
                                                                      columnspan=6, sticky="w")
                 return
@@ -509,6 +527,41 @@ class TabGroupMixin:
                 ctk.CTkLabel(an_grid, text=gd.data_text(r), font=FONT_SMALL,
                              text_color=GREEN if r["use"] else MUTED,
                              anchor="w").grid(row=i, column=5, sticky="w")
+                b_rm = ctk.CTkButton(an_grid, text="✕", width=26,
+                                     command=lambda k=key: _remove_animal(k),
+                                     **button_style("link", height=22, text_color=MUTED))
+                b_rm.grid(row=i, column=6, sticky="e", padx=(SPACE_S, 0))
+                tip(b_rm, "Remove this recording from the group table (every sheet)")
+
+        def _persist(what: str) -> bool:
+            """Write the table back to its Excel file (a table held in
+            memory is only changed there)."""
+            if not st["path"]:
+                _say(f"✓  {what} (in memory: Save as Excel… to keep it)", GREEN)
+                return True
+            try:
+                gd.write_sheets(st["path"], data["sheets"])
+            except Exception as exc:
+                _say(f"⚠  Not saved in {os.path.basename(st['path'])}: {exc} "
+                     "(is it open in Excel?)", ORANGE)
+                return False
+            _say(f"✓  {what} saved", GREEN)
+            return True
+
+        def _remove_animal(key: "tuple[str, str]") -> None:
+            if data["sheets"] is None:
+                return
+            if not messagebox.askyesno(
+                    "Group table", f"Remove {key[0]} ({key[1]}) from {_table_name()}?",
+                    parent=win):
+                return
+            gd.remove_recording(data["sheets"], key[0], key[1])
+            data["animals"] = gd.animals_frame(data["sheets"])
+            _persist(f"{key[0]} removed")
+            _summary()
+            _refresh_animals()
+            _fill_choices()
+            _changed()
 
         def _set_animal(key: "tuple[str, str]", field_: str, value: Any) -> None:
             an = data["animals"]
@@ -522,13 +575,9 @@ class TabGroupMixin:
             if not m.any() or an.loc[m, field_].iloc[0] == value:
                 return
             an.loc[m, field_] = value
-            try:
-                gd.save_animals(st["path"], an)
-            except Exception as exc:
-                _say(f"⚠  Not saved in {os.path.basename(st['path'])}: {exc} "
-                     "(is it open in Excel?)", ORANGE)
-            else:
-                _say(f"✓  {key[0]}: {field_} saved", GREEN)
+            data["sheets"][gd.SHEET_ANIMALS] = an[["subject", "sex", "group", "use",
+                                                    "file"]].copy()
+            _persist(f"{key[0]}: {field_}")
             _summary()
             if field_ == "group":
                 _refresh_animals()
@@ -543,7 +592,7 @@ class TabGroupMixin:
             nm = int((an["sex"] == "M").sum())
             nf = int((an["sex"] == "F").sum())
             groups = an.loc[an["group"].astype(str) != "", "group"].value_counts()
-            parts = [os.path.basename(st["path"]), f"{len(an)} animals", f"{nf} F / {nm} M"]
+            parts = [_table_name(), f"{len(an)} animals", f"{nf} F / {nm} M"]
             if len(groups):
                 parts.append(", ".join(f"{g} {n}" for g, n in groups.items()))
             kinds = [n for n, k in (("segments", gd.SHEET_SEGMENTS), ("whole", gd.SHEET_WHOLE),
@@ -562,17 +611,21 @@ class TabGroupMixin:
                 else:
                     messagebox.showerror("Group table", msg, parent=win)
                 return False
-            st["path"] = path
-            save_last_table(path)
+            st["path"], st["name"] = path, ""
+            _show(sheets)
+            return True
+
+        def _show(sheets: "Optional[dict]") -> None:
+            """The table *sheets* (None: none) in every card."""
             data["sheets"] = sheets
-            data["animals"] = gd.animals_frame(sheets)
+            data["animals"] = None if sheets is None else gd.animals_frame(sheets)
             data["res"] = None
             _summary()
             _refresh_animals()
             _fill_choices()
-            _set_tab_state(True)
+            _set_tab_state(sheets is not None)
+            _buttons_state()
             _changed()
-            return True
 
         def _set_tab_state(loaded: bool) -> None:
             tabs = getattr(self, "tabs", None)
@@ -581,7 +634,7 @@ class TabGroupMixin:
             from ecg.ui.freshness import NOT_COMPUTED, UP_TO_DATE
             try:
                 tabs.set_state(TAB_GROUP, UP_TO_DATE if loaded else NOT_COMPUTED,
-                               (f"group table {os.path.basename(st['path'])}",) if loaded
+                               (f"group table {_table_name()}",) if loaded
                                else ("no group table open",))
             except Exception:
                 pass
@@ -621,12 +674,12 @@ class TabGroupMixin:
             if st["path"]:
                 _load(st["path"])
 
-        def _import_project() -> None:
+        def _from_sessions() -> None:
             from ecg.io import db
             names = db.project_names()
             if not names:
                 messagebox.showinfo(
-                    "Import a project",
+                    "Group from saved sessions",
                     "No saved session has a project name yet: type it in the Recording "
                     "sheet (file chip ▾ → Project) and Save Session for each recording.",
                     parent=win)
@@ -634,32 +687,37 @@ class TabGroupMixin:
             project = ask_project(win, names)
             if not project:
                 return
-            path = st["path"] if data["sheets"] is not None else ""
-            if not path:
-                path = filedialog.asksaveasfilename(
-                    parent=win, title=f"Group table for {project} (created if new)",
-                    defaultextension=".xlsx", initialfile=f"{project}.xlsx",
-                    confirmoverwrite=False,
-                    filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
-                if not path:
-                    return
             try:
-                n, added, skipped = import_project(path, project)
+                sheets, added, skipped = project_sheets(project)
             except Exception as exc:
-                messagebox.showerror("Import a project", str(exc), parent=win)
+                messagebox.showerror("Group from saved sessions", str(exc), parent=win)
                 return
-            if added and not _load(path):
+            if not added:
+                text = f"⚠  {project}: no saved session could be used"
+                if skipped:
+                    text += "  ·  " + "; ".join(skipped)
+                _say(text, ORANGE)
                 return
+            st["path"], st["name"] = "", project
+            _show(sheets)
             text = (f"✓  {project}: {len(added)} recording{'s' if len(added) != 1 else ''} "
-                    f"imported into {os.path.basename(path)} ({n} animals)"
-                    if added else f"⚠  {project}: nothing imported")
+                    "from the saved sessions (in memory: Save as Excel… to keep it)")
             if skipped:
                 text += "  ·  left out: " + "; ".join(skipped)
-            _say(text, GREEN if added and not skipped else ORANGE)
+            _say(text, GREEN if not skipped else ORANGE)
 
         def _add_open() -> None:
-            # Only the table shown: a remembered one that did not open (moved,
-            # deleted) is not written to without asking.
+            if data["sheets"] is not None and not st["path"]:
+                try:
+                    n, replaced, what = self._add_open_recording_to_group_table(
+                        "", sheets=data["sheets"])
+                except Exception as exc:
+                    messagebox.showerror("Group table", str(exc), parent=win)
+                    return
+                _show(data["sheets"])
+                _say(f"✓  {what} — {'updated in' if replaced else 'added to'} "
+                     f"{_table_name()} ({n} animals)", GREEN)
+                return
             path = st["path"] if data["sheets"] is not None else ""
             if not path:
                 path = filedialog.asksaveasfilename(
@@ -679,22 +737,70 @@ class TabGroupMixin:
             _say(f"✓  {what} — {'updated in' if replaced else 'added to'} "
                  f"{os.path.basename(path)} ({n} animals)", GREEN)
 
-        for text, cmd, tiptext in (
-                ("📂  Open…", _open, "Open a group table (.xlsx): one animal per recording"),
-                ("Reload", _reload, "Read the table again (rows added since count)"),
-                ("⤓  Import a project…", _import_project,
-                 "Every saved session of a project (the Project field of the Recording "
-                 "sheet) at once, without reopening the files: whole-recording metrics, time "
-                 "course, annotations and event-locked results. Segments come from Compare "
-                 "segments → Add to group table."),
-                ("➕  Add open recording…", _add_open,
+        def _save_as() -> None:
+            if data["sheets"] is None:
+                return
+            path = filedialog.asksaveasfilename(
+                parent=win, title="Save the group table as",
+                defaultextension=".xlsx",
+                initialfile=os.path.basename(st["path"]) if st["path"]
+                else f"{st['name'] or 'group_table'}.xlsx",
+                initialdir=os.path.dirname(st["path"]) or None,
+                filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
+            if not path:
+                return
+            try:
+                gd.write_sheets(path, data["sheets"])
+            except Exception as exc:
+                messagebox.showerror("Group table", str(exc), parent=win)
+                return
+            st["path"], st["name"] = path, ""
+            _summary()
+            _set_tab_state(True)
+            _buttons_state()
+            _say(f"✓  Saved as {os.path.basename(path)}", GREEN)
+
+        def _close() -> None:
+            if data["sheets"] is None:
+                return
+            if not st["path"] and not messagebox.askyesno(
+                    "Group table", f"Close {_table_name()}? It was never saved as Excel.",
+                    parent=win):
+                return
+            st["path"], st["name"] = "", ""
+            _show(None)
+            _say("")
+
+        btns: "dict[str, ctk.CTkButton]" = {}
+
+        def _buttons_state() -> None:
+            have = data["sheets"] is not None
+            for key, on in (("reload", bool(st["path"])), ("save", have), ("close", have)):
+                b = btns.get(key)
+                if b is not None:
+                    b.configure(state="normal" if on else "disabled")
+
+        for key, text, cmd, tiptext in (
+                ("open", "📂  Open Excel…", _open,
+                 "Open a group table (.xlsx): one animal per recording"),
+                ("sessions", "⤓  From saved sessions…", _from_sessions,
+                 "Make the group from every saved session of a project (the Project field "
+                 "of the Recording sheet), without reopening the files and without an Excel "
+                 "file: whole-recording metrics, time course, annotations and event-locked "
+                 "results. Save as Excel… keeps it as a file."),
+                ("add", "➕  Add open recording…", _add_open,
                  "Write the recording open to the table: its whole-recording metrics and time "
                  "course (after Analyze), its annotations, its event-locked results (saved to "
                  "the registry) and its Compare segments result. A recording already in it is "
-                 "replaced; its group stays.")):
+                 "replaced; its group stays."),
+                ("reload", "Reload", _reload, "Read the Excel file again (rows added since count)"),
+                ("save", "💾  Save as Excel…", _save_as, "Write the table to a new .xlsx file"),
+                ("close", "✕  Close", _close,
+                 "Close the table (the Excel file is kept as it is)")):
             b = ctk.CTkButton(row, text=text, width=0, command=cmd, **button_style("secondary"))
             b.pack(side="left", padx=(0, SPACE_S))
             tip(b, tiptext)
+            btns[key] = b
         lbl_file.pack(side="left", fill="x", expand=True, padx=(SPACE_S, 0))
 
         # ── running ──
@@ -764,6 +870,9 @@ class TabGroupMixin:
         def _changed() -> None:
             _read_options()
             if data["sheets"] is None:
+                if data["res"] is not None or btn_fig.cget("state") == "normal":
+                    data["res"] = None
+                    _show_result(None, "Open a group table")
                 return
             try:
                 res = _run()
@@ -956,12 +1065,9 @@ class TabGroupMixin:
         _sync_all_checks()
         _show_options()
         _refresh_animals()
+        _buttons_state()
         self._grouptab_reload = _reload
+        # Nothing is opened by itself: a table chosen in this session (the
+        # page rebuilt) comes back.
         if st["path"] and os.path.exists(st["path"]):
-            # In the app, the remembered table is read when the tab is first
-            # opened, not at start-up (a big table took 1.5 s to read).
-            tabs = getattr(self, "tabs", None)
-            if tabs is not None and getattr(tabs, "get", lambda: None)() != TAB_GROUP:
-                self._grouptab_pending_load = lambda: _load(st["path"], quiet=True)
-            else:
-                _load(st["path"], quiet=True)
+            _load(st["path"], quiet=True)

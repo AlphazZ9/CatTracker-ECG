@@ -272,8 +272,8 @@ def test_removed_beats_change(app):
     app.analysis.artifact_report = {"break_samples": [gone], "removed_samples": [gone],
                                     "removed_types": ["ectopic"], "n_in": 1, "n_out": 1,
                                     "n_duplicate": 0, "n_nonphysio": 0, "n_ectopic": 0}
-    assert "removed beats changed" in app.freshness.status("core").reasons
-    assert "removed beats changed" in app.freshness.status("rolling").reasons
+    assert "removed beats or noisy regions changed" in app.freshness.status("core").reasons
+    assert "removed beats or noisy regions changed" in app.freshness.status("rolling").reasons
 
 
 def test_peak_edit_during_a_job_is_caught(app):

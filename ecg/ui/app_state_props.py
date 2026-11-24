@@ -123,7 +123,7 @@ class StateProps:
         self.ent_thr:           "Optional[ctk.CTkEntry]"   = None
         self.sw_permissive:     "Optional[ctk.CTkSwitch]"  = None
         self.btn_annotations:   "Optional[ctk.CTkButton]"  = None   # detection bar chips
-        self.btn_pacing:        "Optional[ctk.CTkButton]"  = None
+        self.btn_noise:        "Optional[ctk.CTkButton]"  = None
         self.btn_filters_chip:  "Optional[ctk.CTkButton]"  = None
         self.btn_toggle_rrhr:   "Optional[ctk.CTkButton]"  = None
         self.btn_toggle_spikes: "Optional[ctk.CTkButton]"  = None
@@ -509,11 +509,11 @@ class StateProps:
         self.analysis.annotations = value
 
     @property
-    def _pacing_periods(self: ECGApp) -> "list[dict]":
-        return self.analysis.pacing_periods
-    @_pacing_periods.setter
-    def _pacing_periods(self: ECGApp, value: "list[dict]") -> None:
-        self.analysis.pacing_periods = value
+    def _noise_regions(self: ECGApp) -> "list[dict]":
+        return self.analysis.noise_regions
+    @_noise_regions.setter
+    def _noise_regions(self: ECGApp, value: "list[dict]") -> None:
+        self.analysis.noise_regions = value
 
     @property
     def _wave_template(self: ECGApp) -> "Optional[WaveTemplate]":

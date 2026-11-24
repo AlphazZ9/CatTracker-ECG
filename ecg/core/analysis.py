@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Callable, Optional, cast
+from typing import Any, Callable, Iterable, Mapping, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -436,6 +436,31 @@ SPECTRAL_METHOD_TEXT = (
     "on their true times; Hann, 75 % overlap, ≈0.02 Hz resolution); VLF / "
     "LF / HF = absolute band powers (ms²), LFn / HFn = LF or HF / (LF + HF) "
     "(Task Force n.u.); the PSD plot shows this same spectrum")
+
+
+def noise_breaks(rpeaks: np.ndarray, fs: float,
+                 regions: "Optional[Iterable[Mapping[str, Any]]]") -> np.ndarray:
+    """Breaks (sample positions, see rr_interval_series) that leave out every
+    RR interval overlapping a noisy region ({t_start, t_end} in s, marked by
+    hand): one at the middle of each such interval. A stretch judged too
+    noisy to trust is then no HR decrease (a missed beat there would read
+    as a long interval) and no HRV, as a removed beat is."""
+    out = np.array([], dtype=np.int64)
+    if not regions or rpeaks is None or len(rpeaks) < 2 or not (fs and fs > 0):
+        return out
+    p = np.sort(np.asarray(rpeaks, dtype=np.int64).flatten())
+    lo, hi = p[:-1], p[1:]
+    hit = np.zeros(len(lo), dtype=bool)
+    for r in regions:
+        try:
+            a, b = float(r["t_start"]) * fs, float(r["t_end"]) * fs
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (np.isfinite(a) and np.isfinite(b)) or b <= a:
+            continue
+        hit |= (hi > a) & (lo < b)
+    hit &= (hi - lo) >= 2
+    return ((lo[hit] + hi[hit]) // 2).astype(np.int64)
 
 
 def _intervals_spanning_breaks(peaks: np.ndarray, breaks: "Optional[np.ndarray]") -> np.ndarray:

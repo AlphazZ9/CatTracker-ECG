@@ -36,7 +36,7 @@ from ecg.core.analysis import (
     normalize_ensemble_beats,
     mean_hr_bpm, poincare_sd1_sd2,
     recompute_qtc_column, rr_bounds_label, rr_exclusion_text,
-    rr_interval_series, successive_valid_pairs,
+    noise_breaks, rr_interval_series, successive_valid_pairs,
 )
 from ecg.core.autonomic import COV_METHODS, METHOD_NOTES, compute_autonomic_indices
 from ecg.core.filtering import break_line_at_gaps
@@ -252,12 +252,19 @@ class AnalysisController:
         or None when there are none. Main thread only."""
         arep = self.app.analysis.artifact_report or {}
         removed = arep.get("break_samples") if isinstance(arep, dict) else None
-        if not removed:
+        noisy = list(getattr(self.app.analysis, "noise_regions", None) or [])
+        if not removed and not noisy:
             return None
         peaks = rpeaks if rpeaks is not None else self.app.detection.rpeaks_ok
         if peaks is None:
             return None
-        active = active_removed_samples(removed, peaks, self.break_tol_samples())
+        active = (active_removed_samples(removed, peaks, self.break_tol_samples())
+                  if removed else np.array([], dtype=np.int64))
+        if noisy:
+            # The noisy regions marked by hand: their intervals are left out too.
+            fs = self.app.signal.fs or MouseECG.FS_DEFAULT
+            active = np.union1d(np.asarray(active, dtype=np.int64),
+                                noise_breaks(peaks, fs, noisy))
         return active if len(active) else None
 
     def current_artifact_report(self) -> "dict | None":
@@ -1965,6 +1972,8 @@ class AnalysisController:
         # removed beats are still absent -- both main-thread reads.
         params["hrv_rr_bounds"] = self.hrv_rr_bounds()
         params["break_tol_samples"] = self.break_tol_samples()
+        params["noise_regions"] = [dict(r) for r in
+                                   getattr(self.app.analysis, "noise_regions", None) or []]
         prev_report = self.app.analysis.artifact_report
         # What the result must still match when it lands: the recording
         # (generation) and the peak set the worker starts from -- a peak
@@ -2033,6 +2042,12 @@ class AnalysisController:
             prev_report, pass_report, rp, params.get("break_tol_samples", 1))
         breaks = (np.asarray(artifact_report["break_samples"], dtype=np.int64)
                   if artifact_report and artifact_report["break_samples"] else None)
+        # Noisy regions marked by hand: their intervals are left out of HR /
+        # HRV (on the corrected peaks; the windowing below keeps them).
+        noisy = noise_breaks(rp, self.app.signal.fs or MouseECG.FS_DEFAULT,
+                             params.get("noise_regions"))
+        if len(noisy):
+            breaks = noisy if breaks is None else np.union1d(breaks, noisy)
 
         # ── Save full (artifact-corrected) peak set BEFORE windowing ─────────
         # This is what _on_analysis_done will write back to _rpeaks_ok so that

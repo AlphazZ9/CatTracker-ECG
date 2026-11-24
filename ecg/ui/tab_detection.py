@@ -281,8 +281,22 @@ class TabDetectionMixin:
             _fp_tip,
             "Free Placement: right-click adds a peak at the exact clicked position — "
             "no snapping, no proximity guard, works even on top of existing peaks.")
+        self.btn_mark_noise = ctk.CTkButton(
+            fp_chip,
+            text="Mark Noise",
+            width=104,
+            command=self._toggle_noise_mode,
+            **button_style("secondary"),
+        )
+        self.btn_mark_noise.pack(side="left", padx=(0, SPACE_M))
+        self._bind_hover_tip(
+            self.btn_mark_noise,
+            "Mark Noise (Edit mode): drag on the trace over a stretch too noisy to "
+            "trust; its RR intervals are left out of HR and HRV, so it is not read as a "
+            "heart-rate decrease. Right-click a noisy region to remove it. All of them: "
+            "the Noise chip above.")
 
-        # Annotations and pacing periods: chips of the detection bar above.
+        # Annotations and noisy regions: chips of the detection bar above.
 
         # ── RR/HR/Quality strip toggle ───────────────────────────────────────
         rrhr_chip = self._toolbar_chip(hdr)
@@ -341,6 +355,8 @@ class TabDetectionMixin:
             "button_press_event", self._on_detail_click)
         self._hover_motion_cid = self._slots["detail"].canvas.mpl_connect(
             "motion_notify_event", self._on_detail_motion)
+        self._slots["detail"].canvas.mpl_connect(
+            "button_release_event", self._on_detail_release)
 
         # RR/HR strip — synced to the same nav window as the detail plot,
         # via ECGApp._draw_detail()'s fan-out (see draw_detail_rrhr()).

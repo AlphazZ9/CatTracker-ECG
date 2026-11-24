@@ -338,11 +338,11 @@ class ECGApp(
         # the correlation badge was never repainted after a theme toggle
         # before, so it silently went blank on every _rebuild_ui(). Cheap
         # fix while already touching this exact code path.
-        # Same class of gap: the detection bar's Annotations / Pacing chips
+        # Same class of gap: the detection bar's Annotations / Noise chips
         # need a refresh after a full rebuild -- valid here since _build()
         # (called above) has already fully rebuilt every tab and popover.
         self._update_ann_count()
-        self._update_pacing_count()
+        self._update_noise_count()
         self._refresh_shell()
 
     # ════════════════════════════════════════════════════════

@@ -880,7 +880,7 @@ class AnnotationManagerDialog(ctk.CTkToplevel):
     def __init__(self, parent: "ECGApp") -> None:
         super().__init__(parent)
         self.title("Annotations")
-        self.geometry("660x420")
+        self.geometry("760x420")
         self.resizable(True, True)
         self.grab_set()
         self.configure(fg_color=PANEL)
@@ -910,6 +910,19 @@ class AnnotationManagerDialog(ctk.CTkToplevel):
             command=self._delete,
             **button_style("danger"),
         ).pack(side="left", padx=(6, 0))
+        btn_suggest = ctk.CTkButton(
+            bar,
+            text="✨  Suggest from channels…",
+            width=0,
+            command=self._suggest,
+            **button_style("secondary"),
+        )
+        btn_suggest.pack(side="right")
+        bind_tip = getattr(parent, "_bind_hover_tip", None)
+        if callable(bind_tip):
+            bind_tip(btn_suggest, "Annotations from the file's marker and keyboard channels "
+                                  "and from the stimulus pulses of its other channels "
+                                  "(Spike2 .smr or MATLAB export): you pick which to add")
 
         # ── Scrollable list ───────────────────────────────────────────────
         self._list_frame = ctk.CTkScrollableFrame(self, fg_color=CARD)
@@ -985,6 +998,21 @@ class AnnotationManagerDialog(ctk.CTkToplevel):
         AnnotationDialog(self, on_save=_save, t_max=t_max,
                          default_start=default_start, default_end=default_end)
 
+    def _suggest(self) -> None:
+        if not getattr(self._app.signal, "filepath", None):
+            messagebox.showinfo("Suggest annotations", "Open a recording first.", parent=self)
+            return
+        from ecg.ui.annotation_suggest_dialog import AnnotationSuggestDialog
+
+        def _add(anns: "list[dict]") -> None:
+            self._app._annotations.extend(anns)
+            self._app._annotations.sort(key=lambda a: float(a["t_start"]))
+            self._app._session_dirty = True
+            self._app._draw_detail()
+            self._app._update_ann_count()
+            self._refresh()
+        AnnotationSuggestDialog(self, self._app, _add)
+
     def _selected_indices(self) -> "list[int]":
         return [i for i, v in enumerate(self._row_vars) if v.get()]
 
@@ -1024,11 +1052,12 @@ class AnnotationManagerDialog(ctk.CTkToplevel):
         self._refresh()
 
 
-class PacingPeriodDialog(ctk.CTkToplevel):
-    """Modal dialog to add or edit a single pacing/stimulation period.
+class NoiseRegionDialog(ctk.CTkToplevel):
+    """Modal dialog to add or edit a single noisy region (its RR intervals
+    are left out of HR and HRV).
 
     Fields: start time (s), end time (s), note text. No colour picker --
-    every pacing period shares one fixed render colour (see draw_detail()).
+    every noisy region shares one fixed render colour (see draw_detail()).
     On OK, calls *on_save(period_dict)* with the validated period dict.
     """
 
@@ -1038,7 +1067,7 @@ class PacingPeriodDialog(ctk.CTkToplevel):
                  default_start: "Optional[float]" = None,
                  default_end: "Optional[float]" = None) -> None:
         super().__init__(parent)
-        self.title("Add pacing period" if existing is None else "Edit pacing period")
+        self.title("Add noisy region" if existing is None else "Edit noisy region")
         self.resizable(False, False)
         self.grab_set()
         self._on_save = on_save
@@ -1115,11 +1144,11 @@ class PacingPeriodDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-class PacingPeriodManagerDialog(ctk.CTkToplevel):
-    """Dialog listing all pacing/stimulation periods with Add/Edit/Delete.
+class NoiseRegionManagerDialog(ctk.CTkToplevel):
+    """Dialog listing all noisy regions with Add/Edit/Delete.
 
     Shows the full list in a scrollable table; changes are applied
-    immediately to the parent app's _pacing_periods list and the plots
+    immediately to the parent app's _noise_regions list and the plots
     are redrawn after each change.
     """
 
@@ -1127,7 +1156,7 @@ class PacingPeriodManagerDialog(ctk.CTkToplevel):
 
     def __init__(self, parent: "ECGApp") -> None:
         super().__init__(parent)
-        self.title("Pacing Periods")
+        self.title("Noisy regions")
         self.geometry("580x420")
         self.resizable(True, True)
         self.grab_set()
@@ -1138,7 +1167,7 @@ class PacingPeriodManagerDialog(ctk.CTkToplevel):
         bar.pack(side="top", fill="x", padx=10, pady=(8, 4))
         ctk.CTkButton(
             bar,
-            text="＋  Add pacing period",
+            text="＋  Add noisy region",
             width=150,
             command=self._add,
             **button_style("primary"),
@@ -1170,9 +1199,9 @@ class PacingPeriodManagerDialog(ctk.CTkToplevel):
             w.destroy()
         self._row_vars = []
 
-        periods = self._app._pacing_periods
+        periods = self._app._noise_regions
         if not periods:
-            ctk.CTkLabel(self._list_frame, text="No pacing periods yet.",
+            ctk.CTkLabel(self._list_frame, text="No noisy regions yet.",
                          text_color=MUTED).pack(padx=12, pady=20)
             return
 
@@ -1217,12 +1246,10 @@ class PacingPeriodManagerDialog(ctk.CTkToplevel):
             default_start = self._app.ui.nav_pos
             default_end   = min(t_max, default_start + win)
         def _save(period: dict) -> None:
-            self._app._pacing_periods.append(period)
-            self._app._session_dirty = True
-            self._app._draw_detail()
-            self._app._update_pacing_count()
+            self._app._noise_regions.append(period)
+            self._app._noise_regions_changed()
             self._refresh()
-        PacingPeriodDialog(self, on_save=_save, t_max=t_max,
+        NoiseRegionDialog(self, on_save=_save, t_max=t_max,
                            default_start=default_start, default_end=default_end)
 
     def _selected_indices(self) -> "list[int]":
@@ -1231,36 +1258,32 @@ class PacingPeriodManagerDialog(ctk.CTkToplevel):
     def _edit(self) -> None:
         sel = self._selected_indices()
         if not sel:
-            messagebox.showinfo("No selection", "Tick one pacing period to edit.", parent=self)
+            messagebox.showinfo("No selection", "Tick one noisy region to edit.", parent=self)
             return
         if len(sel) > 1:
             messagebox.showinfo("Multiple selected",
-                                "Select exactly one pacing period to edit.", parent=self)
+                                "Select exactly one noisy region to edit.", parent=self)
             return
         idx = sel[0]
-        existing = dict(self._app._pacing_periods[idx])
+        existing = dict(self._app._noise_regions[idx])
         t_max = float(self._app._time[-1]) if self._app._time is not None else 1e6
         def _save(period: dict) -> None:
-            self._app._pacing_periods[idx] = period
-            self._app._session_dirty = True
-            self._app._draw_detail()
-            self._app._update_pacing_count()
+            self._app._noise_regions[idx] = period
+            self._app._noise_regions_changed()
             self._refresh()
-        PacingPeriodDialog(self, on_save=_save, existing=existing, t_max=t_max)
+        NoiseRegionDialog(self, on_save=_save, existing=existing, t_max=t_max)
 
     def _delete(self) -> None:
         sel = self._selected_indices()
         if not sel:
-            messagebox.showinfo("No selection", "Tick pacing period(s) to delete.", parent=self)
+            messagebox.showinfo("No selection", "Tick noisy region(s) to delete.", parent=self)
             return
         if not messagebox.askyesno("Confirm delete",
-                                   f"Delete {len(sel)} pacing period(s)?", parent=self):
+                                   f"Delete {len(sel)} noisy region(s)?", parent=self):
             return
         for i in sorted(sel, reverse=True):
-            del self._app._pacing_periods[i]
-        self._app._session_dirty = True
-        self._app._draw_detail()
-        self._app._update_pacing_count()
+            del self._app._noise_regions[i]
+        self._app._noise_regions_changed()
         self._refresh()
 
 

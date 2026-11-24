@@ -64,6 +64,10 @@ if TYPE_CHECKING:
 
 # Below these sizes (inches) a figure is in a card of the Rhythm & HRV page, not
 # in an export (10 x 5 in): it drops or shrinks what would collide.
+# Noisy regions marked by hand (their RR intervals are left out of HR / HRV).
+NOISE_FILL = "#9AA0A6"
+NOISE_EDGE = "#5F6368"
+
 _NARROW_FIG_IN = 8.0
 _SHORT_FIG_IN = 5.0
 
@@ -370,9 +374,9 @@ class PlotController:
         not here -- this method only renders. No-ops gracefully if no
         signal is loaded yet.
 
-        The STATIC parts of this plot (baseline, annotation/pacing marks,
+        The STATIC parts of this plot (baseline, annotation/noise marks,
         axis/tick/spine setup) only depend on the recording and the
-        annotation/pacing lists, which change far less often than nav_pos
+        annotation/noise lists, which change far less often than nav_pos
         does -- they used to be torn down and rebuilt via a full
         fig.clear() + add_subplot() + constrained-layout resolve on EVERY
         navigation step (arrow key, Go, spike stepper, minimap drag tick).
@@ -398,7 +402,7 @@ class PlotController:
         t_start = self.app.ui.nav_pos
         t_end   = min(t_max, t_start + win)
         _ann_snap  = list(self.app.analysis.annotations)
-        _pace_snap = list(self.app.analysis.pacing_periods)
+        _noise_snap = list(self.app.analysis.noise_regions)
 
         slot = self.app._slots.get("overview")
         if slot is None:
@@ -410,7 +414,7 @@ class PlotController:
         key = (
             id(time), t_max, id(peaks), len(peaks) if peaks is not None else 0,
             tuple((a.get("t_start"), a.get("color")) for a in _ann_snap),
-            tuple(p.get("t_start") for p in _pace_snap),
+            tuple(p.get("t_start") for p in _noise_snap),
         )
 
         cache = self._ov_cache
@@ -442,7 +446,7 @@ class PlotController:
                         transform=ax.transAxes, ha="left", va="top", fontsize=7,
                         color=PLOT["muted"], zorder=8)
 
-            # Event marks -- annotation/pacing-period start times across the
+            # Event marks -- annotation/noisy-region start times across the
             # WHOLE recording, not just the current window. Cheap: a handful
             # of axvline calls off lists already in memory, no per-sample
             # signal work (that's what made the old envelope-plot minimap
@@ -450,8 +454,9 @@ class PlotController:
             for ann in _ann_snap:
                 ax.axvline(float(ann["t_start"]), color=ann.get("color", ORANGE_DARK),
                            lw=1.4, alpha=0.7, zorder=4)
-            for pp in _pace_snap:
-                ax.axvline(float(pp["t_start"]), color=TEAL_DARK, lw=1.4, alpha=0.7, zorder=4)
+            for pp in _noise_snap:
+                ax.axvspan(float(pp["t_start"]), float(pp["t_end"]), color=NOISE_EDGE,
+                           alpha=0.35, zorder=3, linewidth=0)
 
             cursor_artists = self._draw_overview_cursor(ax, t_start, t_end)
 
@@ -580,7 +585,7 @@ class PlotController:
                     if len(_samps):
                         _art_removed_by_type[_cat] = _samps
 
-        _pace_snap = list(self.app.analysis.pacing_periods)
+        _noise_snap = list(self.app.analysis.noise_regions)
 
         # Accepted beats that 0 other detection methods confirmed (Check
         # Agreement, detection_controller.py) -- cleared whenever detection
@@ -627,7 +632,7 @@ class PlotController:
             ax.tick_params(axis="both", labelsize=10, colors=PLOT["text"])
             ax.grid(True, color=PLOT["grid"], lw=0.5, alpha=0.85)
 
-            # ── Pacing / stimulation period markers ─────────────────────────
+            # ── Noisy regions (their RR intervals are left out of HR / HRV) ──
             # Rendered BEHIND the trace (zorder=0.5 < ghost trace's zorder=1),
             # unlike annotation spans (zorder=6, drawn OVER the trace) -- these
             # read as ambient background context. Uses ax.get_xaxis_transform()
@@ -635,25 +640,26 @@ class PlotController:
             # position -- the annotation block's ax.get_ylim() read below only
             # works because it runs AFTER the trace is plotted; this block runs
             # BEFORE, so ax.get_ylim() would still be the (0,1) default here.
-            for pp in _pace_snap:
+            for pp in _noise_snap:
                 p0, p1 = float(pp["t_start"]), float(pp["t_end"])
                 if p1 < t_start or p0 > t_end:
                     continue
                 ax.axvspan(max(p0, t_start), min(p1, t_end),
-                           color=TEAL, alpha=0.15, zorder=0.5, linewidth=0)
+                           facecolor=NOISE_FILL, edgecolor=NOISE_EDGE, hatch="///",
+                           alpha=0.35, zorder=0.5, linewidth=0)
                 for _px in (p0, p1):
                     if t_start <= _px <= t_end:
-                        ax.axvline(_px, color=TEAL_DARK, lw=1.0, ls=":",
+                        ax.axvline(_px, color=NOISE_EDGE, lw=1.0, ls=":",
                                    alpha=0.55, zorder=3.5)
-                note = pp.get("note", "")
+                note = pp.get("note", "") or "noise"
                 if note:
                     _lx = p0 if t_start <= p0 <= t_end else (p0 + p1) / 2
                     if t_start <= _lx <= t_end:
                         ax.text(_lx + 0.01, 0.04, note, transform=ax.get_xaxis_transform(),
                                 ha="left", va="bottom", fontsize=8,
-                                color=TEAL_DARK, fontweight="bold", zorder=3.5,
+                                color=NOISE_EDGE, fontweight="bold", zorder=3.5,
                                 bbox=dict(boxstyle="round,pad=0.2", fc="white",
-                                          ec=TEAL_DARK, alpha=0.75, lw=0.7))
+                                          ec=NOISE_EDGE, alpha=0.75, lw=0.7))
 
             # Ghost trace — suppressed in no-filter mode (signals identical)
             # and in raw-only mode (no filtered signal exists yet).

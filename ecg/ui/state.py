@@ -110,6 +110,7 @@ class DetectionState:
     rpeaks_manual_added: Optional[np.ndarray] = None          # view-ready array of added peaks
     edit_mode: bool = False                     # click-to-exclude active
     edit_free_placement: bool = False           # bypass proximity constraint
+    edit_noise_mode: bool = False               # drag marks a noisy region
     # Undo/Redo stacks -- each entry: (frozenset excluded, frozenset added)
     edit_undo: list[tuple[frozenset, frozenset]] = field(default_factory=list)
     edit_redo: list[tuple[frozenset, frozenset]] = field(default_factory=list)
@@ -217,10 +218,10 @@ class AnalysisState:
 
     # Time annotations: list of dicts {t_start, t_end, label, color}
     annotations: list[dict] = field(default_factory=list)
-    # Manually-marked pacing/stimulation periods: {t_start, t_end, note}.
+    # Manually-marked noisy regions: {t_start, t_end, note}.
     # Deliberately a separate list from `annotations` above (per product
     # decision) -- fixed render color, no per-item color choice.
-    pacing_periods: list[dict] = field(default_factory=list)
+    noise_regions: list[dict] = field(default_factory=list)
     wave_template: Optional[WaveTemplate] = None
     # QTc formula key (QTC_FORMULA_LABELS) the stored intervals' QTc_ms
     # column is computed with -- the Intervals-tab selector's value, kept

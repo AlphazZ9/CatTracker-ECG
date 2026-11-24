@@ -90,7 +90,7 @@ def window_text(window: Any, signal_end_s: "Optional[float]") -> str:
     return f"{_number(t0)}–{_number(t1)} s"
 
 
-def exclusion_field(t: "Optional[MetricTable]") -> StripField:
+def exclusion_field(t: "Optional[MetricTable]", noisy: bool = False) -> StripField:
     """How many RR intervals HRV left out and why, from the table's rr.* rows."""
     if t is None or not t.has("rr.n_excluded"):
         return StripField("excluded", f"RR excluded: {MISSING}", TONE_MUTED)
@@ -99,7 +99,9 @@ def exclusion_field(t: "Optional[MetricTable]") -> StripField:
         return StripField("excluded", "0 RR excluded")
     parts = [f"{int(t.value(key, 0))} {name}" for key, name in (
         ("rr.n_too_short", "too short"), ("rr.n_too_long", "too long"),
-        ("rr.n_spanning_removed", "spanning a removed beat")) if t.value(key, 0)]
+        ("rr.n_spanning_removed",
+         "in a noisy region or across a removed beat" if noisy
+         else "spanning a removed beat")) if t.value(key, 0)]
     parts.append(f"{float(t.value('rr.excluded_pct', 0.0)):.2f} %")
     return StripField("excluded", f"{n} RR excluded ({' · '.join(parts)})", TONE_WARN)
 
@@ -135,7 +137,8 @@ def times_text(computed_at: "Optional[str]", edited_at: "Optional[str]",
 def context_fields(results: "Optional[dict]", table: "Optional[MetricTable]",
                    artifact_table: MetricTable, has_signal: bool, n_peaks: "Optional[int]",
                    window: Any, signal_end_s: "Optional[float]",
-                   current_rr: "tuple[float, float]", qtc_formula: str) -> "list[StripField]":
+                   current_rr: "tuple[float, float]", qtc_formula: str,
+                   noisy: bool = False) -> "list[StripField]":
     """The strip's fields. With core results they say what those were computed
     on; without, what the next Analyze would use."""
     if not has_signal:
@@ -152,7 +155,7 @@ def context_fields(results: "Optional[dict]", table: "Optional[MetricTable]",
         StripField("window", f"Window {window_text(window, signal_end_s) if has_signal else MISSING}"),
         StripField("beats", f"{n_peaks if n_peaks is not None else MISSING} peaks"),
         StripField("rr", f"RR bounds {float(lo):.1f}–{float(hi):.1f} ms"),
-        exclusion_field(table),
+        exclusion_field(table, noisy),
         artifact_field(artifact_table),
     ] + ([StripField("qtc", "QTc: " + QTC_FORMULA_LABELS[normalize_qtc_formula(qtc_formula)])]
          if QT_REPORTED else [])          # no QTc while QT is not reported
@@ -486,7 +489,8 @@ class ContextStripMixin:
             n_peaks=len(peaks) if peaks is not None else None,
             window=analysed, signal_end_s=end,
             current_rr=self.analysis_ctrl.hrv_rr_bounds(quiet=True),
-            qtc_formula=self._qtc_formula())
+            qtc_formula=self._qtc_formula(),
+            noisy=bool(getattr(a, "noise_regions", None)))
         pending = pending_window_field(a.results, analysed, (a.t_start, a.t_end), end)
         if pending is not None:
             fields.insert([f.key for f in fields].index("window") + 1, pending)

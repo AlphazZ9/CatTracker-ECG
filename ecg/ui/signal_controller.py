@@ -512,7 +512,7 @@ class SignalController:
         self.app.analysis.results       = None
         self.app.analysis.epoch_df      = None
         self.app.analysis.annotations   = []
-        self.app.analysis.pacing_periods = []
+        self.app.analysis.noise_regions = []
         self.app.analysis.wave_template = None
         self.app.signal.channel = bundle.get("detected_ch")
         self.app.session.dirty = False
@@ -570,7 +570,7 @@ class SignalController:
             ORANGE if kept else BLUE)
         self.app.tabs.set(TAB_DETECTION)
         self.app._update_ann_count()
-        self.app._update_pacing_count()
+        self.app._update_noise_count()
         self.app._update_topbar_filename()
         self.app.ui.nav_pos = 0.0
         self.app._sync_nav_pos_entry()
@@ -783,7 +783,7 @@ class SignalController:
         # Invalidate all previous analysis state — new file, clean slate
         self.app.analysis.results       = None
         self.app.analysis.epoch_df      = None
-        # Annotations/pacing periods are NOT cleared here -- they're time-
+        # Annotations/noisy regions are NOT cleared here -- they're time-
         # ranges scoped to the recording, not to one detection run, so
         # they stay valid across a re-detect on the SAME file (changing SG
         # window, threshold, etc.). The genuine new-file case is already
@@ -791,7 +791,7 @@ class SignalController:
         # this ever runs); clearing them here too meant typing an ordinary
         # space into an annotation's own label field -- which triggers
         # this same Detect-Peaks pipeline via the global Space shortcut --
-        # silently deleted every annotation and pacing period on the file.
+        # silently deleted every annotation and noisy region on the file.
         # The wave template is NOT reset here either: it belongs to the
         # recording (chosen / calibrated by the user, kept in its session),
         # not to one detection run. A new file gets a fresh one from
@@ -905,7 +905,7 @@ class SignalController:
                 ORANGE if kept else GREEN)
         self.app.tabs.set(TAB_DETECTION)
         self.app._update_ann_count()   # refresh count (annotations persist across re-detect)
-        self.app._update_pacing_count()
+        self.app._update_noise_count()
         # Sync nav bar
         self.app.ui.nav_pos = 0.0
         self.app._sync_nav_pos_entry()
@@ -1307,7 +1307,7 @@ class SignalController:
         self.app.signal.raw_only_loaded      = False
         self.app.ui.thr_debounce_id      = None
         self.app.analysis.annotations          = []
-        self.app.analysis.pacing_periods       = []
+        self.app.analysis.noise_regions       = []
         self.app.ui.tsv_store            = {}
         self.app.analysis.wave_template        = None
         # The Compare segments setup belongs to the previous recording: a

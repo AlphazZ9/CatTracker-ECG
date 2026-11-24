@@ -155,10 +155,6 @@ class TabTimeCourseMixin:
         after_idle = getattr(self, "after_idle", None)
         if after_idle is not None:
             after_idle(self._flush_shown_slots)
-        pending = getattr(self, "_grouptab_pending_load", None)
-        if pending is not None and self.tabs.get() == TAB_GROUP:
-            self._grouptab_pending_load = None
-            pending()
         if self.tabs.get() == TAB_TIME_COURSE:
             self._show_time_mode(self.ui.time_course_mode)
         elif self.tabs.get() == TAB_COMPARE:

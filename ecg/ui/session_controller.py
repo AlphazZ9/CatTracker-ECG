@@ -13,7 +13,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from tkinter import messagebox
 
 import numpy as np
@@ -102,6 +102,25 @@ def wave_template_from_session(state: dict) -> "WaveTemplate | None":
     raw = state.get("wave_template")
     return WaveTemplate.from_dict(raw) if isinstance(raw, dict) else None
 
+
+
+PACING_COLOR = "#14B8A6"
+
+
+def pacing_as_annotations(periods: "Any") -> "list[dict]":
+    """The pacing periods of a session saved before 6.2 ({t_start, t_end,
+    note}) as annotations, so they keep driving nothing but stay visible and
+    can now align time courses and event-locked analyses."""
+    out: "list[dict]" = []
+    for p in periods or []:
+        try:
+            t0, t1 = float(p["t_start"]), float(p["t_end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.append({"t_start": t0, "t_end": t1,
+                    "label": str(p.get("note") or "").strip() or "Pacing",
+                    "color": PACING_COLOR})
+    return out
 
 class SessionController:
     def __init__(self, app: "ECGApp") -> None:
@@ -334,8 +353,11 @@ class SessionController:
             "artifact_candidates": state.get("artifact_candidates", []),
             "epoch_df":         pd.DataFrame(epoch_raw)   if epoch_raw   is not None else None,
             "rolling_hrv_df":   pd.DataFrame(rolling_raw) if rolling_raw is not None else None,
-            "annotations":      list(state.get("annotations", [])),
-            "pacing_periods":   list(state.get("pacing_periods", [])),
+            # Pacing periods of older sessions (drawn only, no effect on any
+            # result) come back as annotations.
+            "annotations":      list(state.get("annotations", []))
+                                + pacing_as_annotations(state.get("pacing_periods")),
+            "noise_regions":    list(state.get("noise_regions", [])),
             "analysis_t_start": float(state.get("analysis_t_start", 0.0)),
             "analysis_t_end":   float(state.get("analysis_t_end",   0.0)),
             "analysed_window":  analysed_window,
@@ -460,7 +482,7 @@ class SessionController:
         self.app.analysis.rolling_hrv_df  = bundle["rolling_hrv_df"]
         self.app.analysis.windowed_view   = dict(bundle.get("windowed_view") or {})
         self.app.analysis.annotations     = list(bundle["annotations"])
-        self.app.analysis.pacing_periods  = list(bundle["pacing_periods"])
+        self.app.analysis.noise_regions   = list(bundle["noise_regions"])
         # Per-recording wave template (None for older sessions: the saved
         # default is loaded at the next Intervals run).
         self.app.analysis.wave_template   = bundle.get("wave_template")
@@ -660,7 +682,7 @@ class SessionController:
         # ── Render ───────────────────────────────────────────────────────
         self.app._draw_detail(self.app.ui.nav_pos)
         self.app._update_ann_count()
-        self.app._update_pacing_count()
+        self.app._update_noise_count()
         # Time course: the frames the session brought back (no-op without),
         # on the mode it was saved on.
         show_mode = getattr(self.app, "_show_time_mode", None)
@@ -845,8 +867,8 @@ class SessionController:
             state["time_course_mode"] = ui.time_course_mode
         if self.app.analysis.annotations:
             state["annotations"] = self.app.analysis.annotations
-        if self.app.analysis.pacing_periods:
-            state["pacing_periods"] = self.app.analysis.pacing_periods
+        if self.app.analysis.noise_regions:
+            state["noise_regions"] = self.app.analysis.noise_regions
         # The recording's wave template: restoring the session restores the
         # windows (and provenance) its delineation used / will use.
         if self.app.analysis.wave_template is not None:
