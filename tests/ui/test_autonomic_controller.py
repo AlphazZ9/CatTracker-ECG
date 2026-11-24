@@ -16,7 +16,7 @@ from matplotlib.figure import Figure
 from ecg.core.autonomic import COV_METHODS, compute_autonomic_indices
 from ecg.io.session import _SessionEncoder, _session_decode_hook
 from ecg.ui import analysis_controller as ac_module
-from ecg.ui import detection_controller as dc_module
+from ecg.core import peak_editing as dc_module  # where run_detection applies the threshold
 from ecg.ui import session_controller as sc_module
 from ecg.ui.analysis_controller import AnalysisController
 from ecg.ui.autonomic_view import default_autonomic_params

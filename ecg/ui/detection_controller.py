@@ -19,9 +19,9 @@ import numpy as np
 import customtkinter as ctk  # type: ignore[import-untyped]
 
 from ecg.core.models import MouseECG
+from ecg.core.peak_editing import apply_peak_edits, signal_quality_score
 from ecg.core.detection import (
-    apply_threshold, peak_agreement_counts,
-    active_removed_samples, drop_removed_peaks,
+    peak_agreement_counts,
     detect_peaks_wavelet, detect_peaks_sg_derivative, detect_peaks_envelope_max,
 )
 from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel, NoModelError
@@ -77,57 +77,30 @@ class DetectionController:
         if thresh is None:
             thresh = float(self.app.sl_thr.get())   # main-thread-only path  # type: ignore[union-attr]
 
-        accepted, rejected, thresh_amp = apply_threshold(
-            self.app.signal.filtered, self.app.detection.all_candidates, self.app.detection.all_prominences, thresh,
-            fs=self.app.signal.fs)
-
-        # ── Apply manual exclusions ──────────────────────────────
-        if self.app.detection.manual_excluded:
-            manual_excl_mask = np.array([p in self.app.detection.manual_excluded for p in accepted], dtype=bool)
-            self.app.detection.rpeaks_manual_excl = accepted[manual_excl_mask] if manual_excl_mask.any() else np.array([], int)
-            accepted = accepted[~manual_excl_mask]
-        else:
-            self.app.detection.rpeaks_manual_excl = np.array([], dtype=int)
-
-        # ── Merge manually-added peaks ───────────────────────────
-        # Added peaks are never in the candidate set; they bypass all thresholds.
-        # They are removed from the exclusion set if present (can't be both).
-        if self.app.detection.manual_added:
-            added_arr = np.array(sorted(self.app.detection.manual_added), dtype=int)
-            self.app.detection.rpeaks_manual_added = added_arr
-            # Remove from exclusion set if mistakenly present
-            self.app.detection.manual_excluded -= self.app.detection.manual_added
-            # Merge and sort
-            accepted = np.unique(np.concatenate([accepted, added_arr]))
-        else:
-            self.app.detection.rpeaks_manual_added = np.array([], dtype=int)
-
-        prev_ok = self.app.detection.rpeaks_ok
-
-        # ── Re-apply artifact removals still in effect ───────────
-        # Artifact Review and Analyze's auto-correction write the corrected
-        # peaks straight into rpeaks_ok, not into the manual sets, so the
-        # rebuild above (full candidate set) brings every removed beat back
-        # on the next click / undo / threshold nudge while the "removed"
-        # markers stay drawn. Drop again the removals whose beat was still
-        # absent from the peaks before this rebuild: a beat that is already
-        # back (a fresh Detect Peaks, or re-added by hand) stays back, and
-        # hand-added peaks are never dropped.
+        det = self.app.detection
+        prev_ok = det.rpeaks_ok
+        # Artifact removals still in effect, and their matching tolerance
+        # (ecg.core.peak_editing.apply_peak_edits, step 4).
         arep = self.app.analysis.artifact_report
         removed = arep.get("removed_samples") if isinstance(arep, dict) else None
-        if removed and prev_ok is not None and len(prev_ok) and len(accepted):
+        tol = 1
+        if removed and prev_ok is not None and len(prev_ok):
             actrl_tol = getattr(self.app, "analysis_ctrl", None)
             tol = (actrl_tol.break_tol_samples() if actrl_tol is not None
                    else max(1, int(round(0.005 * float(self.app.signal.fs or 1.0)))))
-            still = active_removed_samples(removed, prev_ok, tol)
-            if len(still):
-                kept = drop_removed_peaks(accepted, still, tol,
-                                          protected=self.app.detection.manual_added)
-                if len(kept) != len(accepted):
-                    accepted = kept.astype(np.asarray(accepted).dtype, copy=False)
-        self.app.detection.rpeaks_ok  = accepted
-        self.app.detection.rpeaks_rej = rejected
-        self.app.detection.thresh_amp = thresh_amp
+        edits = apply_peak_edits(
+            self.app.signal.filtered, det.all_candidates, det.all_prominences, thresh,
+            self.app.signal.fs, det.manual_excluded, det.manual_added,
+            removed_samples=removed, previous_peaks=prev_ok, tol=tol)
+        det.rpeaks_manual_excl = edits.manual_excl
+        det.rpeaks_manual_added = edits.manual_added
+        if det.manual_added:
+            # Remove from exclusion set if mistakenly present (can't be both)
+            det.manual_excluded -= det.manual_added
+        accepted = edits.accepted
+        det.rpeaks_ok  = accepted
+        det.rpeaks_rej = edits.rejected
+        thresh_amp = det.thresh_amp = edits.thresh_amp
         n = len(accepted)
 
         # A changed peak set makes the Autonomic result stale. The edit
@@ -167,42 +140,19 @@ class DetectionController:
         return n
 
     def update_signal_quality(self, accepted: np.ndarray) -> None:
-        """Compute a 0–100 quality score and update the KPI label.
-
-        Quality is based on:
-        1. Beat morphology (primary): mean beat-to-template correlation from
-           the last analysis run.  High correlation = clean, consistent QRS.
-           Falls back to RR regularity if no template analysis has been run yet.
-        2. Detection completeness (secondary): ratio of detected to expected
-           beats, clipped to [0.5, 1.5] so it modulates but never dominates.
-
-        The previous formula (1 - rr_cv) was unreliable because a healthy mouse
-        at high HR during stress has a low rr_cv not from noise but from genuine
-        sympathetic activation.
-        """
-        n = len(accepted)
-        if n <= 5 or self.app.signal.time is None:
+        """Store the 0–100 quality score of *accepted* (the KPI gauge reads
+        it): ecg.core.peak_editing.signal_quality_score, on the beat-to-template
+        correlation of the last analysis when there is one. Unchanged with 5
+        peaks or fewer, or no signal loaded."""
+        if self.app.signal.time is None:
             return
-        dur         = self.app.signal.time[-1]
-        expected_n  = dur / 60 * MouseECG.HR_REST_BPM
-        ratio       = float(np.clip(n / max(expected_n, 1), 0.5, 1.5))
-
-        # Primary quality signal: mean beat-to-template correlation
-        # beat_corr is computed in analyse_core and stored in _results.
         beat_corr = None
         if self.app.analysis.results is not None:
             beat_corr = self.app.analysis.results.get("beat_corr")
-
-        if beat_corr is not None and len(beat_corr) > 0:
-            morpho = float(np.nanmean(beat_corr))            # 0–1 (Pearson r)
-            morpho = float(np.clip(morpho, 0.0, 1.0))
-            quality = int(np.clip(100 * morpho * ratio, 0, 100))
-        else:
-            # Fallback before full analysis: RR regularity heuristic
-            rr_tmp  = np.diff(accepted) / self.app.signal.fs * 1000
-            rr_cv   = rr_tmp.std() / (rr_tmp.mean() + 1e-6)
-            quality = int(np.clip(100 * (1 - rr_cv) * ratio, 0, 100))
-
+        quality = signal_quality_score(accepted, self.app.signal.fs,
+                                       float(self.app.signal.time[-1]), beat_corr)
+        if quality is None:
+            return
         self.app.detection.sig_quality = quality
 
     def on_det_method_change(self, choice: str) -> None:

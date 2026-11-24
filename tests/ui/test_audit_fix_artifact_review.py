@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from ecg.ui import detection_controller as dc_module
+from ecg.core import peak_editing as dc_module  # where run_detection applies the threshold
 from ecg.ui.analysis_controller import AnalysisController
 from ecg.ui.detection_controller import DetectionController
 from ecg.ui.state import AnalysisState, DetectionState, SessionState, SignalState, UIState
