@@ -62,7 +62,8 @@ class UIState:
     time_course_mode: str = "Epochs"
     # Morphology & Intervals: distribution plots open; a UI rebuild keeps it.
     morph_dist_open: bool = False
-    # Signal quality panel: the ML DETECTOR section open (collapsed by default).
+    # The former Tk ML DETECTOR section open (collapsed by default); kept so
+    # sessions that hold it still load. The Qt interface has a dialog instead.
     ml_section_open: bool = False
     # When each module's result last landed (ISO strings; the out-of-date banner).
     module_computed_at: dict = field(default_factory=dict)

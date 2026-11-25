@@ -76,15 +76,15 @@ MIN_EXAMPLES_RECOMMENDED = 5
 NO_MODEL_MESSAGE = (
     "ML Detector: no model is trained yet. Detect the peaks with another "
     "method and correct them, add the recording to the training examples "
-    "(Signal quality panel, ML DETECTOR), repeat for at least 5 recordings, "
-    "then click Train model…")
+    "(ML detector… in the header), repeat for at least 5 recordings, "
+    "then click Train model")
 
 
 # Status-bar text of Detect Peaks with the ML Detector and no trained model
 # (ecg.core.pipeline.detect_candidates). The status bar is too narrow on a
-# laptop screen for the whole how-to: it only points at the ML DETECTOR
-# section, whose status line says what to do (ecg.ui.ml_examples.status_text).
-NO_MODEL_STATUS = "ML Detector: no model trained yet — see ML DETECTOR (Signal quality)"
+# laptop screen for the whole how-to: it only points at the ML detector…
+# dialog of the header, which says what to do (ecg.qt.dialogs.ml_training).
+NO_MODEL_STATUS = "ML Detector: no model trained yet — see ML detector… (header)"
 
 
 class NoModelError(RuntimeError):

@@ -2,10 +2,12 @@
 """
 ecg.app.ml_examples
 ------------------
-Plain-language wording of the ML detector's state, kept free of Tk so it can
-be tested on its own: the status line of the quality panel's ML DETECTOR
-section (short form for its header, full form under it), the one training
-example button, and the tooltips that explain the terms.
+Plain-language wording of the ML detector's state, kept free of any toolkit
+so it can be tested on its own: the status line of the ML detector… dialog
+(ecg.qt.dialogs.ml_training), its how-to, the training-example button and
+the tooltips that explain the terms. The short forms (status_text's first
+item, panel_text, TIP_HEADER) were written for the former Tk interface's
+collapsible ML DETECTOR section and are kept for a host that shows one.
 
 A *training example* is a recording whose corrected R-peaks were cached as
 ML training data (ecg.core.ml_detector, one .npz per recording); the
@@ -24,7 +26,7 @@ TONE_OK = "ok"
 TONE_MUTED = "muted"
 TONE_WARN = "warn"
 
-# One sentence per term (hover tooltips of the ML DETECTOR section).
+# One sentence per term (hover tooltips).
 TIP_HEADER = ("Click to show or hide the ML detector: it learns R-peaks from "
               "recordings whose peaks you corrected (the training examples).")
 TIP_STATUS = ("Training examples are recordings whose corrected peaks the model "
@@ -78,7 +80,8 @@ def changes_since_training(examples: "list[dict]", meta: "Optional[dict]") -> "t
 
 def status_text(examples: "list[dict]", meta: "Optional[dict]",
                 ml_selected: bool = False) -> "tuple[str, str, str]":
-    """(short, full, tone) for the ML DETECTOR section.
+    """(short, full, tone) of the ML detector's state; the full form is the
+    status line of the ML detector… dialog.
 
     *examples*: list_training_files(); *meta*: the trained model's metadata,
     None without a model; *ml_selected*: Method = ML Detector (without a
@@ -87,9 +90,9 @@ def status_text(examples: "list[dict]", meta: "Optional[dict]",
     ex = _plural(n, "training example")
     if meta is None:
         if ml_selected:
-            # Three lines in the panel: the header gives the number of examples.
+            # The short form gives the number of examples.
             full = ("ML Detector needs a trained model: detect and correct the "
-                    "peaks with another Method, add the recording here; with "
+                    "peaks with another Method, add the recording in ML detector…; with "
                     f"{MIN_EXAMPLES_RECOMMENDED} or more examples, click Train.")
             return f"No model yet · {_plural(n, 'example')}", full, TONE_WARN
         if n < MIN_EXAMPLES_RECOMMENDED:
@@ -123,8 +126,8 @@ def status_text(examples: "list[dict]", meta: "Optional[dict]",
 
 def panel_text(examples: "list[dict]", meta: "Optional[dict]",
                ml_selected: bool = False) -> str:
-    """The line under the ML DETECTOR header: what to do next, or how good the
-    model is, in one line where it can be. The header already gives the
+    """One line: what to do next, or how good the model is (the line under
+    the former Tk ML DETECTOR header). The header already gives the
     model's state and the number of examples (status_text's short form), and
     every row here is taken from the quality plots on a 768-px screen; the
     full status_text line is its hover tooltip and the training dialog's.
@@ -206,13 +209,12 @@ def train_result_text(result: dict) -> str:
     return text
 
 
-# ── The ML detector window (the Tk MLTrainingDialog's texts and file list) ──
+# ── The ML detector… dialog (ecg.qt.dialogs.ml_training): texts and file list ──
 
 HOW_TO = (
     "1.  Detect the peaks with another method (SG + Derivative, Wavelet…) "
     "and correct them (Edit Peaks, Review artifacts).",
-    "2.  Click “Add recording to training examples” (Signal quality panel, "
-    "ML DETECTOR).",
+    "2.  Click “Add open recording to training examples” below.",
     f"3.  Repeat for at least {MIN_EXAMPLES_RECOMMENDED} recordings, from "
     "different animals / sessions.",
     "4.  Click Train model below.",
