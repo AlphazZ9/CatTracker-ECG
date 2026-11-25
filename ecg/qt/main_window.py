@@ -585,18 +585,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._auto_epochs = False
             self.figures.analysis_ctrl.compute_epochs()
 
-    def redraw_results(self) -> None:
-        """Draw the current results again (after a theme change)."""
-        r = self.recording.analysis.results
-        if r is None:
-            return
-        pc = self.figures.plot_ctrl
-        tasks = [("RR / HR tachogram", lambda: pc.plot_rr(r)),
-                 ("HRV tables", lambda: pc.plot_hrv_tables(r)),
-                 ("Poincaré", lambda: pc.plot_nonlinear(r))]
-        if r.get("hrv_freq") is not None and not r["hrv_freq"].empty:
-            tasks.append(("PSD", lambda: pc.plot_psd(r)))
-        pc.run_plot_chain(tasks)
+    def redraw_figures(self) -> None:
+        """Every figure again in the current theme (after a theme change):
+        those on screen now, the others when their tab is shown."""
+        from ecg.qt.figure_host import FigureSlot
+        from ecg.qt.widgets.mpl_canvas import MplCanvas
+        slots = list(self.figures._slots.values())
+        for slot in slots:
+            slot.retheme()
+        for w in QtWidgets.QApplication.allWidgets():       # the dialogs' figures
+            if isinstance(w, MplCanvas) and not isinstance(w, FigureSlot) \
+                    and w._draw_fn is not None:
+                w.redraw()
 
     # ── jobs ────────────────────────────────────────────────
     def run_job(self, what: str, fn: Callable[..., Any], *args: Any,
@@ -733,7 +733,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_theme.setText("Light mode" if p.is_dark else "Dark mode")
         sync_figure_theme(p.is_dark)
         self.detection.apply_palette(p)
-        self.redraw_results()
+        self.redraw_figures()
         self._tab_state_shown.clear()          # the dots in the new colours
         theme.save_prefs()
 

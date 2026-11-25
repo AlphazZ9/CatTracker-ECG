@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional
 
+import matplotlib
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6 import QtGui, QtWidgets
@@ -32,12 +33,16 @@ class MplCanvas(QtWidgets.QWidget):
         # is the canvas's device pixel ratio).
         screen = QtGui.QGuiApplication.primaryScreen()
         dpi = screen.logicalDotsPerInch() if screen is not None else 96.0
-        self.figure = Figure(figsize=(width_in, height_in), dpi=dpi, layout="constrained")
-        self.canvas = FigureCanvasQTAgg(self.figure)
+        self._figure = Figure(figsize=(width_in, height_in), dpi=dpi, layout="constrained")
+        self.canvas = FigureCanvasQTAgg(self._figure)
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.canvas)
         self._draw_fn: "Optional[Callable[[Figure], None]]" = None
+
+    @property
+    def figure(self) -> Figure:
+        return self._figure
 
     def update_figure(self, draw_fn: "Callable[[Figure], None]") -> None:
         """Replace the figure's content by what *draw_fn(fig)* draws."""
@@ -45,16 +50,20 @@ class MplCanvas(QtWidgets.QWidget):
         self.redraw()
 
     def redraw(self) -> None:
-        """Draw the last draw_fn again (e.g. after a theme change)."""
-        self.figure.clear()
+        """Draw the last draw_fn again (e.g. after a theme change). The
+        figure takes the theme's background first: a Figure keeps the colour
+        it was created with, and clear() does not reset it (the dark theme
+        drew light text on a white figure)."""
+        self._figure.clear()
+        self._figure.set_facecolor(matplotlib.rcParams["figure.facecolor"])
         if self._draw_fn is not None:
             try:
-                self._draw_fn(self.figure)
+                self._draw_fn(self._figure)
             except Exception:                      # a figure never breaks the window
                 log.exception("figure not drawn")
         self.canvas.draw_idle()
 
     def clear(self) -> None:
         self._draw_fn = None
-        self.figure.clear()
+        self._figure.clear()
         self.canvas.draw_idle()

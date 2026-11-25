@@ -31,22 +31,66 @@ log = logging.getLogger("ecg")
 
 
 class FigureSlot(MplCanvas):
-    """A CanvasSlot (ecg.app.plots) as PlotController uses it."""
+    """A CanvasSlot (ecg.app.plots) as PlotController uses it.
+
+    Drawn when seen: a figure whose tab is hidden keeps its draw function
+    and draws it when the tab is shown, or as soon as the figure is read
+    (an export, a test). Analyze and a theme change therefore only draw
+    the figures on screen, instead of every figure of every tab."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._pending: "Optional[Callable]" = None
 
     def update(self, draw_fn: Callable) -> None:          # noqa: A003 (CanvasSlot API)
-        self.update_figure(draw_fn)
+        self._draw_fn = draw_fn
+        if self.isVisible():
+            self._pending = None
+            self.redraw()
+        else:
+            self._pending = draw_fn
+
+    @property
+    def figure(self):
+        self.flush()
+        return self._figure
 
     @property
     def fig(self):                                        # CanvasSlot.fig (exports)
         return self.figure
 
+    def flush(self) -> None:
+        """Draw now what is waiting to be drawn."""
+        if self._pending is not None:
+            self._pending = None
+            self.redraw()
+
+    def retheme(self) -> None:
+        """The figure again in the current theme: now if it is on screen,
+        else when it is next shown."""
+        if self._draw_fn is None:
+            return
+        if self.isVisible():
+            self._pending = None
+            self.redraw()
+        else:
+            self._pending = self._draw_fn
+
+    def clear(self) -> None:
+        self._pending = None
+        super().clear()
+
+    def showEvent(self, ev: QtGui.QShowEvent) -> None:
+        super().showEvent(ev)
+        if self._pending is not None:
+            # After the tab itself has painted: it appears at once, its
+            # figures a moment later.
+            QtCore.QTimer.singleShot(0, self.flush)
+
     def _show_placeholder(self, force: bool = False) -> None:
         self.clear()
 
     def enable_wheel_yzoom(self) -> None:                 # Qt: the toolbar-free canvas
-        pass
-
-    def flush(self) -> None:
         pass
 
 
