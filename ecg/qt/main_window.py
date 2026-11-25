@@ -122,6 +122,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session = QtSession(self)
         self.tabs.currentChanged.connect(
             lambda i: self.report.refresh() if self.tabs.widget(i) is self.report else None)
+        self.tabs.currentChanged.connect(       # the group table may have changed
+            lambda i: self.compare.group_refresh() if self.tabs.widget(i) is self.compare
+            else None)
         # What the Tk controllers call to show a tab / a Time course mode.
         self.figures.tabs = _TabSwitcher(self.tabs)
         self.figures._show_time_mode = lambda mode: self.time_course.setCurrentIndex(

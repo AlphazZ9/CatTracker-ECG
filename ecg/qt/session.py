@@ -53,10 +53,13 @@ class QtSession:
         # on, as Tk's default, so a session saved here holds the same keys.
         host.sw_show_raw = Value(lambda: True)
         for name in (
-                     "_compare_setup_snapshot", "lbl_session_info", "lbl_template_info",
+                     "lbl_session_info", "lbl_template_info",
                      "lbl_npeaks", "ent_analysis_t0", "ent_analysis_t1", "cb_qtc_formula",
-                     "_show_time_mode", "_restore_compare_setup", "ent_ensemble"):
+                     "_show_time_mode", "ent_ensemble"):
             setattr(host, name, None)
+        # Compare segments' setup (rows, block, reference, view, stim and the
+        # windows compared), saved and restored as Tk's.
+        host._compare_setup_snapshot = window.compare.setup_snapshot
         host.tabs = Value(lambda: TAB_ORDER[window.tabs.currentIndex()])
         self.ctrl = SessionController(host)
         self.saved_at: Optional[str] = None
@@ -289,6 +292,12 @@ class QtSession:
         if a.results is not None:
             win.results_restored()
             host.analysis_ctrl.refresh_result_labels(freq_done_label="Loaded from session ✓")
+        # Compare segments: the setup saved, its comparison re-run on the
+        # restored peaks (SessionController's restore_cmp).
+        try:
+            win.compare.restore_setup(bundle.get("compare_segments"))
+        except Exception as exc:
+            log.warning("Compare segments setup not restored: %s", exc, exc_info=True)
         win.session_dirty = False
         self.saved_at = saved_at
         win.set_status(status, warn=bool(legacy))
