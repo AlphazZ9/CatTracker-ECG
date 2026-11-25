@@ -51,13 +51,17 @@ def _write(out: Path, export_ctrl, state: dict) -> None:
     import io
     out.mkdir(parents=True, exist_ok=True)
     b = io.BytesIO()
+    print("export: workbook", flush=True)
     export_ctrl.write_excel(b)
     (out / "workbook.xlsx").write_bytes(b.getvalue())
+    print("export: report", flush=True)
     (out / "report.txt").write_text(export_ctrl.report_text(), encoding="utf-8")
+    print("export: provenance", flush=True)
     view = export_ctrl.report_view()
     (out / "provenance.json").write_text(json.dumps(
         [list(map(str, r)) if isinstance(r, (list, tuple)) else str(r)
          for r in view.provenance], indent=1), encoding="utf-8")
+    print("export: session", flush=True)
     (out / "session.json").write_text(_session_json(state), encoding="utf-8")
 
 
@@ -70,6 +74,7 @@ def _rr_csv(export_ctrl, path: Path) -> None:
         def asksaveasfilename(**_k):
             return str(path)
     ec.filedialog = _Dialog
+    print("export: rr.csv", flush=True)
     try:
         export_ctrl.export_rr_csv()
     finally:
@@ -194,6 +199,7 @@ def run_tk(recording: str, out: Path, restore: "str | None" = None) -> None:
           (lambda: idle() and getattr(app.analysis, "arrhythmia_run", None) is not None, export))
     app.after(200, run_next)
     app.mainloop()
+    print("tk: main loop ended", flush=True)
     if failed:
         raise failed[0]
 
@@ -262,6 +268,10 @@ def run_qt(recording: str, out: Path, restore: "str | None" = None) -> None:
 
 
 def main(argv=None) -> int:
+    # A run that stalls prints every thread's stack (then the parent's time
+    # limit stops it): where it blocks, not only that it does.
+    import faulthandler
+    faulthandler.dump_traceback_later(TIMEOUT_S + 300, repeat=False, exit=False)
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--ui", choices=("tk", "qt"), required=True)
     ap.add_argument("--out", required=True)
