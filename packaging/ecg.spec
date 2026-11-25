@@ -32,7 +32,7 @@ HERE = Path(SPECPATH).resolve()          # packaging/
 ROOT = HERE.parent                       # repository root
 APP_NAME = "Tom ECG Analysis"
 BUNDLE_ID = "com.alphazz9.tom-ecg-analysis"
-VERSION = os.environ.get("APP_VERSION", "").lstrip("v") or "7.0.0"
+VERSION = os.environ.get("APP_VERSION", "").lstrip("v") or "7.1.0"
 IS_MAC = sys.platform == "darwin"
 
 

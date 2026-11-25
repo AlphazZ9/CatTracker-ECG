@@ -9,7 +9,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="ecg-analysis",
-    version="7.0.0",
+    version="7.1.0",
     description="Mouse cardiac ECG analysis toolkit",
     packages=find_packages(include=["ecg", "ecg.*"]),
     package_data={"ecg.app": ["assets/*", "assets/fonts/*"]},   # icon, images, Inter

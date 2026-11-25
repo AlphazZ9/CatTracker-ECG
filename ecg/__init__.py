@@ -37,4 +37,4 @@ ecg/
   qt/                — the interface (PySide6 + PyQtGraph):  python -m ecg
 """
 
-__version__ = "7.0.0"
+__version__ = "7.1.0"
