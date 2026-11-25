@@ -130,7 +130,7 @@ class MLTrainingDialog(QtWidgets.QDialog):
 
     def _busy(self) -> bool:
         from ecg.ui.ml_examples import BUSY_MESSAGE
-        if self.win.jobs.running:
+        if self.win._active:                  # main-thread list, cleared before on_done
             self.lbl_result.configure(text=f"{BUSY_MESSAGE}: an operation of the main window "
                                            "is still running.")
             return True
