@@ -57,13 +57,44 @@ PLACEHOLDERS = {
 }
 
 
+class _DrawQueue:
+    """Figures waiting to be drawn, one per turn of the event loop: a tab
+    of seven figures stays responsive (and paints) while they come in,
+    instead of freezing until the last one is drawn."""
+
+    def __init__(self) -> None:
+        self._queue: "list[FigureSlot]" = []
+
+    def add(self, slot: "FigureSlot") -> None:
+        if slot not in self._queue:
+            self._queue.append(slot)
+            if len(self._queue) == 1:
+                QtCore.QTimer.singleShot(0, self._next)
+
+    def _next(self) -> None:
+        if not self._queue:
+            return
+        slot = self._queue.pop(0)
+        try:
+            if slot.isVisible():
+                slot.flush()
+        except RuntimeError:                    # the widget was deleted meanwhile
+            pass
+        if self._queue:
+            QtCore.QTimer.singleShot(0, self._next)
+
+
+_DRAWS = _DrawQueue()
+
+
 class FigureSlot(MplCanvas):
     """A CanvasSlot (ecg.app.plots) as PlotController uses it.
 
     Drawn when seen: a figure whose tab is hidden keeps its draw function
     and draws it when the tab is shown, or as soon as the figure is read
     (an export, a test). Analyze and a theme change therefore only draw
-    the figures on screen, instead of every figure of every tab."""
+    the figures on screen, instead of every figure of every tab, and those
+    one per turn of the event loop (_DrawQueue)."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -72,11 +103,9 @@ class FigureSlot(MplCanvas):
     def update(self, draw_fn: Callable) -> None:          # noqa: A003 (CanvasSlot API)
         self._draw_fn = draw_fn
         self._sync_placeholder()
+        self._pending = draw_fn
         if self.isVisible():
-            self._pending = None
-            self.redraw()
-        else:
-            self._pending = draw_fn
+            _DRAWS.add(self)
 
     @property
     def figure(self):
@@ -101,11 +130,9 @@ class FigureSlot(MplCanvas):
             self._figure.set_facecolor(matplotlib.rcParams["figure.facecolor"])
             self.canvas.draw_idle()
             return
+        self._pending = self._draw_fn
         if self.isVisible():
-            self._pending = None
-            self.redraw()
-        else:
-            self._pending = self._draw_fn
+            _DRAWS.add(self)
 
     def clear(self) -> None:
         self._pending = None
@@ -115,8 +142,8 @@ class FigureSlot(MplCanvas):
         super().showEvent(ev)
         if self._pending is not None:
             # After the tab itself has painted: it appears at once, its
-            # figures a moment later.
-            QtCore.QTimer.singleShot(0, self.flush)
+            # figures one after the other.
+            _DRAWS.add(self)
 
     def _show_placeholder(self, force: bool = False) -> None:
         self.clear()
