@@ -247,6 +247,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.recording = Recording()
         self.recording.signal.filepath = str(path)
         self.session_dirty = False
+        self.figures.freshness.reset()                 # SignalController.load_path
+        self.figures.ui.computed_at = None
+        self.figures.ui.peaks_edited_at = None
         self.figures._generation = self.generation
         self.btn_analyze.setEnabled(False)
         self.rhythm.clear()
@@ -333,6 +336,14 @@ class MainWindow(QtWidgets.QMainWindow):
         a.artifact_report = bundle["artifact_report"]
         a.analysed_window = bundle.get("analysis_window")
         self.session_dirty = True
+        # AnalysisController.on_analysis_done: the basis of the core results,
+        # from the bundle (the correction can change the peaks).
+        import datetime as dt
+        from ecg.ui.freshness import recorded_rr_bounds
+        fresh = self.figures.freshness
+        fresh.stamp("core", fresh.capture(window=a.analysed_window,
+                                          rr_bounds=recorded_rr_bounds(a.results)))
+        self.figures.ui.computed_at = dt.datetime.now().isoformat(timespec="seconds")
         self._auto_epochs = bool(bundle.get("auto_epochs", False))
         self.detection.refresh()
         hr = a.results.get("hr") or {}
@@ -348,6 +359,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ctl, s = self.figures.analysis_ctrl, self.recording.signal
         rp = self.figures._windowed_peaks()
         lo, hi = ctl.results_rr_bounds()
+        self._freq_basis = self.figures.freshness.capture(rr_bounds=(lo, hi))
         self.figures.lbl_freq_status.configure(text="Computing…")
         self.run_job("Frequency HRV", analyse_hrv_freq, rp, s.fs, rr_min_ms=lo, rr_max_ms=hi,
                      breaks=ctl.hrv_breaks(), bands=ctl.get_freq_bands(),
@@ -358,6 +370,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if r is None:
             return
         r["hrv_freq"] = df
+        self.figures.freshness.stamp("frequency", self._freq_basis)
         text, color = self.figures.analysis_ctrl._freq_status(df, just_computed=True)
         self.figures.lbl_freq_status.configure(text=text.strip(), text_color=color)
         pc = self.figures.plot_ctrl
@@ -370,6 +383,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ctl, s = self.figures.analysis_ctrl, self.recording.signal
         rp = self.figures._windowed_peaks()
         lo, hi = ctl.results_rr_bounds()
+        self._nonlin_basis = self.figures.freshness.capture(rr_bounds=(lo, hi))
         self.figures.lbl_nonlin_status.configure(text="Computing SampEn / DFA…")
         self.run_job("Non-linear HRV", analyse_hrv_nonlinear, rp, s.fs,
                      max_beats=ctl.entropy_cap(), rr_min_ms=lo, rr_max_ms=hi,
@@ -381,6 +395,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if r is None:
             return
         r["hrv_nonlin"] = df
+        self.figures.freshness.stamp("nonlinear", self._nonlin_basis)
         text, color = self.figures.analysis_ctrl._nonlin_status(df, just_computed=True)
         self.figures.lbl_nonlin_status.configure(text=text.strip(), text_color=color)
         pc = self.figures.plot_ctrl

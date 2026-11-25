@@ -96,10 +96,11 @@ class Field(Value):
     instead of the text; *as_int*: a check box reads 1 / 0 (a Tk IntVar)."""
 
     def __init__(self, widget: QtWidgets.QWidget, data: bool = False,
-                 as_int: bool = False) -> None:
+                 as_int: bool = False, text: bool = False) -> None:
         self.widget = widget
         self._data = data
         self._as_int = as_int
+        self._text = text           # a spin box read as its Tk entry's text ("20")
         super().__init__(self._read)
 
     def _read(self) -> Any:
@@ -107,7 +108,7 @@ class Field(Value):
         if isinstance(w, QtWidgets.QLineEdit):
             return w.text()
         if isinstance(w, (QtWidgets.QSpinBox, QtWidgets.QDoubleSpinBox)):
-            return w.value()
+            return f"{w.value():g}" if self._text else w.value()
         if isinstance(w, QtWidgets.QAbstractButton):
             on = w.isChecked()
             return int(on) if self._as_int else on
@@ -339,7 +340,9 @@ class FigureHost:
         self.nav_ctrl = NavigationController(self)
         from ecg.ui.export_controller import ExportController
         self.export_ctrl = ExportController(self)
-        self.freshness = None        # no freshness service yet: results are current
+        # What each module was computed on (up to date / out of date), as Tk.
+        from ecg.ui.freshness import FreshnessService
+        self.freshness = FreshnessService(self)
                                      # (Qt drops them on every peak change)
         self.ent_subject = Value(lambda: self._window.subject())
         self._arr_card_widgets: list = []

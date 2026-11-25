@@ -145,3 +145,65 @@ la référence. Dans ce cas :
 
 Ne pas relever `neurokit2` dans `packaging/constraints.txt` sans examiner ces
 changements : TINN et PSS figurent dans les exports.
+
+## Phase 4 — interface Qt contre interface Tk
+
+Le jeu de référence vérifie les calculs. La phase 4 vérifie en plus que
+**l'interface Qt exporte exactement ce qu'exporte l'interface Tk**, fichier
+par fichier, sur le même enregistrement.
+
+### Méthode
+- `tools/interface_outputs.py` exécute **le même scénario** dans une interface. Chaque interface tourne dans son propre processus et son propre dossier personnel (aucun réglage, session ou modèle de l'utilisateur n'est lu). Le scénario passe par les chemins de code de chaque interface :
+  - ouvrir l'enregistrement ;
+  - Method = Auto, Detect Peaks ;
+  - une zone bruitée et une annotation ;
+  - Analyze (cœur, puis HRV fréquentielle et non linéaire) ;
+  - Measure intervals ;
+  - Epochs, Sliding, Autonomic ;
+  - Classify events.
+- Il écrit ensuite les sorties :
+  - le classeur Excel (`write_excel`) ;
+  - le CSV des RR (`export_rr_csv`) ;
+  - le texte du rapport et les lignes de provenance de l'onglet Report ;
+  - l'état que Save Session enregistre (`collect_session_state`).
+- `tools/compare_interfaces.py` compare ces sorties :
+  - **classeur** : cellule par cellule, mêmes feuilles et mêmes valeurs, nombres égaux au dernier bit. Seule exception : une cellule d'horodatage d'export doit être un horodatage des deux côtés ;
+  - **CSV des RR** : octet par octet ;
+  - **rapport et provenance** : ligne par ligne ;
+  - **session** : clé par clé, hors heures d'enregistrement et de calcul.
+- **Sessions croisées** : la session enregistrée par chaque interface est restaurée dans les deux, puis les sorties sont comparées. L'état restauré doit aussi être égal à l'état enregistré.
+
+Pour l'interface Tk, les fils de calcul sont exécutés au moment de leur
+lancement, sur le fil principal. Certaines installations de Python (Tcl 9)
+ne transmettent pas leurs appels `after()` à la boucle Tk. Le code des
+calculs reste le même ; seul le moment où il tourne change.
+
+### Résultat sur l'enregistrement synthétique (`tests/fixtures/synthetic_mouse_ecg.mat`)
+
+| Sortie | Comparé | Résultat |
+|---|---|---|
+| Classeur Excel | 284 031 cellules | identique (1 cellule d'horodatage) |
+| CSV des RR | 1 301 lignes | identique |
+| Texte du rapport | 158 lignes | identique |
+| Provenance (onglet Report) | 38 lignes | identique |
+| État de session | 34 clés | identique (hors heures) |
+| Session Tk restaurée dans Tk et dans Qt | 234 510 cellules + rapport + CSV + état | identique ; état restauré = état enregistré |
+| Session Qt restaurée dans Tk et dans Qt | idem | identique ; état restauré = état enregistré |
+
+Test automatique : `tests/validation/test_tk_vs_qt.py`. Il est lent (environ 2 minutes) et demande un affichage pour Tk (`xvfb-run` sous Linux).
+
+### Écarts trouvés par cette comparaison, puis corrigés dans l'interface Qt
+1. **Suivi de fraîcheur absent.** Il manquait les états « up to date / out of date » du rapport et le `freshness_basis` / `computed_at` des sessions. L'interface Qt utilise maintenant le `FreshnessService` de Tk, avec les mêmes horodatages.
+2. **`sg_window_ms` des sessions enregistré comme nombre.** Tk ne le relit que sous forme de texte, donc une session Qt aurait perdu cette fenêtre dans Tk. Les champs `sex`, `project_name` et `show_raw` manquaient aussi.
+3. **Métriques LW absentes de Sliding** (CCD, SD1 (LW), SD2 (LW)).
+4. **Mode du Time course non suivi** (`time_course_mode` des sessions).
+
+### Sur tes propres enregistrements (à faire avant de retirer Tk)
+```bash
+python tools/compare_interfaces.py chemin/vers/fichier1.mat chemin/vers/fichier2.mat
+```
+Le code de sortie vaut 0 si tout est identique ; sinon les différences sont listées. Sous Linux sans écran, le lancement passe automatiquement par `xvfb-run`.
+
+### Pas encore couvert par la comparaison
+- Compare segments, Group et Event-locked : ils sont vérifiés contre les fonctions du cœur appelées avec les paramètres de Tk (`tests/qt`), mais pas encore dans ce scénario de bout en bout.
+- Les exports PDF et ZIP de figures contiennent des dates et du rendu : ils ne sont pas comparés octet par octet.

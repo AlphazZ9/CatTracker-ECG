@@ -56,6 +56,10 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.addTab(self._autonomic_page(host), "Autonomic")
         self.addTab(self._event_locked_page(host), "Event-locked")
         self._buttons = (self.btn_epochs, self.btn_sliding, self.btn_auto)
+        # The mode shown (ui.time_course_mode, saved with sessions); the
+        # Event-locked page is part of Tk's Autonomic mode.
+        self.currentChanged.connect(lambda i: setattr(
+            host.ui, "time_course_mode", ("Epochs", "Sliding", "Autonomic", "Autonomic")[i]))
         self.btn_epochs.clicked.connect(ctl.compute_epochs)
         self.btn_sliding.clicked.connect(ctl.compute_rolling_hrv)
         self.btn_auto.clicked.connect(lambda: ctl.compute_autonomic())
@@ -133,6 +137,18 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host._roll_metrics = self._metrics_row(mrow, SLIDING_DEFAULTS)
         mrow.addStretch(1)
         lay.addLayout(mrow)
+        # Article-style Poincaré (LW) per Sliding window, as the Tk Autonomic
+        # mode's row: in _roll_metrics, on the Sliding window and step.
+        lw = QtWidgets.QHBoxLayout()
+        lw.addWidget(QtWidgets.QLabel("Article-style Poincaré (LW), per window:"))
+        for metric, label in (("CCD", "CCD"), ("SD1_LW", "SD1 (LW)"), ("SD2_LW", "SD2 (LW)")):
+            cb = QtWidgets.QCheckBox(label)
+            cb.setToolTip("LW: Ledoit-Wolf shrinkage covariance (sklearn), not the article's "
+                          "estimator")
+            lw.addWidget(cb)
+            host._roll_metrics[metric] = Field(cb)
+        lw.addStretch(1)
+        lay.addLayout(lw)
         host.ent_roll_win = Field(self.sp_roll_win)
         host.ent_roll_step = Field(self.sp_roll_step)
         host.txt_rolling = self._results(lay, host, "rolling_hrv")

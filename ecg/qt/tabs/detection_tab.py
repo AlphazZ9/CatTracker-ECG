@@ -320,6 +320,7 @@ class DetectionTab(QtWidgets.QWidget):
         if not edit.changes_peaks:
             return                      # not near a peak: nothing changes, results kept
         self._drop_results()
+        self.mark_peaks_edited()
         push_undo(d.edit_undo, d.edit_redo, d.manual_excluded, d.manual_added)
         apply_click_edit(edit, d.manual_excluded, d.manual_added)
         self.apply_threshold()
@@ -335,6 +336,11 @@ class DetectionTab(QtWidgets.QWidget):
         self.win.set_status(f"{text}  |  Accepted: {n_ok}  — click Analyze to refresh HRV.",
                             warn=True)
 
+    def mark_peaks_edited(self) -> None:
+        """DetectionController.mark_peaks_edited: the time of a hand change."""
+        import datetime as dt
+        self.win.figures.ui.peaks_edited_at = dt.datetime.now().isoformat(timespec="seconds")
+
     def undo(self) -> None:
         self._undo_redo(redo=False)
 
@@ -349,6 +355,7 @@ class DetectionTab(QtWidgets.QWidget):
             self.win.set_status("Nothing to redo." if redo else "Nothing to undo.")
             return
         d.manual_excluded, d.manual_added = sets
+        self.mark_peaks_edited()
         self._drop_results()
         self.apply_threshold()
         self._update_undo_buttons()

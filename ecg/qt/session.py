@@ -48,7 +48,15 @@ class QtSession:
         host = window.figures
         host.session = SessionState()
         # What collect_session_state reads with getattr(..., None): absent here.
-        for name in ("sw_show_raw", "ent_project_name", "ent_sex",
+        # The Recording fields Tk saves: no sex / project entries here yet
+        # (the file name's sex, no project) and the raw view on, as Tk's
+        # defaults, so a session saved here holds the same keys.
+        from ecg.io.subject_name import subject_from_filename
+        host.ent_sex = Value(lambda: (subject_from_filename(window.recording.signal.filepath)
+                                      [1] or "") if window.recording.signal.filepath else "")
+        host.ent_project_name = Value(lambda: "")
+        host.sw_show_raw = Value(lambda: True)
+        for name in (
                      "_compare_setup_snapshot", "lbl_session_info", "lbl_template_info",
                      "lbl_npeaks", "ent_analysis_t0", "ent_analysis_t1", "cb_qtc_formula",
                      "_show_time_mode", "_restore_compare_setup", "ent_ensemble"):
@@ -245,6 +253,7 @@ class QtSession:
         if n_reapplied:
             det.refresh()
         quality_note = self.ctrl.restore_beat_quality_times(bundle)
+        host.freshness.stamp_restored(bundle.get("freshness_basis"))
         ui = host.ui
         ui.computed_at = bundle.get("computed_at")
         ui.peaks_edited_at = bundle.get("peaks_edited_at")

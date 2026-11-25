@@ -101,4 +101,4 @@ class SettingsDialog(QtWidgets.QDialog):
         host.sw_artifact = Field(self.chk_artifact)
         host.sw_epoch = Field(self.chk_epochs)
         host.ent_sg_target_fs = Field(self.sp_sg_fs)
-        host.ent_sg_window_ms = Field(self.sp_sg_win)
+        host.ent_sg_window_ms = Field(self.sp_sg_win, text=True)

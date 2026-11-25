@@ -144,17 +144,18 @@ class MorphologyTab(QtWidgets.QScrollArea):
         wt = self.wave_template().copy()
         qtc = ctl.qtc_formula()
         lo, hi = ctl.results_rr_bounds()
+        basis = host.freshness.capture(rr_bounds=(lo, hi))
         host.lbl_ivl_status.configure(text="Delineating all beats…")
         self.btn_measure.setEnabled(False)
         self.win.run_job("Measure intervals", analyse_intervals, sig, rp, fs, rr,
                          wave_template=wt, permissive_bounds=self.chk_permissive.isChecked(),
                          qtc_formula=qtc, rr_min_ms=lo, rr_max_ms=hi,
                          ensemble_beats=ctl.ensemble_beats(), peaks_bound=True,
-                         on_done=lambda df: self._measured(df, wt, qtc),
+                         on_done=lambda df: self._measured(df, wt, qtc, basis),
                          on_end=lambda: self.btn_measure.setEnabled(
                              self.win.recording.analysis.results is not None))
 
-    def _measured(self, df, wt: WaveTemplate, qtc: str) -> None:
+    def _measured(self, df, wt: WaveTemplate, qtc: str, basis: "dict | None" = None) -> None:
         """AnalysisController.run_intervals's landing."""
         a = self.win.recording.analysis
         host = self.win.figures
@@ -163,6 +164,8 @@ class MorphologyTab(QtWidgets.QScrollArea):
         if host.analysis_ctrl.qtc_formula() != qtc:
             df = recompute_qtc_column(df, host.analysis_ctrl.qtc_formula())
         a.results["intervals"] = df
+        if basis is not None:
+            host.freshness.stamp("intervals", basis)
         host.analysis_ctrl.note_intervals_measured(df)
         note, color, n_ok, n_total = host.analysis_ctrl._measured_note(df, wt.provenance())
         host.lbl_ivl_status.configure(text=note, text_color=color)
