@@ -65,7 +65,9 @@ def test_sessions_restore_the_same_in_both(outputs, saved_by):
             cmd = ["xvfb-run", "-a"] + cmd
         if ui == "qt":
             env.setdefault("QT_QPA_PLATFORM", "offscreen")
-        p = subprocess.run(cmd, env=env, cwd=str(ROOT), capture_output=True, text=True)
+        env["PYTHONUNBUFFERED"] = "1"
+        p = subprocess.run(cmd, env=env, cwd=str(ROOT), capture_output=True, text=True,
+                           timeout=1200)
         assert p.returncode == 0, p.stdout[-2000:] + p.stderr[-2000:]
         dirs[ui] = out / f"restore_{saved_by}_{ui}"
     diffs, _stats = compare_dirs(dirs["tk"], dirs["qt"])

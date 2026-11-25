@@ -134,29 +134,47 @@ def compare_dirs(tk: Path, qt: Path) -> "tuple[list[str], dict]":
     return diffs, stats
 
 
+RUN_TIMEOUT_S = 1200
+
+
 def run_both(recording: Path, out: Path) -> "tuple[Path, Path]":
     """Both interfaces' outputs for *recording* in out/tk and out/qt, each
-    process with its own HOME (no user setting, session or model is read)."""
+    process with its own HOME (no user setting, session or model is read).
+    Each one's output goes to out/<ui>.log; one that runs longer than
+    RUN_TIMEOUT_S is stopped and reported with the end of its log."""
     py = sys.executable
     script = str(ROOT / "tools" / "interface_outputs.py")
     procs = []
     for ui in ("tk", "qt"):
         home = out / f"home_{ui}"
         home.mkdir(parents=True, exist_ok=True)
-        env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))
+        env = dict(os.environ, HOME=str(home), USERPROFILE=str(home), PYTHONUNBUFFERED="1")
         if ui == "qt":
             env.setdefault("QT_QPA_PLATFORM", "offscreen")
         cmd = [py, script, "--ui", ui, "--out", str(out / ui), str(recording)]
         if ui == "tk" and sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
             cmd = ["xvfb-run", "-a"] + cmd
-        procs.append((ui, subprocess.Popen(cmd, env=env, cwd=str(ROOT),
-                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                           text=True)))
-    for ui, p in procs:
-        log, _ = p.communicate()
-        (out / f"{ui}.log").write_text(log, encoding="utf-8")
-        if p.returncode != 0:
-            raise RuntimeError(f"{ui} run failed (see {out / f'{ui}.log'}):\n{log[-2000:]}")
+        log = open(out / f"{ui}.log", "w", encoding="utf-8")
+        procs.append((ui, subprocess.Popen(cmd, env=env, cwd=str(ROOT), stdout=log,
+                                           stderr=subprocess.STDOUT), log))
+    errors = []
+    for ui, p, log in procs:
+        try:
+            p.wait(timeout=RUN_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+            errors.append(f"{ui}: stopped after {RUN_TIMEOUT_S} s")
+        log.close()
+        if p.returncode != 0 and not any(e.startswith(ui) for e in errors):
+            errors.append(f"{ui}: exit code {p.returncode}")
+    if errors:
+        tails = []
+        for ui, _p, _log in procs:
+            text = (out / f"{ui}.log").read_text(encoding="utf-8", errors="replace")
+            tails.append(f"--- {ui}.log (end) ---\n" + "\n".join(
+                ln for ln in text.splitlines() if "findfont" not in ln)[-3000:])
+        raise RuntimeError("; ".join(errors) + "\n" + "\n".join(tails))
     return out / "tk", out / "qt"
 
 

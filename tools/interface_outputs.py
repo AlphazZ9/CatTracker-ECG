@@ -114,6 +114,7 @@ def run_tk(recording: str, out: Path, restore: "str | None" = None) -> None:
         mod.threading = _ThreadingSync()
     app = ECGApp()
     steps = []
+    done_steps: list = []
     failed: list = []
 
     def idle() -> bool:
@@ -129,6 +130,8 @@ def run_tk(recording: str, out: Path, restore: "str | None" = None) -> None:
         cond, action = steps[0]
         if cond is None or cond():
             steps.pop(0)
+            print(f"tk step {len(done_steps) + 1}", flush=True)
+            done_steps.append(1)
             try:
                 action()
             except Exception as exc:          # stop, reported below
@@ -208,6 +211,7 @@ def run_qt(recording: str, out: Path, restore: "str | None" = None) -> None:
     w.show()
 
     def wait(cond, what):
+        print(f"qt waiting: {what}", flush=True)
         end = time.time() + TIMEOUT_S
         while not (cond() and not w._active):
             if time.time() > end:
