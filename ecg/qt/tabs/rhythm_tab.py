@@ -114,8 +114,23 @@ class RhythmTab(QtWidgets.QScrollArea):
                                    "again for the following one")
         self.btn_review.clicked.connect(lambda: window.detection.step_spike(+1))
         srow.addWidget(self.btn_review)
-        grid.addWidget(card("Heart rate and RR over time", host.slot("rr", page, 9.0, 4.4),
-                            420, spikes), 0, 0)
+        # The charts on screen (PyQtGraph); the Matplotlib figures of the same
+        # results are kept, hidden, for the exports (drawn when one reads them).
+        from ecg.qt.widgets.rhythm_charts import RhythmCharts
+        from ecg.qt.widgets.shell import Segmented
+        self.charts = RhythmCharts(on_time_clicked=self._show_beat, parent=self)
+        for name in ("rr", "poincare", "psd", "rr_hist"):
+            host.slot(name, page, 6.0, 4.0).hide()
+        self.seg_unit = Segmented(["HR", "RR"])
+        self.seg_unit.buttons[0].setChecked(True)
+        for b in self.seg_unit.buttons:
+            b.clicked.connect(lambda _c=False, u=b.text(): self.charts.set_unit(u))
+        srow.insertWidget(0, self.seg_unit)
+        self.lbl_flagged = QtWidgets.QLabel("")
+        self.lbl_flagged.setProperty("muted", True)
+        srow.insertWidget(0, self.lbl_flagged)
+        grid.addWidget(card("Heart rate over time", self.charts.tacho, 0, spikes), 0, 0,
+                       QtCore.Qt.AlignmentFlag.AlignTop)
 
         # Poincaré, with the non-linear recompute and the entropy cap.
         nl = QtWidgets.QWidget()
@@ -144,8 +159,23 @@ class RhythmTab(QtWidgets.QScrollArea):
         host.lbl_nonlin_status = StatusLabel("")
         host.lbl_nonlin_status.setWordWrap(True)
         pcl.addWidget(host.lbl_nonlin_status)
-        pcl.addWidget(host.slot("poincare", page, 5.0, 4.4), 1)
-        grid.addWidget(card("Poincaré and entropy", pc_box, 420, nl), 0, 1)
+        prow = QtWidgets.QHBoxLayout()
+        prow.addWidget(self.charts.poincare, 3)
+        stats = QtWidgets.QVBoxLayout()
+        self.lbl_sd = {}
+        for key, label in (("sd1", "SD1"), ("sd2", "SD2"), ("ratio", "SD1 / SD2")):
+            name = QtWidgets.QLabel(label)
+            name.setProperty("muted", True)
+            val = QtWidgets.QLabel("—")
+            val.setProperty("role", "value")
+            stats.addWidget(name)
+            stats.addWidget(val)
+            self.lbl_sd[key] = val
+        stats.addStretch(1)
+        prow.addLayout(stats, 1)
+        pcl.addLayout(prow, 3)
+        pcl.addWidget(self.charts.mse, 1)
+        grid.addWidget(card("Poincaré and entropy", pc_box, 0, nl), 0, 1)
 
         # Spectrum.
         psd_box = QtWidgets.QWidget()
@@ -154,15 +184,14 @@ class RhythmTab(QtWidgets.QScrollArea):
         host.lbl_freq_status = StatusLabel("")
         host.lbl_freq_status.setWordWrap(True)
         psd_lay.addWidget(host.lbl_freq_status)
-        psd_lay.addWidget(host.slot("psd", page, 6.0, 3.6), 1)
+        psd_lay.addWidget(self.charts.psd, 1)
         self.btn_freq = QtWidgets.QPushButton("Recompute")
         self.btn_freq.setToolTip("Frequency HRV again on the current peaks, analysis window and "
                                  "RR bounds")
         self.btn_freq.clicked.connect(window.recompute_freq)
-        grid.addWidget(card("Power spectrum", psd_box, 360, self.btn_freq), 1, 0)
+        grid.addWidget(card("Power spectrum", psd_box, 0, self.btn_freq), 1, 0)
 
-        grid.addWidget(card("RR distribution (valid intervals)",
-                            host.slot("rr_hist", page, 5.0, 2.6), 360), 1, 1)
+        grid.addWidget(card("RR distribution (valid intervals)", self.charts.hist, 0), 1, 1)
 
         # The metric table (ecg.core.metric_table.rhythm_rows), with its basis:
         # as tall as its rows, so the page is the only thing that scrolls.
@@ -224,6 +253,42 @@ class RhythmTab(QtWidgets.QScrollArea):
         lay.addWidget(self.text_card)
         lay.addStretch(1)
 
+    def refresh_charts(self) -> None:
+        """The charts from the current results (after each step of Analyze,
+        a recompute, a session restored, a theme change)."""
+        host = self.win.figures
+        r = self.win.recording.analysis.results
+        psd = None
+        if r is not None and r.get("rr_ms") is not None:
+            try:
+                psd = host.plot_ctrl.psd_for_display(r)
+            except Exception:                        # a chart never breaks the page
+                psd = None
+        spikes = host.ui.rr_spike_times if host.ui.show_spike_markers else None
+        self.charts.set_results(r, spikes, self.win.recording.analysis.annotations, psd)
+        self.win.detection.refresh_to_check()
+        n = 0 if host.ui.rr_spike_times is None else len(host.ui.rr_spike_times)
+        self.lbl_flagged.setText(f"{n} beats flagged" if r is not None and n else "")
+        nl = (r or {}).get("hrv_nonlin")
+        vals = {}
+        for key, col in (("sd1", "HRV_SD1"), ("sd2", "HRV_SD2"), ("ratio", "HRV_SD1SD2")):
+            try:
+                vals[key] = float(nl[col].values[0])
+            except Exception:
+                vals[key] = float("nan")
+        import math
+        for key, v in vals.items():
+            unit = "" if key == "ratio" else " ms"
+            self.lbl_sd[key].setText(f"{v:.2f}{unit}" if key == "ratio" and math.isfinite(v)
+                                     else f"{v:.1f}{unit}" if math.isfinite(v) else "—")
+
+    def _show_beat(self, t: float) -> None:
+        """A click on the heart-rate chart: that beat, centred in Signal."""
+        self.win.detection.center_on(t)
+
+    def apply_palette(self, p) -> None:
+        self.charts.apply_palette(p)
+
     def _text_toggled(self, on: bool) -> None:
         self.text_card.setVisible(on)
         self.btn_text.setText("Hide the text tables" if on else "Show the text tables")
@@ -235,6 +300,7 @@ class RhythmTab(QtWidgets.QScrollArea):
         r = self.win.recording.analysis.results
         if r is not None:
             host.plot_ctrl.plot_rr(r)
+        self.refresh_charts()
 
     def _show_all_toggled(self, on: bool) -> None:
         self.win.figures.ui.hrv_show_all = on
@@ -286,6 +352,10 @@ class RhythmTab(QtWidgets.QScrollArea):
         self._fit_table()
         for name in ("rr", "poincare", "psd", "rr_hist", "asymmetry"):
             self.win.figures.slot(name).clear()
+        self.charts.set_results(None)
+        for v in self.lbl_sd.values():
+            v.setText("—")
+        self.lbl_flagged.setText("")
         for attr in ("txt_rr", "txt_td", "txt_fd", "txt_nl"):
             getattr(self.win.figures, attr).setPlainText("")
         self.win.figures.lbl_freq_status.setText("")
