@@ -40,3 +40,6 @@ def _isolated_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "_schema_retry_at", 0.0)
     monkeypatch.setattr(ml, "TRAINING_DATA_DIR", d / "ml_training")
     monkeypatch.setattr(ml, "MODEL_PATH", d / "model.skops")
+    import ecg.qt.theme as qt_theme
+    monkeypatch.setattr(qt_theme, "PREFS_PATH", d / "ecg_qt_prefs.json")
+    monkeypatch.setattr(qt_theme, "LEGACY_THEME_PATH", d / "ecg_theme.json")

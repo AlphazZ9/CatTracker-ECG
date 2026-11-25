@@ -40,6 +40,17 @@ from ecg.ui.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_GROUP, TAB_EVENTS, 
                              TAB_TIME_COURSE, TIME_COURSE_MODES)
 
 FILE_FILTER = "Recordings (*.mat *.smr);;All files (*)"
+SHORTCUTS_TEXT = (
+    "Space          Detect Peaks\n"
+    "Ctrl+R         Analyze\n"
+    "Ctrl+O         Open a recording\n"
+    "Ctrl+S         Save session\n"
+    "Ctrl+E         Export Excel\n"
+    "Ctrl+Shift+E   Export RR intervals CSV\n"
+    "Ctrl+M         Compare segments\n"
+    "Ctrl+Z / Y     Undo / Redo peak edits\n"
+    "←  / →         Move the ECG view (Signal & Detection tab)\n"
+    "F1             This help\n")
 
 
 log = logging.getLogger("ecg")
@@ -133,6 +144,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_menu()
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self, activated=self.detection.undo)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Y"), self, activated=self.detection.redo)
+        # The Tk interface's shortcuts (Help > Keyboard shortcuts).
+        for key, fn in (("Space", self._shortcut_detect), ("Ctrl+R", self._shortcut_analyze),
+                        ("Ctrl+E", lambda: self.figures.export_ctrl.export_excel()),
+                        ("Ctrl+Shift+E", lambda: self.figures.export_ctrl.export_rr_csv()),
+                        ("Ctrl+M", lambda: self.tabs.setCurrentWidget(self.compare)),
+                        ("Left", lambda: self._shortcut_pan(-1)),
+                        ("Right", lambda: self._shortcut_pan(+1))):
+            QtGui.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
 
     # ── layout ──────────────────────────────────────────────
     def _build_menu(self) -> None:
@@ -158,7 +177,17 @@ class MainWindow(QtWidgets.QMainWindow):
             if text == "Open…":
                 self.menu_recent = m.addMenu("Open Recent")
                 self.menu_recent.aboutToShow.connect(self._fill_recent_menu)
+        m.insertAction(m.actions()[-1], m.addSeparator())
+        clear = QtGui.QAction("Clear session cache…", self)
+        clear.triggered.connect(self.clear_session_cache)
+        m.insertAction(m.actions()[-2], clear)
+        v = mb.addMenu("&View")
+        v.addAction("Light / dark mode").triggered.connect(self.toggle_theme)
+        v.addAction("Text size…").triggered.connect(self.choose_text_size)
         h = mb.addMenu("&Help")
+        act = h.addAction("Keyboard shortcuts")
+        act.setShortcut(QtGui.QKeySequence("F1"))
+        act.triggered.connect(self.show_shortcuts)
         h.addAction("Open log folder").triggered.connect(self.open_log_folder)
         h.addAction("About").triggered.connect(lambda: QtWidgets.QMessageBox.about(
             self, "ECG Analysis", f"ECG Analysis {ecg.__version__}\nQt interface (PySide6)."))
@@ -628,6 +657,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().setStyleSheet(f"color: {p.WARN_TEXT if warn else p.MUTED};")
         self.statusBar().showMessage(text)
 
+    def _shortcut_detect(self) -> None:
+        if self.detection.btn_detect.isEnabled() and not self._typing():
+            self.detection.detect()
+
+    def _shortcut_analyze(self) -> None:
+        if self.btn_analyze.isEnabled():
+            self.analyze()
+
+    def _shortcut_pan(self, direction: int) -> None:
+        """← / →: move the Signal & Detection view by 70 % of its width."""
+        if self.tabs.currentWidget() is not self.detection or self._typing():
+            return
+        t0, t1 = self.detection.plot.window()
+        self.detection.go_to(t0 + direction * 0.7 * (t1 - t0))
+
+    def _typing(self) -> bool:
+        """A text box has the focus: Space and the arrows are typed there."""
+        w = QtWidgets.QApplication.focusWidget()
+        return isinstance(w, (QtWidgets.QLineEdit, QtWidgets.QAbstractSpinBox,
+                              QtWidgets.QPlainTextEdit, QtWidgets.QTextEdit,
+                              QtWidgets.QComboBox, QtWidgets.QAbstractItemView))
+
     def toggle_theme(self) -> None:
         app = QtWidgets.QApplication.instance()
         p = theme.apply(app, theme.LIGHT.name if theme.current().is_dark else theme.DARK.name)
@@ -635,6 +686,39 @@ class MainWindow(QtWidgets.QMainWindow):
         sync_figure_theme(p.is_dark)
         self.detection.apply_palette(p)
         self.redraw_results()
+        theme.save_prefs()
+
+    def choose_text_size(self) -> None:
+        """View > Text size: the interface's text, kept for the next runs."""
+        lo, hi = theme.FONT_SCALE_RANGE
+        scale, ok = QtWidgets.QInputDialog.getDouble(
+            self, "Text size", "Text size (× the default):", theme.font_scale(), lo, hi, 2)
+        if ok:
+            self.set_text_size(scale)
+
+    def set_text_size(self, scale: float) -> None:
+        theme.apply(QtWidgets.QApplication.instance(), theme.current().name, scale)
+        theme.save_prefs()
+
+    def show_shortcuts(self) -> None:
+        QtWidgets.QMessageBox.information(self, "Keyboard shortcuts", SHORTCUTS_TEXT)
+
+    def clear_session_cache(self) -> None:
+        """⋯ > Clear session cache (SessionController.delete_session)."""
+        from ecg.io.session import delete_session
+        path = self.recording.signal.filepath
+        if not path:
+            return
+        if QtWidgets.QMessageBox.question(
+                self, "Clear session cache",
+                f"Delete the saved session of {Path(path).name}? The recording itself is not "
+                "touched.") != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        if delete_session(path):
+            self.session.saved_at = None
+            self.set_status("Session cache deleted.")
+        else:
+            self.set_status("No session cache to delete.")
 
     def closeEvent(self, ev: QtGui.QCloseEvent) -> None:
         """Unsaved changes are offered for saving; the jobs running are
