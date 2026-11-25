@@ -7,7 +7,7 @@ import scipy.io
 
 from ecg.core import annotation_suggest as sug
 from ecg.io import event_channels as evc
-from ecg.ui.annotation_suggest_dialog import collect
+from ecg.services.annotation_suggest_service import collect
 
 
 def _spike2_mat(path, fs=1000.0, dur=120.0):

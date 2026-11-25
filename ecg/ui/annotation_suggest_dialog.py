@@ -11,9 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import customtkinter as ctk  # type: ignore[import-untyped]
 
-from ecg.core import annotation_suggest as sug
-from ecg.io import event_channels as evc
-from ecg.io.export import ANNOTATION_COLORS
+from ecg.services.annotation_suggest_service import collect, to_annotations
 from ecg.ui.theme import (
     BG, CARD, BORDER, FONT_HINT, FONT_SMALL, FONT_SUBSECTION, MUTED, ORANGE, PANEL, TEXT,
     button_style, input_style,
@@ -23,25 +21,6 @@ if TYPE_CHECKING:
     from ecg.ui.app import ECGApp
 
 log = logging.getLogger("ecg")
-
-
-def collect(filepath: Optional[str], channel: Optional[str], crop: "Optional[dict]",
-            t_max: Optional[float], annotations: "list[dict]") -> "tuple[list[dict], list[str]]":
-    """(suggestions not annotated yet, the channels read) for the file. Runs
-    off the main thread: reads the file only."""
-    crop = crop or {}
-    t0 = float(crop.get("t_start") or 0.0)
-    t1 = crop.get("t_end")
-    # A crop to the file end is "no end crop" (0).
-    dur = crop.get("file_duration_s")
-    t1 = 0.0 if t1 is None or (dur is not None and float(t1) >= float(dur)) else float(t1)
-    events = evc.read_event_channels(filepath, t0, t1)
-    waves = evc.read_waveforms(filepath, skip=channel, t_start=t0, t_end=t1)
-    found = (sug.from_events({k: v for k, v in events.items() if v}, t_max=t_max)
-             + sug.from_waveforms(waves, t_max=t_max))
-    found.sort(key=lambda d: d["t_start"])
-    read = [k for k, v in events.items() if v] + list(waves)
-    return sug.drop_existing(found, annotations), read
 
 
 class AnnotationSuggestDialog(ctk.CTkToplevel):
@@ -142,15 +121,7 @@ class AnnotationSuggestDialog(ctk.CTkToplevel):
             var.set(on)
 
     def _add(self) -> None:
-        colors = [c for c, _n in ANNOTATION_COLORS]
-        by_source: "dict[str, str]" = {}
-        out = []
-        for var, ent, s in self._rows:
-            if not var.get():
-                continue
-            color = by_source.setdefault(s["source"], colors[len(by_source) % len(colors)])
-            out.append({"t_start": float(s["t_start"]), "t_end": float(s["t_end"]),
-                        "label": ent.get().strip() or s["label"], "color": color})
+        out = to_annotations([(s, ent.get()) for var, ent, s in self._rows if var.get()])
         if out:
             self._on_add(out)
         self.destroy()
