@@ -158,9 +158,9 @@ def main(argv=None) -> int:
     pump(0.5)
     rh.verticalScrollBar().setValue(0)
     save(w, "04_rhythm_hrv")
-    scroll_to(rh, "Power spectral density")
+    scroll_to(rh, "Power spectrum")
     save(w, "05_rhythm_metrics")
-    scroll_to(rh, "Heart rate")
+    scroll_to(rh, "Poincaré")
     save(w, "06_rhythm_nonlinear")
 
     # ── Time course ──

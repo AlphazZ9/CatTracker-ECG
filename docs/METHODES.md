@@ -586,11 +586,14 @@ est devenu Sliding, *Beat Template* et *Intervals* sont Morphology & Intervals,
 
 - Interface Qt (PySide6, version 7). L'interface CustomTkinter a été retirée
   après vérification que ses exports, ses sessions et ses calculs sont
-  identiques. La fenêtre comprend un en-tête (Open, Recording…, Settings…,
-  ML detector…, Save Session, Analyze, progression et Cancel), les menus
-  File / View / Help et les onglets en dessous. Les tracés ECG sont des
-  graphiques PyQtGraph ; toutes les autres figures sont les mêmes figures
-  matplotlib qu'avant. Les calculs tournent en arrière-plan et peuvent être
+  identiques. Version 7.1 : rouge et blanc, police Inter ; une colonne de pages à gauche avec
+  leurs pastilles d'état, un en-tête (puce de l'enregistrement, recherche
+  Ctrl+K / ⌘K, état d'enregistrement, Open, Save, Settings…, un seul bouton
+  principal : Open, Detect peaks, Analyze), les menus File / View / Tools / Help,
+  la progression et Cancel dans la barre d'état. Les tracés ECG, les graphiques de
+  Rhythm & HRV et le battement moyen sont des graphiques PyQtGraph dessinés
+  pour l'écran ; les exports gardent les figures matplotlib, dessinées
+  seulement quand un export les lit. Les calculs tournent en arrière-plan et peuvent être
   annulés. Un résultat qui arrive alors que le fichier ou les pics ont changé
   entre-temps est écarté.
 - Thèmes clair/sombre, propagés en direct dans toute l'interface, y compris

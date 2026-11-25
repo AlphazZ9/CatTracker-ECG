@@ -66,7 +66,7 @@ sécurité > Ouvrir quand même*. Pas à pas complet :
 ## Ce que fait l'application
 
 - **Signal et pics R** — fichiers MATLAB `.mat` (v5/v6 et v7.3/HDF5, exports Spike2), filtrage, cinq détecteurs dont un ML entraînable, correction des artefacts RR, score de qualité → [détails](docs/METHODES.md#signal--détection-des-pics-r)
-- **Onglets** — Signal & Detection, Rhythm & HRV, Time course, Compare segments, Morphology & Intervals, Events, Report → [détails](docs/METHODES.md#onglets)
+- **Pages** (colonne de gauche, recherche Ctrl+K / ⌘K) — Signal, Rhythm & HRV, Time course, Morphology, Events, Compare segments, Group, Report & exports → [détails](docs/METHODES.md#onglets)
 - **VRC** — domaines temporel, fréquentiel (bandes souris, ms²) et non linéaire (Poincaré, DFA, entropie multi-échelle), époques et fenêtre glissante → [détails](docs/METHODES.md#analyse-vrc)
 - **Indices autonomiques CSI / CPI** (Candia-Rivera et al. 2025), LF / HF par SPWVD, statistiques avant / après un événement, calibration ks / kp ; les gains de l'article sont des valeurs rat, non validées chez la souris → [détails](docs/METHODES.md#indices-autonomiques-csi--cpi--candia-rivera-et-al-2025)
 - **Intervalles** — repères P/Q/R/S/J/T, PR, QRS, QT, QTc (Mitchell par défaut), médiane glissante de battements → [détails](docs/METHODES.md#délinéation-des-intervalles)

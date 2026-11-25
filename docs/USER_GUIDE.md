@@ -38,39 +38,51 @@ python ecg_app.py       # backward-compatible entry point
 ecg-analysis            # after `pip install -e .`
 ```
 
-The app has six analysis tabs and a report, organised by question:
+The pages are listed in the column on the left, grouped as the work goes:
+**Analysis** (Signal, Rhythm & HRV, Time course, Morphology, Events),
+**Compare** (Segments, Group) and **Output** (Report & exports). Each one
+answers a question:
 
-| Tab | The question | Holds |
+| Page | The question | Holds |
 |-----|--------------|-------|
-| **Signal & Detection** | Is the signal good and are the peaks right? | Signal, peak editing, quality panel |
+| **Signal** | Is the signal good and are the peaks right? | ECG, peak editing, heart rate, quality |
 | **Rhythm & HRV** | What are the rhythm and its variability over the window? | RR / HR, time domain, frequency, non-linear, RR asymmetry |
 | **Time course** | How do they change over time? | Epochs, Sliding, Autonomic and Event-locked (four tabs) |
 | **Compare segments** | Is window B different from window A? | Two windows: metric table, RR tachograms or Poincaré, export, group table |
 | **Morphology & Intervals** | What does a beat look like and how long are its intervals? | Steps: mean beat, landmarks, intervals |
 | **Events** | What happened that should not have? | Event ribbon, event list, ECG zoom |
 | **Group** | Do the animals of the experiment differ, by group or sex? | Group table, animals, figure, statistics, Prism |
-| **Report** | What goes out? | Provenance, module states, Include, exports |
+| **Report & exports** | What goes out? | Module states, Include, formats, provenance |
 
-Each tab head carries a coloured dot: green up to date, orange out of date,
-grey not computed; hover it for the reason. A result that is out of date says
-so in a banner above it (Time course, Morphology & Intervals, Events), with
-**⟳ Recompute** where it applies.
+Each entry of the column carries a dot: green up to date, orange out of
+date, an empty ring not computed; hover it for the reason. A result that is
+out of date says so in an amber banner above it (Time course, Morphology,
+Events), with **Recompute** where it applies.
 
-The **analysis window** is set on the Signal & Detection tab (**Analysis
-window (s)** [start] [end], **Apply**, **Full**): the part of the recording
-Analyze uses, with the number of peaks inside it. Opening a file or clicking
-**Detect Peaks** sets it back to the whole signal (empty = signal start /
-end).
+The **analysis window** is set at the foot of the Signal page (**Analysis
+window: … · Change**: start and end, **Apply** or **Whole signal**): the part
+of the recording Analyze uses, with the number of peaks inside it. Opening a
+file or detecting the peaks again sets it back to the whole signal.
 
-The window opens on the **Signal & Detection** tab with no file loaded. The
-header along the top stays visible whatever the tab: the file name (with its
-channel, rate, subject and project), **Open…**, **Recording…** (Subject ID,
-sex, project, notes, the file's channels), **Settings…** (channel, rate,
-crop, filters, RR bounds, artifact correction, reset to mouse defaults),
-**ML detector…**, **Save Session**, **Analyze**, the progress bar with
-**Cancel**, and light / dark mode. The menus hold the rest:
+The window opens on the **Signal** page with no file loaded. The header
+along the top stays visible whatever the page:
+- the recording as a chip (file, channel, rate, subject, project): click it
+  for the Recording sheet (Subject ID, sex, project, notes, the file's
+  channels);
+- **Search** (Ctrl+K, ⌘K on a Mac): every page and command by name;
+- whether the session is saved ("Saved 14:02" / "Not saved"), **Open…**,
+  **Save**, **Settings…** (channel, rate, crop, filters, RR bounds, artifact
+  correction, reset to mouse defaults);
+- one red button that follows the step: **Open…**, then **Detect peaks**,
+  then **Analyze**.
+
+Running computations show in the status bar at the bottom, with **Cancel**;
+a warning also rises as a short notice over the page. The menus hold the
+rest:
 - **File**: Open Recent, Recent recordings (with Cohort Trends), Clear session cache;
-- **View**: light / dark mode, text size, both kept for the next runs;
+- **View**: light / dark mode, text size, both kept for the next runs (light
+  / dark is also at the foot of the left column);
+- **Tools**: Settings…, ML detector…;
 - **Help**: keyboard shortcuts (F1), the log folder.
 
 ---
@@ -81,16 +93,16 @@ Click **Open** and pick a MATLAB `.mat` file — legacy v5/v6 or v7.3/HDF5
 (Spike2 exports), both are handled automatically, including channel and
 sampling-rate detection. **Settings…** (header) holds the channel and the
 sampling rate (editable if auto-detection guesses wrong), and the
-**Filtering** box of the Signal & Detection bar controls whether detection
+**Filtering** box of **Detection…** (Signal page) controls whether detection
 runs on the raw signal or a bandpass/notch/cleaned version — see
 [Reading the Detection view](#reading-the-detection-view) for what that
 choice does to the display.
 
 Opening a file immediately shows the raw trace with no processing. Nothing
-is filtered, detected, or analyzed until you click **Detect Peaks**.
+is filtered, detected, or analyzed until you click **Detect peaks**.
 
 **Subject and sex from the file name.** Opening a file fills **Subject ID**
-and **Sex** (M / F) of the Recording sheet (**Recording…**) from its name:
+and **Sex** (M / F) of the Recording sheet (the file chip in the header) from its name:
 "Stim BNST - 1146 F.smr" gives 1146 and F, "Baseline_STIM_BNST_206.mat" gives
 206 and no sex. The sex is a standalone M or F (separated by a space, _ or -,
 or glued to the number: "1146F", "F1146", "M_206"; never a letter of a word
@@ -114,66 +126,78 @@ use every animal, whatever its sex.
 
 ## R-peak detection
 
-<img src="screenshots/01_detection_overview.png" width="800" alt="Signal &amp; Detection tab: detection bar, 12 s of trace with its peaks and the Stimulus annotation, RR / HR / Quality strip and the overview of the recording">
+<img src="screenshots/01_detection_overview.png" width="800" alt="Signal page: 12 s of ECG with its R peaks and the Stimulus annotation, the RR / HR strip, the heart rate card with the whole recording, and the status row">
 
-Click **Detect Peaks** to run the selected detection method (**Method**
-box at the start of the detection bar of Signal & Detection —
-Auto (NeuroKit2), SG + Derivative, Wavelet (CWT), Envelope Max, or your own
-trained ML Detector) over the whole recording. **Filtering** beside it
-chooses whether detection runs on the band-pass / notch / NeuroKit2-cleaned
-signal or on the raw one (the filter settings are in **Settings…**). The
-plot shows the signal for the current time window with the accepted peaks
-as green dots. Drag the **Threshold** slider of the same bar (or type an
-exact value) to tighten or loosen detection without re-running the whole
-pipeline; the text beside it gives the threshold's current normalised
-amplitude ("→ ≈4.21 norm. of the median R height"). The bar ends with the
-number of peaks, the signal-quality score and **Check agreement**. The
-RR bounds (**Min R-R**, **Max R-R for HRV**) are in **Settings…**.
+Click **Detect peaks** (the header's red button, or **Detection…** on the
+Signal page, or Ctrl+D) to run the selected detection method over the whole
+recording. **Detection…** opens the settings: **Method** (Auto (NeuroKit2),
+SG + Derivative, Wavelet (CWT), Envelope Max, or your own trained ML
+Detector), **Filtering** (detection on the band-pass / notch /
+NeuroKit2-cleaned signal or on the raw one; the filter settings are in
+**Settings…**), the **Threshold** slider (fraction of the median R-peak
+height; its tooltip gives the amplitude it stands for), **Detect peaks** and
+**Check agreement**. Moving the threshold re-selects the peaks without
+re-running the whole pipeline. Under the title, a line sums up the result:
+peaks, method, threshold, quality and the edits made by hand. The RR bounds
+(**Min R-R**, **Max R-R for HRV**) are in **Settings…**.
 
-<img src="screenshots/02_detection_zoom_normal.png" width="800" alt="Signal &amp; Detection tab zoomed on two seconds of normal rhythm">
+If peaks were excluded or added by hand, a new detection asks first: it
+replaces them with the detector's peaks and clears Undo.
 
-Under the plot, the **overview** shows the whole recording; its highlighted
-band is the time window of the plot — drag it to move through the
-recording, or drag its edges to widen or narrow the window. You can also
-drag the plot itself, type a time in **Go to (s)** and click **Go**, or use
-← / → on the keyboard. **Flagged beat ◀ / ▶** centres the previous / next
-beat flagged on the RR tachogram. **RR/HR/Quality** (right of the
-navigation row) shows or hides the RR, heart-rate and beat-quality strip
-under the trace (beat quality: correlation with the recording's beat
-template, 0.90 dashed).
+<img src="screenshots/02_detection_zoom_normal.png" width="800" alt="Signal page zoomed on two seconds of normal rhythm">
 
-If a peak is missed or a false one is added, **Edit Peaks** switches into
-manual edit mode — left click near a peak to exclude / include it, right
-click to add one at the local maximum or to remove one added by hand (with
-**Free placement** on, a right click adds a peak exactly where you click) —
-with **Undo** / **Redo** (Ctrl+Z / Ctrl+Y) and **Clear Edits**.
+The ECG opens on **2 s** (about 16 beats of a mouse at 500 bpm);
+**1 s / 2 s / 5 s / 10 s** at the top right change the length of the view,
+and **Filtered / Raw** the trace shown (display only: the peaks are those
+found on the filtered signal). R peaks are red dots; the legend of the ECG
+card names the other marks (a peak excluded by hand, one to check, a noisy
+stretch). Drag the trace to move along the recording, or use ← / → on the
+keyboard; **More › Go to (s)** jumps to a time.
+
+Under the ECG, the **Heart rate** card gives the heart rate of the beats in
+view in large figures, with its range and the recording's mean, beside the
+heart rate of the whole recording. That chart is the navigator: the framed
+part is what the ECG shows; drag it to move, or drag its edges to widen or
+narrow the view. **RR · HR · Quality** (ECG card) shows or hides the RR,
+heart-rate and beat-quality lanes under the trace (beat quality: correlation
+with the recording's beat template, 0.90 dashed).
+
+The row at the foot of the page reads the signal quality ("Quality 100/100 ·
+good"), the agreement of the other detectors after **Check agreement**, the
+**Beats to check** flagged on the tachogram after Analyze (‹ / › centre the
+previous / next one), **Review artifacts** and the analysis window.
+
+The tools of the ECG card work one at a time: **Move** (drag to pan),
+**Edit peaks** and **Mark noise**. With **Edit peaks**, left click near a
+peak to exclude / include it, right click to add one at the local maximum or
+to remove one added by hand (with **Free placement** on, a right click adds a
+peak exactly where you click), with **Undo** / **Redo** (Ctrl+Z / Ctrl+Y, on
+the Signal and Events pages). **More › Clear edits** re-includes every peak.
 
 **Noisy stretches.** Where the trace is too noisy to trust (movement,
-electrode contact), switch on **Mark Noise** (it turns Edit mode on) and
-drag over the stretch: it is shaded grey. Every
-RR interval touching it is left out of heart rate and HRV, as an interval
-across a removed beat is — so beats missed in the noise do not read as a
-slower heart rate. Right-click a noisy region to remove it; **Noisy
-regions** (same row) lists them all (add, edit, delete by times). Results
-computed before show as out of date: run **Analyze** again. Noisy regions
-are saved with the session.
+electrode contact), choose **Mark noise** and drag over the stretch: it is
+shaded. Every RR interval touching it is left out of heart rate and HRV, as
+an interval across a removed beat is — so beats missed in the noise do not
+read as a slower heart rate. Right-click a noisy region to remove it;
+**More › Noisy regions** lists them all (add, edit, delete by times).
+Results computed before show as out of date: run **Analyze** again. Noisy
+regions are saved with the session.
 
-The same row holds **Review artifacts…** (the beats flagged as artifacts,
-one by one), **Annotations** (the recording's events: drug, stimulus…; the
-count is in brackets) and **Noisy regions**. Automatic artifact correction
-on Analyze is a switch of **Settings…**. **Check agreement** runs the other
-detectors on the same signal and circles the accepted beats none of them
-found. Excluding, adding, or undoing a peak clears the HRV numbers
-immediately (they'd otherwise be describing beats that no longer match
-what's on screen) — click **Analyze** again to recompute them from the
-corrected peaks.
+**More** also holds **Review artifacts…** (the beats flagged as artifacts,
+one by one) and **Annotations** (the recording's events: drug, stimulus…;
+the count is in brackets). Automatic artifact correction on Analyze is a
+switch of **Settings…**. **Check agreement** (in **Detection…**) runs the
+other detectors on the same signal and circles the accepted beats none of
+them found. Excluding, adding, or undoing a peak marks the HRV numbers out
+of date — click **Analyze** again to recompute them from the corrected
+peaks.
 
 ### ML R-peak detector
 
 The ML Detector learns what an R-peak looks like from your own recordings:
 the **training examples** are recordings whose peaks you detected with
 another method and corrected. Everything about it is in the **ML
-detector…** dialog (header), whatever the Method — the examples are
+detector…** dialog (**Tools** menu), whatever the Method — the examples are
 prepared with the other methods, before any model exists. The dialog
 repeats the steps below, gives the status ("No model yet · 2 examples",
 "Model ready · 7 examples", "Retrain suggested") and, once a model exists,
@@ -182,7 +206,7 @@ held-out data, the share of your R-peaks it found, and the share of its
 peaks that were real).
 
 1. Open a recording, detect its peaks with another method (SG + Derivative,
-   Wavelet…) and correct them (**Edit Peaks**, **Review artifacts…**).
+   Wavelet…) and correct them (**Edit peaks**, **Review artifacts…**).
 2. In **ML detector…**, click **Add open recording to training examples**.
    The corrected peaks are cached right away (no session save needed).
    **Remove open recording** takes it out again (after a confirmation). If
@@ -197,7 +221,7 @@ peaks that were real).
 5. For new recordings choose **Method = ML Detector**, and check its peaks
    with **Check agreement**.
 
-With **Method = ML Detector** and no model trained yet, **Detect Peaks**
+With **Method = ML Detector** and no model trained yet, **Detect peaks**
 finds no peaks and the status line says what to do (choose another Method,
 detect and correct the peaks, add the recording, train with 5 or more
 examples), instead of failing silently.
@@ -250,24 +274,27 @@ below.
 
 ### Rhythm & HRV: tachogram and Poincaré
 
-<img src="screenshots/04_rhythm_hrv.png" width="800" alt="Rhythm &amp; HRV tab, top of the page: RR / HR tachogram, Poincaré and multiscale entropy">
+<img src="screenshots/04_rhythm_hrv.png" width="800" alt="Rhythm &amp; HRV page, top: the key values (heart rate in red), heart rate over time, Poincaré with SD1 / SD2 and the multiscale entropy">
 
-A line on top gives the beats analysed and the mean heart rate. Then a tachogram of
-every RR interval and instantaneous heart rate across the recording, with the
-annotations shaded, automatic spike detection (sudden acceleration / deceleration,
-▲ / ▼) and click-to-navigate — click a point here and the Signal & Detection tab
-jumps straight to that moment. **▲▼ Spike markers** shows or hides the flagged
-beats; **Review ▶** centres the next one in Signal & Detection. The Poincaré scatter
-with its SD1/SD2 ellipse and the multiscale entropy curve sit next to it.
+The line under the title gives the beats analysed and the mean heart rate; the key
+values follow, heart rate first. **Heart rate over time** shows the heart rate of
+every beat (a thin line) and its 9-beat running median (thick), or the RR intervals
+(**HR / RR**), with the annotations shaded and the flagged beats (sudden
+acceleration / deceleration) circled. Its scale leaves out the rare extreme beats
+(0.5th–99.5th percentile; the ones beyond are marked at the edge). Click a point and
+the Signal page shows that beat. **Flagged beats** shows or hides them; **Review ›**
+centres the next one on the Signal page. **Poincaré and entropy** sits beside it:
+the scatter of successive valid RR with its SD1 / SD2 ellipse, the three values,
+and the multiscale entropy curve. The exported figures (PDF, ZIP) keep their own
+layout.
 
 ### Rhythm & HRV: spectrum, RR distribution and HRV tables
 
 <img src="screenshots/05_rhythm_metrics.png" width="800" alt="Rhythm &amp; HRV tab: power spectral density, RR distribution and the HRV tables">
 
-The **Power spectral density** card holds **Recompute Frequency** (Frequency HRV
-again on the current peaks, analysis window and RR bounds) and its status, above a
-Welch power spectral density plot with mouse-specific VLF/LF/HF band
-shading (not the human 0.04–0.15/0.15–0.4 Hz convention).
+The **Power spectrum** card holds **Recompute** (Frequency HRV again on the
+current peaks, analysis window and RR bounds) and its status, above a Welch power
+spectral density plot with mouse-specific VLF/LF/HF band shading (not the human 0.04–0.15/0.15–0.4 Hz convention).
 
 The plotted spectrum **is** the one the numbers come from: the valid RR
 intervals are resampled at 20 Hz (cubic spline on their true times), Welch's
@@ -287,11 +314,11 @@ HRV_Frequency sheets and Prism, and the PSD title flags it. In the raw
 `HRV_LFn (fraction of LF+HF)` (a fraction; ×100 gives the n.u. shown
 elsewhere), `HRV_LFpeak (Hz)`.
 
-Beside the spectrum, the distribution of the valid RR intervals (histogram, HTI
-and TINN, summary statistics). Below them, the **HRV tables** card gives the raw
-time-domain, frequency-domain and non-linear values side by side (right click a
-table: *Copy as table* for Excel); the non-linear column has **Recompute
-Non-linear** and the **Entropy cap (RR)** field.
+Beside the spectrum, the distribution of the valid RR intervals. **Show the text
+tables** (bottom of the page) gives the raw time-domain, frequency-domain,
+non-linear and RR values side by side (right click a table: *Copy as table* for
+Excel). The Poincaré card has **Recompute** for the non-linear HRV and the
+**Entropy cap (RR)** field.
 
 ### Rhythm & HRV: key values, metric table and asymmetry
 
@@ -319,8 +346,11 @@ first 1000 beats.
 
 <img src="screenshots/08_time_epochs.png" width="800" alt="Time course tab, Epochs: 15 s epochs of HR, SDNN, RMSSD and pNN6 with the two Stimulus annotations shaded">
 
-Fixed-window HRV trends: set **Window (s)** and **Overlap (s)**, tick the
-**Metrics**, click **Compute epochs**; the table of epochs is under the plot.
+Each Time course mode opens on a line summing up its settings, a **Settings…**
+button that holds them, and its Compute button. Fixed-window HRV trends: in
+**Settings…** set **Window (s)** and **Overlap (s)** and tick the **Metrics**, then
+click **Compute epochs**; the table of epochs (sortable; right click: *Copy as
+table*) is under the plot.
 Low-beat-count windows are visually flagged (hollow points) so
 a noisy stretch doesn't get read as a real physiological change. Annotations are
 drawn on every panel. **Compute epochs after Analyze** (in **Settings…**) runs
@@ -724,7 +754,7 @@ and CSI / CPI are still shown.
 Choose the **Event-locked** tab of Time course.
 
 1. **Mark the events.** Add one annotation per condition change (injection,
-   stimulus…) with **Annotations** on the Signal & Detection tab;
+   stimulus…) with **More › Annotations** on the Signal page;
    its **start** time is the event onset. **Suggest from channels…** (in the
    Annotations dialog) lists the events of the file's other channels — the
    keyboard / marker channels (one per key or code) and the trains of
@@ -764,7 +794,7 @@ Choose the **Event-locked** tab of Time course.
    samples), **p(z)** the normal p of the z shown (MATLAB `signrank`'s
    approximate p); near 0.05 they can disagree.
 6. **💾 Save to cohort registry.** Fill in **Subject ID** and **Project** in
-   the Recording sheet (**Recording…** in the header) first: they are stored with
+   the Recording sheet (the file chip in the header) first: they are stored with
    every event, together with the method, window, ks, kp and pre / post
    windows. **Set the Subject ID for each animal**: the Recording sheet keeps
    its value from one file to the next (a saved session brings its own
@@ -1251,7 +1281,9 @@ them.
 
 ## Report tab
 
-<img src="screenshots/12_report.png" width="800" alt="Report tab: export buttons, provenance, the module lines with their Include ticks, and the text report">
+The **Report & exports** page.
+
+<img src="screenshots/12_report.png" width="800" alt="Report &amp; exports page: what goes out with the Include ticks, the format tiles, Export N files and the provenance">
 
 What goes out, in one place. This screen, the
 text report, the PDF's key metrics and the **Metrics** tables of Excel and Prism read
@@ -1265,11 +1297,14 @@ the series those values come from, without basis n or state.
 - **What is in this report**: one line per module (Signal quality, Rhythm & HRV,
   Time course, Autonomic CSI/CPI, Intervals, Events) with its state, its key
   result and an **Include** tick. A line out of date says why next to its value.
-- The export buttons along the top: **Excel…**, **PDF report…**, **Figures
-  (ZIP)…** (Excel + figures), **Prism…**, **RR series (CSV)…**, **Events
-  (PDF)…**, **Copy text** and **Save text…**; **Refresh** rebuilds the page.
-  The text report fills the lower half; what the exports leave out is named
-  under it.
+- **Formats**: one tile per export — **Excel**, **PDF report**, **GraphPad
+  Prism**, **Figures (ZIP)** (Excel + figures), **RR series** (CSV), **Events
+  PDF**. Tick the ones you want (Excel, PDF and Prism at first), then
+  **Export N files** asks for a folder once and writes each file there under its
+  usual name. A right click on a tile exports that format alone, asking where.
+  **Refresh** rebuilds the page; what the exports leave out is named under the
+  module lines; **Show the text report** gives the text report with **Copy text**
+  and **Save text…**.
 
 **Include** decides what the Excel workbook, the ZIP (its workbook and its
 figures), the Prism file, the PDF report and the text report hold. It is on by default for what is
@@ -1398,7 +1433,7 @@ and NeuroKit2 cleaning, RR bounds, signal inversion, automatic artifact
 correction on Analyze, epochs after Analyze and the SG + Derivative options
 (window, resampling rate); **Reset to mouse ECG defaults** puts the numbers
 back. The settings apply at the next Detect Peaks / Analyze; the subject's details are in
-**Recording…**. Metrics use mouse-calibrated
+the Recording sheet (file chip). Metrics use mouse-calibrated
 algorithms, but protocol-specific reference ranges are not currently
 selectable in the application. Interpret results using validated reference
 data for your strain and experimental conditions.
@@ -1422,7 +1457,7 @@ data for your strain and experimental conditions.
   each recording's per-event autonomic results in the local registry, for
   the cohort calibration of ks / kp.
 - If you're building a training set for the ML R-peak detector, **Add
-  open recording to training examples** (**ML detector…** in the header)
+  open recording to training examples** (**Tools › ML detector…**)
   caches this recording's corrected peaks without needing a full
   session save (see [ML R-peak detector](#ml-r-peak-detector)).
 - A saved session also restores the Recording sheet (Subject ID, sex,

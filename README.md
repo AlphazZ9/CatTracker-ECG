@@ -63,8 +63,9 @@ Security > Open Anyway*. Step-by-step help:
   v7.3 / Spike2), filters, detects R peaks with five methods (including a
   trainable ML detector), reviews artifacts and scores signal quality.
   [Details](docs/METHODS.md#signal--r-peak-detection)
-- **Tabs** — Signal & Detection, Rhythm & HRV, Time course, Compare segments, Morphology &
-  Intervals, Events, Group (all the animals of an experiment) and Report. [Details](docs/METHODS.md#tabs)
+- **Pages** (left column; search with Ctrl+K / ⌘K) — Signal, Rhythm & HRV, Time course,
+  Morphology, Events, Compare segments, Group (all the animals of an experiment) and
+  Report & exports. [Details](docs/METHODS.md#tabs)
 - **HRV** — time domain, frequency (mouse VLF / LF / HF bands, powers in
   ms²), non-linear (Poincaré, DFA, entropy, multiscale entropy), epochs and
   sliding windows. [Details](docs/METHODS.md#hrv-analysis)

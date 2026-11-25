@@ -521,11 +521,14 @@ and *Intervals* are Morphology & Intervals, *Abnormal Events* is Events.
 ### Interface
 
 - Qt interface (PySide6, version 7; the CustomTkinter one was removed after
-  its exports, sessions and computations were checked to be identical): a
-  header (Open, Recording…, Settings…, ML detector…, Save Session, Analyze,
-  progress and Cancel), the File / View / Help menus, and the tabs below;
-  the ECG traces are PyQtGraph plots, every other figure is the same
-  matplotlib figure as before. Computations run in the background and can
+  its exports, sessions and computations were checked to be identical).
+  Version 7.1: red and white, Inter typeface; a left column of pages with
+  their state dots, a header (recording chip, search Ctrl+K / ⌘K, saved
+  state, Open, Save, Settings…, one primary button: Open, Detect peaks,
+  Analyze), the File / View / Tools / Help menus, and progress with Cancel
+  in the status bar. The ECG traces, the Rhythm & HRV charts and the mean
+  beat are PyQtGraph plots drawn for the screen; the exports keep the
+  matplotlib figures, drawn only when an export reads them. Computations run in the background and can
   be cancelled; a result that lands for a file or peaks that changed
   meanwhile is dropped.
 - Light/dark theming, propagated live across the whole UI including every
