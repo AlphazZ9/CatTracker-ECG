@@ -101,3 +101,22 @@ def test_check_agreement_counts_and_circles_the_unconfirmed_beats(qtbot, window,
     det.detect()
     qtbot.waitUntil(lambda: d.agreement_pct is None, timeout=60000)
     assert len(det.plot.unconfirmed.getData()[0]) == 0
+
+
+def test_rr_hr_quality_strip(qtbot, window):
+    from ecg.core.analysis import compute_beat_correlation
+    _detect(qtbot, window)
+    s, d = window.recording.signal, window.recording.detection
+    det = window.detection
+    assert det.btn_strip.isChecked() and det.plot.strip[0].isVisible() is not False
+    qtbot.waitUntil(lambda: d._beat_corr_for is d.rpeaks_ok, timeout=10000)
+    x, y = det.plot.rr_curve.getData()
+    assert np.allclose(y, np.diff(d.rpeaks_ok) / s.fs * 1000.0)
+    assert np.allclose(x, d.rpeaks_ok[1:] / s.fs)
+    lo, hi = window.figures.analysis_ctrl.hrv_rr_bounds(quiet=True)
+    ref = compute_beat_correlation(s.filtered, d.rpeaks_ok, s.fs, lo, hi)
+    _qx, qy = det.plot.q_curve.getData()
+    assert np.allclose(qy, ref["beat_corr"], equal_nan=True)
+    det.btn_strip.setChecked(False)
+    assert not window.figures.ui.rrhr_strip_visible
+    assert all(not p.isVisible() for p in det.plot.strip)

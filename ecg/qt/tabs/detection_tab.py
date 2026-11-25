@@ -164,6 +164,11 @@ class DetectionTab(QtWidgets.QWidget):
             b.clicked.connect(lambda _c=False, d=step: self.step_spike(d))
             nav.addWidget(b)
         nav.addStretch(1)
+        self.btn_strip = QtWidgets.QPushButton("RR/HR/Quality")
+        self.btn_strip.setCheckable(True)
+        self.btn_strip.setToolTip("The RR, heart rate and beat quality (template correlation, "
+                                  "0.90 dashed) under the trace")
+        nav.addWidget(self.btn_strip)
         lay.addLayout(nav)
 
         self.plot = EcgPlot()
@@ -171,6 +176,14 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot.span_drawn.connect(self._noise_drawn)
         lay.addWidget(self.plot, 1)
         self._update_undo_buttons()
+        on = bool(window.figures.ui.rrhr_strip_visible)
+        self.btn_strip.setChecked(on)
+        self.plot.set_strip_visible(on)
+        self.btn_strip.toggled.connect(self._strip_toggled)
+        # The beat quality is real per-beat work: recomputed 250 ms after the
+        # last peak change (PlotController._ensure_beat_corr_cache).
+        self._corr_timer = QtCore.QTimer(self, singleShot=True, interval=250)
+        self._corr_timer.timeout.connect(self._update_beat_quality)
 
         self._thr_timer = QtCore.QTimer(self, singleShot=True, interval=THRESH_DEBOUNCE_MS)
         self._thr_timer.timeout.connect(self.apply_threshold)
@@ -579,10 +592,37 @@ class DetectionTab(QtWidgets.QWidget):
         correction)."""
         self._show_peaks()
 
+    def _strip_toggled(self, on: bool) -> None:
+        self.win.figures.ui.rrhr_strip_visible = bool(on)
+        self.plot.set_strip_visible(on)
+
+    def _update_beat_quality(self) -> None:
+        """PlotController._flush_beat_corr_recompute: each beat's template
+        correlation, cached on the detection state for the peaks it is of."""
+        from ecg.core.analysis import compute_beat_correlation
+        rec = self.win.recording
+        s, d = rec.signal, rec.detection
+        if d.rpeaks_ok is not d._beat_corr_for:
+            if s.filtered is None or d.rpeaks_ok is None or len(d.rpeaks_ok) < 3:
+                d.beat_corr = d.beat_corr_peaks = None
+            else:
+                lo, hi = self.win.figures.analysis_ctrl.hrv_rr_bounds(quiet=True)
+                r = compute_beat_correlation(s.filtered, d.rpeaks_ok, s.fs, lo, hi)
+                d.beat_corr, d.beat_corr_peaks = r["beat_corr"], r["valid_rp"]
+            d._beat_corr_for = d.rpeaks_ok
+        q_t = d.beat_corr_peaks / s.fs if d.beat_corr_peaks is not None else None
+        self.plot.set_beats(d.rpeaks_ok, q_t, d.beat_corr)
+
     def _show_peaks(self) -> None:
         rec = self.win.recording
         s, d = rec.signal, rec.detection
         self.plot.set_peaks(d.rpeaks_ok, d.rpeaks_rej, d.rpeaks_manual_excl, d.rpeaks_manual_added)
+        self.plot.set_beats(d.rpeaks_ok,
+                            d.beat_corr_peaks / s.fs if (d.beat_corr_peaks is not None
+                                                         and d._beat_corr_for is d.rpeaks_ok)
+                            else None,
+                            d.beat_corr if d._beat_corr_for is d.rpeaks_ok else None)
+        self._corr_timer.start()
         n = 0 if d.rpeaks_ok is None else len(d.rpeaks_ok)
         self.lbl_peaks.setText(f"Peaks: {n:,}")
         beat_corr = (rec.analysis.results or {}).get("beat_corr")
