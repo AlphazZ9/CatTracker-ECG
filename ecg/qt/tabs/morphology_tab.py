@@ -76,6 +76,9 @@ class MorphologyTab(QtWidgets.QScrollArea):
         row.addWidget(self.btn_measure)
         row.addStretch(1)
         lay.addWidget(bar)
+        from ecg.qt.widgets.stale_banner import StaleBanner
+        self.banner = StaleBanner(self, on_recompute=lambda: self.measure())
+        lay.addWidget(self.banner)
         host.lbl_ivl_status = StatusLabel("Click Analyze first")
         host.lbl_ivl_status.setProperty("muted", True)
         lay.addWidget(host.lbl_ivl_status)
@@ -131,6 +134,17 @@ class MorphologyTab(QtWidgets.QScrollArea):
             for name in ("beat", "intervals", "beat_dist", "qtc_rr"):
                 if name in self.win.figures._slots:
                     self.win.figures._slots[name].clear()
+
+    def refresh_banner(self) -> None:
+        """TabMorphologyMixin._refresh_morphology's stale line (Intervals)."""
+        from ecg.ui.freshness import stale_banner_text
+        host = self.win.figures
+        r = self.win.recording.analysis.results or {}
+        ivl = r.get("intervals")
+        self.banner.set_text(stale_banner_text(
+            "Intervals", host.freshness.status("intervals"),
+            host.ui.module_computed_at.get("intervals"), host.ui.peaks_edited_at,
+            has_values=ivl is not None and "QT_ms" in ivl.columns))
 
     def measure(self) -> None:
         rec = self.win.recording

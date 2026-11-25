@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from ecg.core.autonomic import COV_METHODS
 from ecg.core.models import MouseECG
@@ -63,7 +63,56 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.btn_epochs.clicked.connect(ctl.compute_epochs)
         self.btn_sliding.clicked.connect(ctl.compute_rolling_hrv)
         self.btn_auto.clicked.connect(lambda: ctl.compute_autonomic())
+        # The out-of-date banner of the page shown (TimeCourseMixin
+        # _refresh_time_banner), above the pages, with its Recompute.
+        from ecg.qt.widgets.stale_banner import StaleBanner
+        self.banner = StaleBanner(self, on_recompute=self.recompute_mode)
+        self.banner.setMaximumWidth(900)
+        self.setCornerWidget(self.banner, QtCore.Qt.Corner.TopRightCorner)
+        self.currentChanged.connect(lambda _i: self.refresh_banner())
         self.results_changed()
+
+    # ── out of date ─────────────────────────────────────────
+    PAGE_MODULES = (("epochs",), ("rolling",), ("autonomic", "event_locked"), ("event_locked",))
+
+    def refresh_banner(self) -> None:
+        """What is out of date on the page shown: the first module of it."""
+        from ecg.ui.freshness import stale_banner_text
+        host = self.win.figures
+        a = host.analysis
+        results = {"epochs": a.epoch_df, "rolling": a.rolling_hrv_df,
+                   "autonomic": a.autonomic_result, "event_locked": a.event_locked}
+        page = self.currentIndex()
+        name = ("Epochs", "Sliding", "Autonomic", "Event-locked")[page]
+        text = ""
+        for module in self.PAGE_MODULES[page]:
+            if module == "event_locked" and results[module] is None:
+                continue                      # never computed: nothing to warn about
+            text = stale_banner_text("Event-locked" if module == "event_locked" else name,
+                                     host.freshness.status(module),
+                                     host.ui.module_computed_at.get(module),
+                                     host.ui.peaks_edited_at,
+                                     has_values=results[module] is not None)
+            if text:
+                break
+        self.banner.set_text(text)
+
+    def recompute_mode(self) -> None:
+        """TimeCourseMixin._recompute_time_mode, on the page shown."""
+        from ecg.ui.freshness import UP_TO_DATE
+        host = self.win.figures
+        ctl, ev = host.analysis_ctrl, host.event_ctrl
+        page = self.currentIndex()
+        if page == 0:
+            ctl.compute_epochs()
+        elif page == 1:
+            ctl.compute_rolling_hrv()
+        elif host.freshness.status("autonomic").state == UP_TO_DATE:
+            ev.compute()
+        elif host.analysis.event_locked is not None:
+            ctl.compute_autonomic(then=ev.compute)
+        else:
+            ctl.compute_autonomic()
 
     # ── pages ───────────────────────────────────────────────
     def _metrics_row(self, row: QtWidgets.QHBoxLayout, defaults) -> dict:

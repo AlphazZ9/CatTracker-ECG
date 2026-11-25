@@ -142,6 +142,12 @@ class MainWindow(QtWidgets.QMainWindow):
             TIME_COURSE_MODES.index(mode) if mode in TIME_COURSE_MODES else 0)
 
         self._build_menu()
+        # The out-of-date banners follow the state on a tick, as Tk's shell
+        # tick: only the tab shown is looked at (cheap: freshness.status).
+        self._banner_timer = QtCore.QTimer(self, interval=1000)
+        self._banner_timer.timeout.connect(self.refresh_banners)
+        self._banner_timer.start()
+        self.tabs.currentChanged.connect(lambda _i: self.refresh_banners())
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self, activated=self.detection.undo)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Y"), self, activated=self.detection.redo)
         # The Tk interface's shortcuts (Help > Keyboard shortcuts).
@@ -505,6 +511,15 @@ class MainWindow(QtWidgets.QMainWindow):
         pc.run_plot_chain([("Non-linear metrics", lambda: pc.plot_nonlinear(r)),
                            ("Metrics", lambda: pc.plot_table_views(r))],
                           on_complete=self._nonlin_then)
+
+    def refresh_banners(self) -> None:
+        w = self.tabs.currentWidget()
+        refresh = getattr(w, "refresh_banner", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception as exc:       # a banner never breaks the window
+                log.debug("banner refresh failed: %s", exc, exc_info=True)
 
     def recompute_freq(self) -> None:
         """Rhythm & HRV > Recompute Frequency: on the current peaks, window

@@ -73,6 +73,9 @@ class EventsTab(QtWidgets.QWidget):
         host.lbl_arrhythmia_status.setProperty("muted", True)
         host.lbl_arrhythmia_status.setWordWrap(True)
         lay.addWidget(host.lbl_arrhythmia_status)
+        from ecg.qt.widgets.stale_banner import StaleBanner
+        self.banner = StaleBanner(self)
+        lay.addWidget(self.banner)
 
         ribbon = host.slot("arr_ribbon", self, 12.0, 2.0)
         ribbon.setMinimumHeight(170)
@@ -165,6 +168,14 @@ class EventsTab(QtWidgets.QWidget):
         idx = (0 if direction > 0 else n - 1) if cur < 0 else cur + direction
         if 0 <= idx < n:
             self.table.selectRow(idx)          # -> _selected -> select_arrhythmia_event
+
+    def refresh_banner(self) -> None:
+        """TabEventsMixin._refresh_events_readout: the events shown no longer
+        match the peaks."""
+        from ecg.ui.freshness import stale_banner_text
+        host = self.win.figures
+        self.banner.set_text(stale_banner_text("Events", host.freshness.status("events"), None,
+                                               host.ui.peaks_edited_at))
 
     def peaks_changed(self) -> None:
         self.btn_classify.setEnabled(self.win.recording.detection.rpeaks_ok is not None)
