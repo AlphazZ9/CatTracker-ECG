@@ -49,6 +49,13 @@ def _spin(value: float, lo: float, hi: float, step: float = 1.0,
 class TimeCourseTab(QtWidgets.QTabWidget):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
+        # The page's title beside its modes (the tab bar, drawn as a
+        # segmented control by the style sheet).
+        self.setObjectName("TimeCourse")
+        title = QtWidgets.QLabel("Time course")
+        title.setProperty("role", "title")
+        title.setContentsMargins(24, 12, 18, 4)
+        self.setCornerWidget(title, QtCore.Qt.Corner.TopLeftCorner)
         self.win = window
         host = window.figures
         ctl = host.analysis_ctrl
@@ -142,6 +149,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
     def _epochs_page(self, host) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(24, 10, 24, 16)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Window (s):"))
         self.sp_epoch = _spin(MouseECG.EPOCH_DEFAULT_S, MouseECG.EPOCH_MIN_S, 36000.0, 5.0, 0)
@@ -150,7 +158,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.sp_overlap = _spin(0.0, 0.0, 36000.0, 5.0, 0)
         row.addWidget(self.sp_overlap)
         self.btn_epochs = QtWidgets.QPushButton("Compute epochs")
-        self.btn_epochs.setProperty("primary", True)
+        self.btn_epochs.setProperty("action", True)
         row.addWidget(self.btn_epochs)
         host.lbl_epoch_info = StatusLabel("")
         host.lbl_epoch_info.setProperty("muted", True)
@@ -170,6 +178,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
     def _sliding_page(self, host) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(24, 10, 24, 16)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Window (s):"))
         self.sp_roll_win = _spin(30.0, 3.0, 36000.0, 5.0, 0)
@@ -178,7 +187,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.sp_roll_step = _spin(5.0, 1.0, 36000.0, 1.0, 0)
         row.addWidget(self.sp_roll_step)
         self.btn_sliding = QtWidgets.QPushButton("Compute sliding window")
-        self.btn_sliding.setProperty("primary", True)
+        self.btn_sliding.setProperty("action", True)
         row.addWidget(self.btn_sliding)
         host.lbl_roll_status = StatusLabel("")
         host.lbl_roll_status.setProperty("muted", True)
@@ -209,6 +218,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         p = normalise_autonomic_params(host.analysis.autonomic_params or None)
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(24, 10, 24, 16)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Window (s):"))
         self.sp_auto_win = _spin(float(p["window_s"]), 0.5, 600.0, 0.5, 1)
@@ -250,7 +260,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.chk_lfhf.setChecked(bool(p["lf_hf"]))
         row.addWidget(self.chk_lfhf)
         self.btn_auto = QtWidgets.QPushButton("Compute")
-        self.btn_auto.setProperty("primary", True)
+        self.btn_auto.setProperty("action", True)
         row.addWidget(self.btn_auto)
         row.addStretch(1)
         lay.addLayout(row)
@@ -281,6 +291,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
             EVENT_TABLE_TITLE
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(24, 10, 24, 16)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Events:"))
         self.cb_evt_label = QtWidgets.QComboBox()
@@ -296,7 +307,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.chk_evt_z.setToolTip("Traces as z-scores of each event's pre window (display only)")
         row.addWidget(self.chk_evt_z)
         self.btn_evt = QtWidgets.QPushButton("Compute event-locked")
-        self.btn_evt.setProperty("primary", True)
+        self.btn_evt.setProperty("action", True)
         row.addWidget(self.btn_evt)
         row.addStretch(1)
         lay.addLayout(row)

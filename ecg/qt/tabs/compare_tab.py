@@ -103,6 +103,10 @@ class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
         self.setWidget(page)
+        lay.setContentsMargins(24, 16, 24, 16)
+        lay.setSpacing(12)
+        from ecg.qt.widgets.shell import page_header
+        lay.addLayout(page_header('Compare segments'))
         self.segs: "list[dict]" = []
         self.ref: Any = 0
         self.jitter = True
@@ -134,7 +138,7 @@ class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
                                  "this length (no beat-level test: beats are not replicates)")
         bar.addWidget(self.sp_block)
         self.btn_run = QtWidgets.QPushButton("Compare")
-        self.btn_run.setProperty("primary", True)
+        self.btn_run.setProperty("action", True)
         self.btn_run.setEnabled(False)
         self.btn_run.clicked.connect(self.run)
         bar.addWidget(self.btn_run)

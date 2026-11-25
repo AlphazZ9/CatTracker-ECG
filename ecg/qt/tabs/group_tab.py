@@ -54,6 +54,10 @@ class GroupTab(QtWidgets.QScrollArea):
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
         self.setWidget(page)
+        lay.setContentsMargins(24, 16, 24, 16)
+        lay.setSpacing(12)
+        from ecg.qt.widgets.shell import page_header
+        lay.addLayout(page_header('Group'))
         # Add open recording is the Tk tab's (TabGroupMixin), on the window's host.
         from ecg.app.group_helpers import group_lines_of_open_recording
         host = window.figures

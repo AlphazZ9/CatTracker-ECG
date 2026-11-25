@@ -37,6 +37,10 @@ class EventsTab(QtWidgets.QWidget):
         self.win = window
         host = window.figures
         lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(24, 16, 24, 16)
+        lay.setSpacing(12)
+        from ecg.qt.widgets.shell import page_header
+        lay.addLayout(page_header('Events'))
 
         bar = QtWidgets.QFrame(objectName="Card")
         row = QtWidgets.QHBoxLayout(bar)
@@ -59,7 +63,7 @@ class EventsTab(QtWidgets.QWidget):
         self.sp_min_beats = spin("Min beats", 10, 3, 10000,
                                  "Shortest bradycardia / tachycardia episode, beats")
         self.btn_classify = QtWidgets.QPushButton("Classify events")
-        self.btn_classify.setProperty("primary", True)
+        self.btn_classify.setProperty("action", True)
         self.btn_classify.setEnabled(False)
         self.btn_classify.clicked.connect(host.analysis_ctrl.run_arrhythmia_analysis)
         row.addWidget(self.btn_classify)

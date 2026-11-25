@@ -33,6 +33,10 @@ class ReportTab(QtWidgets.QWidget):
         super().__init__(window)
         self.win = window
         lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(24, 16, 24, 16)
+        lay.setSpacing(12)
+        from ecg.qt.widgets.shell import page_header
+        lay.addLayout(page_header('Report & exports'))
         bar = QtWidgets.QFrame(objectName="Card")
         row = QtWidgets.QHBoxLayout(bar)
         self.buttons: "dict[str, QtWidgets.QPushButton]" = {}

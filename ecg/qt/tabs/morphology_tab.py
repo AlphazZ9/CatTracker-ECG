@@ -41,6 +41,10 @@ class MorphologyTab(QtWidgets.QScrollArea):
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
         self.setWidget(page)
+        lay.setContentsMargins(24, 16, 24, 16)
+        lay.setSpacing(12)
+        from ecg.qt.widgets.shell import page_header
+        lay.addLayout(page_header('Morphology & intervals'))
 
         bar = QtWidgets.QFrame(objectName="Card")
         row = QtWidgets.QHBoxLayout(bar)
@@ -72,7 +76,7 @@ class MorphologyTab(QtWidgets.QScrollArea):
         self.btn_template.clicked.connect(self._edit_template)
         row.addWidget(self.btn_template)
         self.btn_measure = QtWidgets.QPushButton("Measure intervals")
-        self.btn_measure.setProperty("primary", True)
+        self.btn_measure.setProperty("action", True)
         self.btn_measure.setEnabled(False)
         self.btn_measure.clicked.connect(self.measure)
         row.addWidget(self.btn_measure)
