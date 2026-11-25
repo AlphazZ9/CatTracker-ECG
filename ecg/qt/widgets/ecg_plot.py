@@ -35,6 +35,9 @@ AXIS_WIDTH_PX = 52          # every lane's value axis: their time axes line up
 TRACE_MIN_HEIGHT_PX = 170   # the trace keeps this much; the strip gives way first
 FIT_DELAY_MS = 40           # vertical fits while panning: at most ~25 per second
 COMPACT_HEIGHT_PX = 460     # below this, the strip drops its Quality lane
+OVERVIEW_HEIGHT_PX = 120
+STRIP_MIN_PX, STRIP_MAX_PX = 56, 90   # each RR / HR / Quality lane
+HR_SMOOTH_BEATS = 9                   # the overview's heart rate: a running median
 
 
 def _alpha(color: str, alpha: int) -> QtGui.QColor:
@@ -43,6 +46,19 @@ def _alpha(color: str, alpha: int) -> QtGui.QColor:
     c = QtGui.QColor(color)
     c.setAlpha(alpha)
     return c
+
+
+def _running_median(values: np.ndarray, n: int) -> np.ndarray:
+    """The median of each run of *n* values centred on each one (the ends
+    take the nearest full run): the overview's heart-rate trend, without the
+    beat-to-beat scatter that turned it into a solid band. Display only."""
+    v = np.asarray(values, dtype=float)
+    if len(v) < n or n < 3:
+        return v
+    from numpy.lib.stride_tricks import sliding_window_view
+    med = np.median(sliding_window_view(v, n), axis=1)
+    half = n // 2
+    return np.concatenate([np.full(half, med[0]), med, np.full(len(v) - len(med) - half, med[-1])])
 
 
 class EcgPlot(QtWidgets.QWidget):
@@ -64,11 +80,17 @@ class EcgPlot(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self.view = pg.GraphicsLayoutWidget()
-        lay.addWidget(self.view)
+        lay.addWidget(self.view, 1)
         self.detail = self.view.addPlot(row=0, col=0)
-        self.overview = self.view.addPlot(row=4, col=0)
         self.view.ci.layout.setRowStretchFactor(0, 5)
-        self.view.ci.layout.setRowStretchFactor(4, 1)
+        # The whole recording, in its own view (a page may place it apart,
+        # e.g. beside the heart rate figures): the heart rate of every beat
+        # once there are peaks, else the signal; the band is the part shown
+        # above, drag it to navigate.
+        self.over_view = pg.GraphicsLayoutWidget()
+        self.over_view.setFixedHeight(OVERVIEW_HEIGHT_PX)
+        lay.addWidget(self.over_view)
+        self.overview = self.over_view.addPlot(row=0, col=0)
         # The RR / HR / Quality strip under the trace (the Tk detail_rrhr
         # panel): each beat's RR and HR at its second peak, and its template
         # correlation, on the trace's time axis.
@@ -85,8 +107,8 @@ class EcgPlot(QtWidgets.QWidget):
             p.hideAxis("bottom")
             p.getAxis("left").setTickDensity(0.6)
             p.hideButtons()
-            p.setMinimumHeight(44)
-            p.setMaximumHeight(90)
+            p.setMinimumHeight(STRIP_MIN_PX)
+            p.setMaximumHeight(STRIP_MAX_PX)
             self.view.ci.layout.setRowStretchFactor(r, 1)
             self.strip.append(p)
         self.rr_curve, self.hr_curve, self.q_curve = (
@@ -120,6 +142,10 @@ class EcgPlot(QtWidgets.QWidget):
         self.over_trace = pg.PlotDataItem(pen=pg.mkPen(width=1))
         self.over_trace.setDownsampling(auto=True, method="peak")
         self.overview.addItem(self.over_trace)
+        self.hr_over = pg.PlotDataItem(pen=pg.mkPen(width=1.5))
+        self.hr_over.setDownsampling(auto=True, method="peak")
+        self.overview.addItem(self.hr_over)
+        self._over_regions: list = []
 
         self.accepted = pg.ScatterPlotItem(size=7, symbol="o")
         self.rejected = pg.ScatterPlotItem(size=5, symbol="o")
@@ -157,6 +183,7 @@ class EcgPlot(QtWidgets.QWidget):
         self._time = time if time is not None else np.arange(len(signal)) / self._fs
         self.trace.setData(self._time, signal)
         self.over_trace.setData(self._time, signal)
+        self._show_overview_hr(False)
         end = float(self._time[-1]) if len(self._time) else 0.0
         self.overview.setXRange(0, end, padding=0)
         self.set_window(0.0, min(DEFAULT_WINDOW_S, end))
@@ -189,6 +216,9 @@ class EcgPlot(QtWidgets.QWidget):
         shown = [on, on, on and not compact]
         for p, vis in zip(self.strip, shown):
             p.setVisible(vis)
+            # A hidden item keeps its place in a graphics layout: none then.
+            p.setMinimumHeight(STRIP_MIN_PX if vis else 0)
+            p.setMaximumHeight(STRIP_MAX_PX if vis else 0)
             p.hideAxis("bottom")
         lanes = [p for p, vis in zip(self.strip, shown) if vis]
         if lanes:
@@ -208,9 +238,10 @@ class EcgPlot(QtWidgets.QWidget):
         """The strip: RR and HR of *peaks* (sample indices), and the beat
         quality *quality* at the times *quality_t* (s)."""
         if self._signal is None or peaks is None or len(peaks) < 2:
-            for c in (self.rr_curve, self.hr_curve, self.q_curve):
+            for c in (self.rr_curve, self.hr_curve, self.q_curve, self.hr_over):
                 c.setData([], [])
             self._rr = None
+            self._show_overview_hr(False)
             return
         rp = np.asarray(peaks, dtype=float)
         rr_ms = np.diff(rp) / self._fs * 1000.0
@@ -218,11 +249,49 @@ class EcgPlot(QtWidgets.QWidget):
         self._rr = (rr_t, rr_ms, 60000.0 / rr_ms)
         self.rr_curve.setData(rr_t, rr_ms)
         self.hr_curve.setData(rr_t, self._rr[2])
+        self.hr_over.setData(rr_t, _running_median(self._rr[2], HR_SMOOTH_BEATS))
+        self._show_overview_hr(True)
         if quality_t is not None and quality is not None and len(quality):
             self.q_curve.setData(np.asarray(quality_t, float), np.asarray(quality, float))
         else:
             self.q_curve.setData([], [])
         self._fit_strip()
+
+    def _show_overview_hr(self, on: bool) -> None:
+        """The overview shows the heart rate of every beat (on), else the
+        signal; its heart-rate scale leaves out the rare extreme beats (1st
+        to 99th percentile) so the trend is not flattened by one of them."""
+        self.over_trace.setVisible(not on)
+        self.hr_over.setVisible(on)
+        axis = self.overview.getAxis("left")
+        axis.setStyle(showValues=on)
+        axis.setTickDensity(0.5)
+        if on and self._rr is not None:
+            hr = self._rr[2][np.isfinite(self._rr[2])]
+            if len(hr):
+                lo, hi = (float(v) for v in np.percentile(hr, [1, 99]))
+                pad = max(0.08 * (hi - lo), 5.0)
+                self.overview.setYRange(lo - pad, hi + pad, padding=0)
+        elif self._signal is not None and len(self._signal):
+            self.overview.enableAutoRange(axis="y")
+
+    def hr_stats(self) -> "Optional[tuple[float, float, float]]":
+        """The heart rate of the beats in view: (median, min, max), bpm."""
+        if self._rr is None:
+            return None
+        t0, t1 = self.window()
+        rr_t, _rr, hr = self._rr
+        v = hr[(rr_t >= t0) & (rr_t <= t1) & np.isfinite(hr)]
+        if not len(v):
+            return None
+        return float(np.median(v)), float(np.min(v)), float(np.max(v))
+
+    def mean_hr(self) -> "Optional[float]":
+        """The mean of the instantaneous heart rate over the recording."""
+        if self._rr is None:
+            return None
+        hr = self._rr[2][np.isfinite(self._rr[2])]
+        return float(np.mean(hr)) if len(hr) else None
 
     def _fit_strip(self) -> None:
         """RR and HR centred on the mean of what is in view (centered_ylim)."""
@@ -278,9 +347,18 @@ class EcgPlot(QtWidgets.QWidget):
         for item in self._annotations:
             self.detail.removeItem(item)
         self._annotations = []
+        for item in self._over_regions:
+            self.overview.removeItem(item)
+        self._over_regions = []
         for a in annotations or []:
             t0, t1 = float(a["t_start"]), float(a["t_end"])
             color = a.get("color") or "#888888"
+            over = pg.LinearRegionItem(values=(t0, t1), movable=False,
+                                       brush=pg.mkBrush(_alpha(color, 45)),
+                                       pen=pg.mkPen(None))
+            over.setZValue(-20)
+            self.overview.addItem(over)
+            self._over_regions.append(over)
             item = pg.LinearRegionItem(values=(t0, t1), movable=False,
                                        brush=pg.mkBrush(_alpha(color, 40)),
                                        pen=pg.mkPen(color))
@@ -404,15 +482,19 @@ class EcgPlot(QtWidgets.QWidget):
             for ax in ("left", "bottom"):
                 plot.getAxis(ax).setPen(pg.mkPen(p.MUTED))
                 plot.getAxis(ax).setTextPen(pg.mkPen(p.MUTED))
-        self.trace.setPen(pg.mkPen(p.plot_signal, width=1))
+        self.over_view.setBackground(p.PANEL)
+        self.trace.setPen(pg.mkPen(p.plot_signal, width=1.2))
         self.over_trace.setPen(pg.mkPen(p.LIGHT, width=1))
+        self.hr_over.setPen(pg.mkPen(p.ACCENT, width=1.5))
+        # R peaks in red; a peak excluded by hand is a cross in ink, one added
+        # by hand a triangle in blue.
         self.accepted.setBrush(pg.mkBrush(p.plot_rpeak))
         self.accepted.setPen(pg.mkPen(None))
         self.rejected.setBrush(pg.mkBrush(p.LIGHT))
         self.rejected.setPen(pg.mkPen(None))
-        self.excluded.setBrush(pg.mkBrush(p.RED))
-        self.excluded.setPen(pg.mkPen(p.RED))
-        self.added.setBrush(pg.mkBrush("#14B8A6"))
+        self.excluded.setBrush(pg.mkBrush(p.TEXT))
+        self.excluded.setPen(pg.mkPen(p.TEXT, width=2))
+        self.added.setBrush(pg.mkBrush(p.BLUE))
         self.added.setPen(pg.mkPen(None))
         self.unconfirmed.setBrush(pg.mkBrush(None))
         self.unconfirmed.setPen(pg.mkPen("#FF9800", width=1.8))   # AMBER, as the Tk ring
@@ -420,12 +502,12 @@ class EcgPlot(QtWidgets.QWidget):
             for ax in ("left", "bottom"):
                 plot.getAxis(ax).setPen(pg.mkPen(p.MUTED))
                 plot.getAxis(ax).setTextPen(pg.mkPen(p.MUTED))
-        for c, col in ((self.rr_curve, p.plot_signal), (self.hr_curve, p.BLUE),
+        for c, col in ((self.rr_curve, p.MUTED), (self.hr_curve, p.ACCENT),
                        (self.q_curve, p.GREEN)):
             c.setPen(pg.mkPen(col, width=1.2))
             c.setSymbolBrush(pg.mkBrush(col))
             c.setSymbolPen(pg.mkPen(None))
         self.q_line.setPen(pg.mkPen(p.MUTED, width=0.8, style=QtCore.Qt.PenStyle.DashLine))
-        self.band.setBrush(pg.mkBrush(_alpha(p.BLUE, 70)))
+        self.band.setBrush(pg.mkBrush(_alpha(p.TEXT, 28)))
         for line in self.band.lines:
-            line.setPen(pg.mkPen(p.BLUE, width=1))
+            line.setPen(pg.mkPen(p.TEXT, width=2))

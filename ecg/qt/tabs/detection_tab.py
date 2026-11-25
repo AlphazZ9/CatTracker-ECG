@@ -36,16 +36,42 @@ DEFAULT_METHOD = "sg_derivative"
 THRESH_MIN, THRESH_MAX, THRESH_DEFAULT = 0.01, 2.0, 0.50   # Tk slider range and start
 THRESH_DEBOUNCE_MS = 150
 BREAK_REDETECT_TOL_MS = 5.0     # AnalysisController.BREAK_REDETECT_TOL_MS
+WINDOW_PRESETS_S = (1.0, 2.0, 5.0, 10.0)   # the view's lengths offered as one click
 
 
 class DetectionTab(QtWidgets.QWidget):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
         self.win = window
+        from ecg.qt.widgets.shell import Segmented
         lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(24, 16, 24, 10)
+        lay.setSpacing(12)
 
+        # ── title: the page, what it shows, and the view's length ──
+        top = QtWidgets.QHBoxLayout()
+        top.setSpacing(12)
+        titles = QtWidgets.QVBoxLayout()
+        titles.setSpacing(0)
+        title = QtWidgets.QLabel("Signal")
+        title.setProperty("role", "title")
+        titles.addWidget(title)
+        self.lbl_summary = QtWidgets.QLabel("Open a recording, then detect its peaks.")
+        self.lbl_summary.setProperty("muted", True)
+        titles.addWidget(self.lbl_summary)
+        top.addLayout(titles, 1)
+        self.seg_window = Segmented([f"{w:g} s" for w in WINDOW_PRESETS_S], exclusive=False)
+        self.seg_window.setToolTip("Length of the view")
+        for b, w in zip(self.seg_window.buttons, WINDOW_PRESETS_S):
+            b.clicked.connect(lambda _c=False, w=w: self.set_view_width(w))
+        top.addWidget(self.seg_window, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
+        lay.addLayout(top)
+
+        # ── detection: method, filtering, threshold, Detect peaks ──
         bar = QtWidgets.QFrame(objectName="Card")
         row = QtWidgets.QHBoxLayout(bar)
+        row.setContentsMargins(14, 8, 14, 8)
+        row.setSpacing(8)
         row.addWidget(QtWidgets.QLabel("Method"))
         self.cb_method = QtWidgets.QComboBox()
         for label, key in METHODS:
@@ -56,19 +82,14 @@ class DetectionTab(QtWidgets.QWidget):
         self.chk_filter.setToolTip("Band-pass, optional notch and NeuroKit2 ecg_clean before "
                                    "detection (off: detection on the raw signal)")
         row.addWidget(self.chk_filter)
-        self.btn_detect = QtWidgets.QPushButton("Detect Peaks")
-        self.btn_detect.setProperty("primary", True)
-        self.btn_detect.setEnabled(False)
-        self.btn_detect.clicked.connect(self.detect)
-        row.addWidget(self.btn_detect)
-        row.addSpacing(16)
+        row.addSpacing(10)
         lbl = QtWidgets.QLabel("Threshold")
         lbl.setToolTip("Fraction of the median R-peak height a candidate must reach")
         row.addWidget(lbl)
         self.sl_thr = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.sl_thr.setRange(int(THRESH_MIN * 100), int(THRESH_MAX * 100))
         self.sl_thr.setValue(int(THRESH_DEFAULT * 100))
-        self.sl_thr.setMinimumWidth(180)
+        self.sl_thr.setMinimumWidth(140)
         row.addWidget(self.sl_thr, 1)
         self.sp_thr = QtWidgets.QDoubleSpinBox()
         self.sp_thr.setRange(THRESH_MIN, THRESH_MAX)
@@ -79,94 +100,212 @@ class DetectionTab(QtWidgets.QWidget):
         self.lbl_thr = QtWidgets.QLabel("× median R")
         self.lbl_thr.setProperty("muted", True)
         row.addWidget(self.lbl_thr)
-        row.addSpacing(16)
-        self.lbl_peaks = QtWidgets.QLabel("Peaks: —")
-        row.addWidget(self.lbl_peaks)
-        self.lbl_quality = QtWidgets.QLabel("Quality: —")
-        row.addWidget(self.lbl_quality)
+        row.addSpacing(10)
+        self.btn_detect = QtWidgets.QPushButton("Detect peaks")
+        self.btn_detect.setProperty("action", True)
+        self.btn_detect.setToolTip("Find the R peaks with the method and filtering above (Ctrl+D)")
+        self.btn_detect.setEnabled(False)
+        self.btn_detect.clicked.connect(self.detect)
+        row.addWidget(self.btn_detect)
         self.btn_agreement = QtWidgets.QPushButton("Check agreement")
         self.btn_agreement.setEnabled(False)
         self.btn_agreement.setToolTip("Run the other detectors on the same filtered signal and "
                                       "circle the accepted beats none of them found")
         self.btn_agreement.clicked.connect(self.check_agreement)
         row.addWidget(self.btn_agreement)
-        self.lbl_agreement = QtWidgets.QLabel("")
-        row.addWidget(self.lbl_agreement)
         lay.addWidget(bar)
+        # Read in the summary line and the status row rather than on the bar.
+        self.lbl_peaks = QtWidgets.QLabel("Peaks: —")
+        self.lbl_quality = QtWidgets.QLabel("Quality: —")
+        self.lbl_agreement = QtWidgets.QLabel("")
 
-        edit_bar = QtWidgets.QHBoxLayout()
-        self.btn_edit = QtWidgets.QPushButton("Edit Peaks")
+        # ── the ECG, with its tools ──
+        ecg_card = QtWidgets.QFrame(objectName="Card")
+        ecg_lay = QtWidgets.QVBoxLayout(ecg_card)
+        ecg_lay.setContentsMargins(14, 10, 14, 6)
+        ecg_lay.setSpacing(6)
+        tools = QtWidgets.QHBoxLayout()
+        tools.setSpacing(8)
+        head = QtWidgets.QLabel("ECG")
+        head.setProperty("role", "heading")
+        tools.addWidget(head)
+        self.lbl_view = QtWidgets.QLabel("")
+        self.lbl_view.setProperty("muted", True)
+        tools.addWidget(self.lbl_view)
+        tools.addStretch(1)
+        # Move / Edit peaks / Mark noise: one mode at a time.
+        self.seg_tools = Segmented([], exclusive=False)
+        self.btn_move = QtWidgets.QPushButton("Move")
+        self.btn_move.setCheckable(True)
+        self.btn_move.setChecked(True)
+        self.btn_move.setToolTip("Drag to pan, wheel to zoom the time axis")
+        self.btn_edit = QtWidgets.QPushButton("Edit peaks")
         self.btn_edit.setCheckable(True)
         self.btn_edit.setEnabled(False)
         self.btn_edit.setToolTip("Left click near a peak: exclude / include it. Right click: add a "
                                  "peak at the local maximum (replacing a peak too close), or remove "
                                  "a peak added by hand.")
-        self.btn_edit.toggled.connect(self._edit_toggled)
-        edit_bar.addWidget(self.btn_edit)
-        self.chk_free = QtWidgets.QCheckBox("Free placement")
-        self.chk_free.setToolTip("Right click adds the peak exactly where clicked (no snapping, "
-                                 "no replacement)")
-        edit_bar.addWidget(self.chk_free)
-        self.btn_undo = QtWidgets.QPushButton("Undo")
-        self.btn_redo = QtWidgets.QPushButton("Redo")
-        self.btn_undo.clicked.connect(self.undo)
-        self.btn_redo.clicked.connect(self.redo)
-        edit_bar.addWidget(self.btn_undo)
-        edit_bar.addWidget(self.btn_redo)
-        self.btn_clear_edits = QtWidgets.QPushButton("Clear Edits")
-        self.btn_clear_edits.setToolTip("Re-include every peak excluded by hand and remove every "
-                                        "peak added by hand (Undo brings them back)")
-        self.btn_clear_edits.clicked.connect(self.clear_edits)
-        edit_bar.addWidget(self.btn_clear_edits)
-        self.lbl_edit = QtWidgets.QLabel("")
-        self.lbl_edit.setProperty("muted", True)
-        edit_bar.addWidget(self.lbl_edit, 1)
-        self.btn_mark_noise = QtWidgets.QPushButton("Mark Noise")
+        self.btn_mark_noise = QtWidgets.QPushButton("Mark noise")
         self.btn_mark_noise.setCheckable(True)
         self.btn_mark_noise.setEnabled(False)
         self.btn_mark_noise.setToolTip("Drag over a noisy stretch to leave its RR intervals out "
                                        "of HR / HRV; right click a noisy region to remove it")
+        for b in (self.btn_move, self.btn_edit, self.btn_mark_noise):
+            self.seg_tools.add_button(b, tool=True)
+        self.btn_move.clicked.connect(self._move_mode)
+        self.btn_edit.toggled.connect(self._edit_toggled)
         self.btn_mark_noise.toggled.connect(self._mark_noise_toggled)
-        edit_bar.addWidget(self.btn_mark_noise)
+        tools.addWidget(self.seg_tools)
+        self.chk_free = QtWidgets.QCheckBox("Free placement")
+        self.chk_free.setToolTip("Right click adds the peak exactly where clicked (no snapping, "
+                                 "no replacement)")
+        self.chk_free.setVisible(False)
+        tools.addWidget(self.chk_free)
+        self.btn_undo = QtWidgets.QPushButton("Undo")
+        self.btn_redo = QtWidgets.QPushButton("Redo")
+        self.btn_undo.setToolTip("Undo the last peak edit (Ctrl+Z)")
+        self.btn_redo.setToolTip("Redo (Ctrl+Y)")
+        self.btn_undo.clicked.connect(self.undo)
+        self.btn_redo.clicked.connect(self.redo)
+        tools.addWidget(self.btn_undo)
+        tools.addWidget(self.btn_redo)
+        self.btn_strip = QtWidgets.QPushButton("RR · HR · Quality")
+        self.btn_strip.setCheckable(True)
+        self.btn_strip.setToolTip("The RR, heart rate and beat quality (template correlation, "
+                                  "0.90 dashed) under the trace")
+        tools.addWidget(self.btn_strip)
+        # Less frequent: in a menu.
+        self.btn_more = QtWidgets.QToolButton()
+        self.btn_more.setText("More")
+        self.btn_more.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_more.setToolTip("Clear edits, artifacts, annotations, noisy regions, go to a time")
+        more = QtWidgets.QMenu(self.btn_more)
+        self.btn_more.setMenu(more)
+        tools.addWidget(self.btn_more)
+        ecg_lay.addLayout(tools)
+        self.lbl_edit = QtWidgets.QLabel("")
+        self.lbl_edit.setProperty("muted", True)
+        self.lbl_edit.setVisible(False)
+        ecg_lay.addWidget(self.lbl_edit)
+        self.plot = EcgPlot()
+        self.plot.time_clicked.connect(self._clicked)
+        self.plot.span_drawn.connect(self._noise_drawn)
+        self.plot.window_changed.connect(self._view_moved)
+        ecg_lay.addWidget(self.plot, 1)
+        lay.addWidget(ecg_card, 1)
+
+        # The menu's entries: kept as buttons too (the same commands).
+        self.btn_clear_edits = QtWidgets.QPushButton("Clear edits")
+        self.btn_clear_edits.setToolTip("Re-include every peak excluded by hand and remove every "
+                                        "peak added by hand (Undo brings them back)")
+        self.btn_clear_edits.clicked.connect(self.clear_edits)
         self.btn_review = QtWidgets.QPushButton("Review artifacts…")
         self.btn_review.setEnabled(False)
         self.btn_review.setToolTip("Find the RR artifacts (non-physiological, ectopic, "
                                    "duplicate) and decide for each: keep or remove")
         self.btn_review.clicked.connect(self._review)
-        edit_bar.addWidget(self.btn_review)
         self.btn_annotations = QtWidgets.QPushButton("Annotations")
         self.btn_annotations.setToolTip("Labelled periods of the recording (drug, stimulus, "
                                         "sleep...): drawn on the traces and the time course")
         self.btn_annotations.clicked.connect(lambda: self.open_periods("annotation"))
-        edit_bar.addWidget(self.btn_annotations)
         self.btn_noise = QtWidgets.QPushButton("Noisy regions")
         self.btn_noise.setToolTip("Stretches too noisy to trust: their RR intervals are left "
                                   "out of HR / HRV at the next Analyze")
         self.btn_noise.clicked.connect(lambda: self.open_periods("noise"))
-        edit_bar.addWidget(self.btn_noise)
-        lay.addLayout(edit_bar)
-
-        nav = QtWidgets.QHBoxLayout()
-        nav.addWidget(QtWidgets.QLabel("Go to (s):"))
+        for b in (self.btn_clear_edits, self.btn_review, self.btn_annotations, self.btn_noise):
+            b.setVisible(False)
+            b.setParent(self)
+        self._more_actions = {}
+        for key, btn in (("clear", self.btn_clear_edits), ("review", self.btn_review),
+                         ("annotations", self.btn_annotations), ("noise", self.btn_noise)):
+            act = more.addAction(btn.text())
+            act.setToolTip(btn.toolTip())
+            act.triggered.connect(btn.click)
+            self._more_actions[key] = act
+        more.addSeparator()
+        goto = QtWidgets.QWidget()
+        gl = QtWidgets.QHBoxLayout(goto)
+        gl.setContentsMargins(12, 4, 12, 4)
+        gl.addWidget(QtWidgets.QLabel("Go to (s)"))
         self.sp_goto = QtWidgets.QDoubleSpinBox()
         self.sp_goto.setRange(0.0, 1e7)
         self.sp_goto.setDecimals(3)
         self.sp_goto.setToolTip("Start of the view, in seconds (Enter or Go)")
         self.sp_goto.editingFinished.connect(lambda: self.go_to(self.sp_goto.value()))
-        nav.addWidget(self.sp_goto)
+        gl.addWidget(self.sp_goto)
         b_go = QtWidgets.QPushButton("Go")
         b_go.clicked.connect(lambda: self.go_to(self.sp_goto.value()))
-        nav.addWidget(b_go)
-        nav.addSpacing(16)
-        nav.addWidget(QtWidgets.QLabel("Flagged beat:"))
-        for text, step in (("◀", -1), ("▶", +1)):
+        gl.addWidget(b_go)
+        wa = QtWidgets.QWidgetAction(more)
+        wa.setDefaultWidget(goto)
+        more.addAction(wa)
+        more.aboutToShow.connect(self._sync_more_menu)
+
+        # ── heart rate: the number, and the whole recording as navigator ──
+        hr_card = QtWidgets.QFrame(objectName="Card")
+        hr_lay = QtWidgets.QHBoxLayout(hr_card)
+        hr_lay.setContentsMargins(16, 10, 14, 8)
+        hr_lay.setSpacing(18)
+        figs = QtWidgets.QVBoxLayout()
+        figs.setSpacing(2)
+        head = QtWidgets.QLabel("Heart rate")
+        head.setProperty("role", "heading")
+        figs.addWidget(head)
+        big = QtWidgets.QHBoxLayout()
+        big.setSpacing(6)
+        self.lbl_hr = QtWidgets.QLabel("—")
+        self.lbl_hr.setProperty("role", "big")
+        big.addWidget(self.lbl_hr, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
+        unit = QtWidgets.QLabel("bpm")
+        unit.setProperty("role", "unit")
+        big.addWidget(unit, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
+        big.addStretch(1)
+        figs.addLayout(big)
+        self.lbl_hr_range = QtWidgets.QLabel("in view")
+        self.lbl_hr_range.setProperty("muted", True)
+        figs.addWidget(self.lbl_hr_range)
+        self.lbl_hr_whole = QtWidgets.QLabel("")
+        self.lbl_hr_whole.setProperty("muted", True)
+        figs.addWidget(self.lbl_hr_whole)
+        figs.addStretch(1)
+        side = QtWidgets.QWidget()
+        side.setFixedWidth(190)
+        side.setLayout(figs)
+        hr_lay.addWidget(side)
+        hr_lay.addWidget(self.plot.over_view, 1)
+        lay.addWidget(hr_card)
+
+        # ── status: beats to check, the analysis window ──
+        status = QtWidgets.QHBoxLayout()
+        status.setSpacing(8)
+        lbl = QtWidgets.QLabel("Beats to check")
+        lbl.setProperty("muted", True)
+        status.addWidget(lbl)
+        for text, step, tip in (("‹", -1, "The previous beat flagged on the tachogram, centred"),
+                                ("›", +1, "The next beat flagged on the tachogram, centred")):
             b = QtWidgets.QPushButton(text)
-            b.setToolTip("The previous / next beat flagged on the RR tachogram (▲ / ▼), centred")
-            b.setMaximumWidth(40)
+            b.setToolTip(tip)
+            b.setFixedWidth(34)
             b.clicked.connect(lambda _c=False, d=step: self.step_spike(d))
-            nav.addWidget(b)
-        nav.addSpacing(16)
-        nav.addWidget(QtWidgets.QLabel("Analysis window (s):"))
+            status.addWidget(b)
+        status.addSpacing(12)
+        status.addWidget(self.lbl_agreement)
+        status.addStretch(1)
+        lbl = QtWidgets.QLabel("Analysis window:")
+        lbl.setProperty("muted", True)
+        status.addWidget(lbl)
+        self.lbl_window = QtWidgets.QLabel("")
+        status.addWidget(self.lbl_window)
+        self.btn_window = QtWidgets.QToolButton()
+        self.btn_window.setText("Change")
+        self.btn_window.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_window.setToolTip("The part of the recording Analyze uses")
+        wmenu = QtWidgets.QMenu(self.btn_window)
+        self.btn_window.setMenu(wmenu)
+        wbox = QtWidgets.QWidget()
+        wl = QtWidgets.QHBoxLayout(wbox)
+        wl.setContentsMargins(12, 6, 12, 6)
+        wl.addWidget(QtWidgets.QLabel("From (s)"))
         self.ed_win0, self.ed_win1 = QtWidgets.QLineEdit(), QtWidgets.QLineEdit()
         for ed, ph in ((self.ed_win0, "start"), (self.ed_win1, "end")):
             ed.setPlaceholderText(ph)
@@ -174,30 +313,26 @@ class DetectionTab(QtWidgets.QWidget):
             ed.setToolTip("The part of the recording Analyze uses (empty = signal start / "
                           "end); applied at the next Analyze")
             ed.returnPressed.connect(self.apply_analysis_window)
-            nav.addWidget(ed)
+            wl.addWidget(ed)
+            if ed is self.ed_win0:
+                wl.addWidget(QtWidgets.QLabel("to"))
         b = QtWidgets.QPushButton("Apply")
-        b.clicked.connect(self.apply_analysis_window)
-        nav.addWidget(b)
-        b = QtWidgets.QPushButton("Full")
+        b.setProperty("action", True)
+        b.clicked.connect(lambda: (self.apply_analysis_window(), wmenu.close()))
+        wl.addWidget(b)
+        b = QtWidgets.QPushButton("Whole signal")
         b.setToolTip("The whole signal")
-        b.clicked.connect(self.reset_analysis_window)
-        nav.addWidget(b)
-        self.lbl_window = QtWidgets.QLabel("")
-        nav.addWidget(self.lbl_window)
-        nav.addStretch(1)
-        self.btn_strip = QtWidgets.QPushButton("RR/HR/Quality")
-        self.btn_strip.setCheckable(True)
-        self.btn_strip.setToolTip("The RR, heart rate and beat quality (template correlation, "
-                                  "0.90 dashed) under the trace")
-        nav.addWidget(self.btn_strip)
-        lay.addLayout(nav)
-
-        self.plot = EcgPlot()
-        self.plot.time_clicked.connect(self._clicked)
-        self.plot.span_drawn.connect(self._noise_drawn)
-        lay.addWidget(self.plot, 1)
+        b.clicked.connect(lambda: (self.reset_analysis_window(), wmenu.close()))
+        wl.addWidget(b)
+        wa = QtWidgets.QWidgetAction(wmenu)
+        wa.setDefaultWidget(wbox)
+        wmenu.addAction(wa)
+        status.addWidget(self.btn_window)
+        lay.addLayout(status)
         self._update_undo_buttons()
-        on = bool(window.figures.ui.rrhr_strip_visible)
+        # The heart rate has its own card now: the strip is there on demand.
+        window.figures.ui.rrhr_strip_visible = False
+        on = False
         self.btn_strip.setChecked(on)
         self.plot.set_strip_visible(on)
         self.btn_strip.toggled.connect(self._strip_toggled)
@@ -254,6 +389,10 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot.clear()
         self.lbl_peaks.setText("Peaks: —")
         self.lbl_quality.setText("Quality: —")
+        self.lbl_summary.setText("Detect the peaks: choose the method and threshold, then "
+                                 "Detect peaks.")
+        self.lbl_view.setText("")
+        self._show_hr()
         self.update_period_counts()
 
     def detect(self) -> None:
@@ -261,8 +400,13 @@ class DetectionTab(QtWidgets.QWidget):
         if not path or not self.confirm_redetect():
             return
         self.btn_detect.setEnabled(False)
+        self.win.refresh_primary()
+
+        def _end() -> None:
+            self.btn_detect.setEnabled(True)
+            self.win.refresh_primary()
         self.win.run_job("Detect Peaks", load_and_detect, path, self.params(),
-                         on_done=self._detected, on_end=lambda: self.btn_detect.setEnabled(True))
+                         on_done=self._detected, on_end=_end)
 
     def confirm_redetect(self) -> bool:
         """A new detection starts from the detector's peaks: the peaks
@@ -354,9 +498,73 @@ class DetectionTab(QtWidgets.QWidget):
 
     # ── editing by hand ─────────────────────────────────────
     def _edit_toggled(self, on: bool) -> None:
-        self.btn_edit.setText("Edit Mode ON" if on else "Edit Peaks")
-        self.lbl_edit.setText("Left click: exclude / include · right click: add / remove · "
-                              "Ctrl+Z / Ctrl+Y" if on else "")
+        if on and self.btn_mark_noise.isChecked():
+            self.btn_mark_noise.setChecked(False)
+        self._sync_tools()
+
+    def _move_mode(self) -> None:
+        """Move: neither peak editing nor noise marking (a drag pans)."""
+        self.btn_mark_noise.setChecked(False)
+        self.btn_edit.setChecked(False)
+        self._sync_tools()
+
+    def _sync_tools(self) -> None:
+        """One tool at a time (Move, Edit peaks, Mark noise), its hint, and
+        Free placement while editing peaks."""
+        noise, edit = self.btn_mark_noise.isChecked(), self.btn_edit.isChecked()
+        self.btn_move.setChecked(not (noise or edit))
+        self.chk_free.setVisible(edit)
+        hint = ("Drag over a noisy stretch to mark it · right click a noisy region to remove it"
+                if noise else
+                "Left click a peak: exclude / include · right click: add / remove · "
+                "Ctrl+Z / Ctrl+Y" if edit else "")
+        self.lbl_edit.setText(hint)
+        self.lbl_edit.setVisible(bool(hint))
+
+    def set_view_width(self, width: float) -> None:
+        """Show *width* seconds from the start of the current view."""
+        if self.win.recording.signal.time is None:
+            return
+        t0, _t1 = self.plot.window()
+        start = max(0.0, min(self._end() - width, t0))
+        self.plot.set_window(start, start + width)
+
+    def _view_moved(self, t0: float, t1: float) -> None:
+        """The view's time span, its length among the presets, and the heart
+        rate of the beats in view."""
+        self.lbl_view.setText(f"{t0:.2f} – {t1:.2f} s")
+        width = t1 - t0
+        for b, w in zip(self.seg_window.buttons, WINDOW_PRESETS_S):
+            b.setChecked(abs(width - w) < 0.01 * w)
+        self._show_hr()
+
+    def _show_hr(self) -> None:
+        stats = self.plot.hr_stats()
+        if stats is None:
+            self.lbl_hr.setText("—")
+            self.lbl_hr_range.setText("in view")
+        else:
+            med, lo, hi = stats
+            self.lbl_hr.setText(f"{med:.0f}")
+            self.lbl_hr_range.setText(f"in view · {lo:.0f} – {hi:.0f} bpm")
+        hr = (self.win.recording.analysis.results or {}).get("hr") or {}
+        mean = hr.get("mean")
+        if mean is not None and np.isfinite(mean):
+            self.lbl_hr_whole.setText(f"Recording: {mean:.0f} bpm")
+            self.lbl_hr_whole.setToolTip("Mean heart rate of the analysis window (Analyze)")
+        else:
+            m = self.plot.mean_hr()
+            self.lbl_hr_whole.setText(f"Recording: ≈ {m:.0f} bpm" if m else "")
+            self.lbl_hr_whole.setToolTip("Mean of the beat-to-beat heart rate; Analyze gives "
+                                         "the value on the valid intervals")
+
+    def _sync_more_menu(self) -> None:
+        """The More menu's entries follow their buttons (enabled or not)."""
+        for key, btn in (("clear", self.btn_clear_edits), ("review", self.btn_review),
+                         ("annotations", self.btn_annotations), ("noise", self.btn_noise)):
+            act = self._more_actions[key]
+            act.setText(btn.text())
+            act.setEnabled(btn.isEnabled())
 
     # ── Mark Noise (DetectionController.toggle_noise_mode / _noise_press /
     #    on_detail_release) ──────────────────────────────────
@@ -364,15 +572,15 @@ class DetectionTab(QtWidgets.QWidget):
 
     def _mark_noise_toggled(self, on: bool) -> None:
         self.plot.span_mode = on
-        self.btn_mark_noise.setText("Mark Noise ON" if on else "Mark Noise")
         if on:
-            if not self.btn_edit.isChecked():
-                self.btn_edit.setChecked(True)
-            self.win.set_status("Mark Noise ON — drag over a noisy stretch to leave its RR "
-                                "intervals out of HR / HRV; right-click a noisy region to "
-                                "remove it.", warn=True)
+            if self.btn_edit.isChecked():
+                self.btn_edit.setChecked(False)
+            self.win.set_status("Mark noise: drag over a noisy stretch to leave its RR "
+                                "intervals out of HR / HRV; right click a noisy region to "
+                                "remove it.")
         else:
-            self.win.set_status("Mark Noise OFF — clicks edit peaks again.")
+            self.win.set_status("Mark noise off.")
+        self._sync_tools()
 
     def _noise_drawn(self, a: float, b: float) -> None:
         s = self.win.recording.signal
@@ -477,7 +685,7 @@ class DetectionTab(QtWidgets.QWidget):
 
     # ── analysis window ─────────────────────────────────────
     def _say_window(self, text: str, color: "str | None" = None) -> None:
-        self.lbl_window.setText(text)
+        self.lbl_window.setText(text or "whole signal")
         self.lbl_window.setStyleSheet(f"color: {color};" if color else "")
 
     def show_window_in_entries(self) -> None:
@@ -743,12 +951,31 @@ class DetectionTab(QtWidgets.QWidget):
         if q is not None:
             d.sig_quality = q
         self.lbl_quality.setText(f"Quality: {q}" if q is not None else "Quality: —")
+        self._show_summary(n, q)
+        self._show_hr()
         # The amplitude itself is a detail: in the tooltip, not on the bar.
         self.lbl_thr.setText("× median R")
         tip = (f"{self.threshold():.2f} × the median R-peak height = {d.thresh_amp:.2f} in "
                "normalised signal units")
         for w in (self.lbl_thr, self.sp_thr, self.sl_thr):
             w.setToolTip(tip)
+
+    def _show_summary(self, n: int, quality) -> None:
+        """Under the title: the peaks, how they were found, the hand edits."""
+        d = self.win.recording.detection
+        if d.rpeaks_ok is None:
+            self.lbl_summary.setText("Detect the peaks: choose the method and threshold, then "
+                                     "Detect peaks.")
+            return
+        parts = [f"{n:,} peaks", self.cb_method.currentText().split(" (")[0],
+                 f"threshold {self.threshold():.2f}"]
+        if quality is not None:
+            parts.append(f"quality {quality}/100")
+        edits = [f"{k} {what}" for k, what in ((len(d.manual_excluded), "excluded"),
+                                                (len(d.manual_added), "added")) if k]
+        if edits:
+            parts.append(", ".join(edits) + " by hand")
+        self.lbl_summary.setText(" · ".join(parts))
 
     def apply_palette(self, p) -> None:
         self.plot.apply_palette(p)
