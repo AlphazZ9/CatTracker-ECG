@@ -62,7 +62,9 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_detect.clicked.connect(self.detect)
         row.addWidget(self.btn_detect)
         row.addSpacing(16)
-        row.addWidget(QtWidgets.QLabel("Threshold"))
+        lbl = QtWidgets.QLabel("Threshold")
+        lbl.setToolTip("Fraction of the median R-peak height a candidate must reach")
+        row.addWidget(lbl)
         self.sl_thr = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.sl_thr.setRange(int(THRESH_MIN * 100), int(THRESH_MAX * 100))
         self.sl_thr.setValue(int(THRESH_DEFAULT * 100))
@@ -74,7 +76,7 @@ class DetectionTab(QtWidgets.QWidget):
         self.sp_thr.setDecimals(2)
         self.sp_thr.setValue(THRESH_DEFAULT)
         row.addWidget(self.sp_thr)
-        self.lbl_thr = QtWidgets.QLabel("of the median R height")
+        self.lbl_thr = QtWidgets.QLabel("× median R")
         self.lbl_thr.setProperty("muted", True)
         row.addWidget(self.lbl_thr)
         row.addSpacing(16)
@@ -741,7 +743,12 @@ class DetectionTab(QtWidgets.QWidget):
         if q is not None:
             d.sig_quality = q
         self.lbl_quality.setText(f"Quality: {q}" if q is not None else "Quality: —")
-        self.lbl_thr.setText(f"→ ≈{d.thresh_amp:.2f} norm. of the median R height")
+        # The amplitude itself is a detail: in the tooltip, not on the bar.
+        self.lbl_thr.setText("× median R")
+        tip = (f"{self.threshold():.2f} × the median R-peak height = {d.thresh_amp:.2f} in "
+               "normalised signal units")
+        for w in (self.lbl_thr, self.sp_thr, self.sl_thr):
+            w.setToolTip(tip)
 
     def apply_palette(self, p) -> None:
         self.plot.apply_palette(p)
