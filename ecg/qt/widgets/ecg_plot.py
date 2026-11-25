@@ -27,8 +27,14 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ecg.qt import theme
 
-DEFAULT_WINDOW_S = 10.0
+# Two seconds: about 16 beats of a mouse at 500 bpm, each QRS readable (ten
+# seconds packed some 85 beats into the view).
+DEFAULT_WINDOW_S = 2.0
 MIN_WINDOW_S = 0.1          # as the Tk views (ecg.app.state.MIN_VIEW_WINDOW_S)
+AXIS_WIDTH_PX = 52          # every lane's value axis: their time axes line up
+TRACE_MIN_HEIGHT_PX = 170   # the trace keeps this much; the strip gives way first
+FIT_DELAY_MS = 40           # vertical fits while panning: at most ~25 per second
+COMPACT_HEIGHT_PX = 460     # below this, the strip drops its Quality lane
 
 
 def _alpha(color: str, alpha: int) -> QtGui.QColor:
@@ -66,32 +72,46 @@ class EcgPlot(QtWidgets.QWidget):
         # The RR / HR / Quality strip under the trace (the Tk detail_rrhr
         # panel): each beat's RR and HR at its second peak, and its template
         # correlation, on the trace's time axis.
+        # One time axis for the whole stack (the trace's): the lanes under it
+        # share it instead of repeating it, which also spares three axes to
+        # repaint on every move of the view.
         self.strip = []
         for r, label in ((1, "RR (ms)"), (2, "HR (bpm)"), (3, "Quality")):
             p = self.view.addPlot(row=r, col=0)
             p.setXLink(self.detail)
             p.setMouseEnabled(x=False, y=False)
             p.setMenuEnabled(False)
-            p.showGrid(x=True, y=True, alpha=0.15)
             p.setLabel("left", label)
+            p.hideAxis("bottom")
+            p.getAxis("left").setTickDensity(0.6)
             p.hideButtons()
+            p.setMinimumHeight(44)
             p.setMaximumHeight(90)
             self.view.ci.layout.setRowStretchFactor(r, 1)
             self.strip.append(p)
         self.rr_curve, self.hr_curve, self.q_curve = (
             pg.PlotDataItem(symbol="o", symbolSize=3) for _ in range(3))
         for p, c in zip(self.strip, (self.rr_curve, self.hr_curve, self.q_curve)):
+            c.setClipToView(True)
             p.addItem(c)
         self.q_line = pg.InfiniteLine(pos=0.90, angle=0, movable=False)  # the 0.90 corr. line
         self.strip[2].addItem(self.q_line)
         self._rr = None
+        # Grid: the time lines of the trace only. A grid is drawn across the
+        # whole plot with transparency on every repaint; on all five plots it
+        # took more than half of the time of a move of the view.
+        self.detail.showGrid(x=True, y=False, alpha=0.15)
         for p in (self.detail, self.overview):
-            p.showGrid(x=True, y=True, alpha=0.15)
             p.setMenuEnabled(False)
         self.detail.setLabel("bottom", "Time", units="s")
         self.detail.setMouseEnabled(x=True, y=False)
+        self.detail.setMinimumHeight(TRACE_MIN_HEIGHT_PX)
         self.overview.setMouseEnabled(x=False, y=False)
-        self.overview.hideAxis("left")
+        self.overview.setMinimumHeight(48)
+        self.overview.getAxis("left").setStyle(showValues=False)
+        self.overview.getAxis("left").setPen(pg.mkPen(None))
+        for p in [self.detail, self.overview] + self.strip:
+            p.getAxis("left").setWidth(AXIS_WIDTH_PX)
 
         self.trace = pg.PlotDataItem(pen=pg.mkPen(width=1))
         self.trace.setDownsampling(auto=True, method="peak")
@@ -114,6 +134,10 @@ class EcgPlot(QtWidgets.QWidget):
         self.overview.addItem(self.band)
         self.band.sigRegionChanged.connect(self._band_moved)
         self.detail.sigXRangeChanged.connect(self._detail_moved)
+        # The vertical fits (trace and strip) follow the view at most every
+        # FIT_DELAY_MS while it moves: each one is a full repaint.
+        self._fit_timer = QtCore.QTimer(self, singleShot=True, interval=FIT_DELAY_MS)
+        self._fit_timer.timeout.connect(self._fit_now)
         self.detail.sigYRangeChanged.connect(lambda *_a: self._place_labels())
         self.detail.scene().sigMouseClicked.connect(self._clicked)
         # Span mode (Mark Noise): a left drag draws a span instead of panning.
@@ -152,8 +176,32 @@ class EcgPlot(QtWidgets.QWidget):
             item.setData(idx / self._fs, self._signal[idx])
 
     def set_strip_visible(self, on: bool) -> None:
-        for p in self.strip:
-            p.setVisible(bool(on))
+        """Show / hide the RR / HR / Quality lanes."""
+        self._strip_on = bool(on)
+        self._layout_strip()
+
+    def _layout_strip(self) -> None:
+        """The lanes shown (Quality gives way in a short window, so the trace
+        keeps its height) and the time axis at the bottom of the stack: the
+        trace's, or the last lane's."""
+        on = getattr(self, "_strip_on", True)
+        compact = self.height() < COMPACT_HEIGHT_PX
+        shown = [on, on, on and not compact]
+        for p, vis in zip(self.strip, shown):
+            p.setVisible(vis)
+            p.hideAxis("bottom")
+        lanes = [p for p, vis in zip(self.strip, shown) if vis]
+        if lanes:
+            self.detail.hideAxis("bottom")
+            lanes[-1].showAxis("bottom")
+            lanes[-1].setLabel("bottom", "Time", units="s")
+        else:
+            self.detail.showAxis("bottom")
+
+    def resizeEvent(self, ev: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(ev)
+        if (ev.size().height() < COMPACT_HEIGHT_PX) != (ev.oldSize().height() < COMPACT_HEIGHT_PX):
+            self._layout_strip()
 
     def set_beats(self, peaks: "Optional[np.ndarray]", quality_t: "Optional[np.ndarray]" = None,
                   quality: "Optional[np.ndarray]" = None) -> None:
@@ -191,7 +239,16 @@ class EcgPlot(QtWidgets.QWidget):
             half = float(np.max(np.abs(v - c))) or max(abs(c) * 0.05, 1.0)
             half *= 1.08
             p.setYRange(c - half, c + half, padding=0)
-        self.strip[2].setYRange(min(0.0, self.strip[2].viewRange()[1][0]), 1.02, padding=0)
+        # Quality (template correlation, up to 1): from a little under the
+        # lowest beat in view, at most 0.85, so the 0.90 line and the beats
+        # near 1 are both readable.
+        q_t, q = self.q_curve.getData()
+        lo = 0.85
+        if q_t is not None and len(q_t):
+            inside = (q_t >= t0) & (q_t <= t1) & np.isfinite(q)
+            if inside.any():
+                lo = min(lo, float(np.min(q[inside])) - 0.03)
+        self.strip[2].setYRange(max(-1.0, lo), 1.01, padding=0)
 
     def set_unconfirmed(self, peaks: "Optional[np.ndarray]") -> None:
         """Circle the beats Check agreement found unconfirmed (sample indices)."""
@@ -262,9 +319,11 @@ class EcgPlot(QtWidgets.QWidget):
         return float(t0), float(t1)
 
     def set_window(self, t0: float, t1: float) -> None:
+        """Show *t0*-*t1* (s), fitted at once (a jump, not a drag)."""
         if t1 - t0 < MIN_WINDOW_S:
             t1 = t0 + MIN_WINDOW_S
         self.detail.setXRange(t0, t1, padding=0)
+        self.flush_fit()
 
     def _band_moved(self) -> None:
         if self._syncing:
@@ -275,17 +334,26 @@ class EcgPlot(QtWidgets.QWidget):
         self._syncing = False
 
     def _detail_moved(self, *_a) -> None:
-        self._fit_strip()
-        self._detail_moved_band()
-
-    def _detail_moved_band(self, *_a) -> None:
         t0, t1 = self.window()
         if not self._syncing:
             self._syncing = True
             self.band.setRegion((t0, t1))
             self._syncing = False
-        self._fit_y(t0, t1)
+        if not self._fit_timer.isActive():
+            self._fit_timer.start()
         self.window_changed.emit(t0, t1)
+
+    def _fit_now(self) -> None:
+        """The vertical ranges for what is in view: the trace, then the strip."""
+        t0, t1 = self.window()
+        self._fit_y(t0, t1)
+        self._fit_strip()
+
+    def flush_fit(self) -> None:
+        """Fit now what a move of the view left to fit (tests, exports)."""
+        if self._fit_timer.isActive():
+            self._fit_timer.stop()
+        self._fit_now()
 
     def _fit_y(self, t0: float, t1: float) -> None:
         if self._signal is None or not len(self._signal):
