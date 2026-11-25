@@ -29,6 +29,8 @@ from ecg.qt.figure_host import StatusLabel
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
 
+NEEDS_ANALYZE = "Click Analyze first"
+
 
 class MorphologyTab(QtWidgets.QScrollArea):
     def __init__(self, window: "MainWindow") -> None:
@@ -79,7 +81,7 @@ class MorphologyTab(QtWidgets.QScrollArea):
         from ecg.qt.widgets.stale_banner import StaleBanner
         self.banner = StaleBanner(self, on_recompute=lambda: self.measure())
         lay.addWidget(self.banner)
-        host.lbl_ivl_status = StatusLabel("Click Analyze first")
+        host.lbl_ivl_status = StatusLabel(NEEDS_ANALYZE)
         host.lbl_ivl_status.setProperty("muted", True)
         lay.addWidget(host.lbl_ivl_status)
         # The three steps (TabMorphologyMixin's chips): mean beat, check the
@@ -152,8 +154,11 @@ class MorphologyTab(QtWidgets.QScrollArea):
     def results_changed(self) -> None:
         has = self.win.recording.analysis.results is not None
         self.btn_measure.setEnabled(has)
+        lbl = self.win.figures.lbl_ivl_status
+        if has and lbl.text() == NEEDS_ANALYZE:
+            lbl.configure(text="")          # the steps below say what comes next
         if not has:
-            self.win.figures.lbl_ivl_status.configure(text="Click Analyze first")
+            lbl.configure(text=NEEDS_ANALYZE)
             for name in ("beat", "intervals", "beat_dist", "qtc_rr"):
                 if name in self.win.figures._slots:
                     self.win.figures._slots[name].clear()

@@ -25,6 +25,9 @@ from ecg.qt.figure_host import StatusLabel, Value
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
 
+NEEDS_PEAKS = "Detect the peaks, then classify."
+READY = ("Click Classify events to find the bradycardia and tachycardia episodes, pauses "
+         "and premature beats.")
 COLUMNS = ("#", "Event", "Start (s)", "End (s)", "Beats", "HR (bpm)", "Δ baseline", "Severity")
 
 
@@ -69,7 +72,7 @@ class EventsTab(QtWidgets.QWidget):
         host.ent_arr_baseline = Value(self.sp_baseline.value)
         host.ent_arr_brady_pct = Value(self.sp_brady.value)
         host.ent_arr_min_beats = Value(lambda: int(self.sp_min_beats.value()))
-        host.lbl_arrhythmia_status = StatusLabel("Detect the peaks, then classify.")
+        host.lbl_arrhythmia_status = StatusLabel(NEEDS_PEAKS)
         host.lbl_arrhythmia_status.setProperty("muted", True)
         host.lbl_arrhythmia_status.setWordWrap(True)
         lay.addWidget(host.lbl_arrhythmia_status)
@@ -178,7 +181,11 @@ class EventsTab(QtWidgets.QWidget):
                                                host.ui.peaks_edited_at))
 
     def peaks_changed(self) -> None:
-        self.btn_classify.setEnabled(self.win.recording.detection.rpeaks_ok is not None)
+        has = self.win.recording.detection.rpeaks_ok is not None
+        self.btn_classify.setEnabled(has)
+        lbl = self.win.figures.lbl_arrhythmia_status
+        if lbl.text() in (NEEDS_PEAKS, READY):     # the prompt, not a classification's summary
+            lbl.configure(text=READY if has else NEEDS_PEAKS)
 
     def show_events(self, events: list) -> None:
         """The event list (AnalysisController.build_event_cards, as a table)."""
@@ -217,3 +224,4 @@ class EventsTab(QtWidgets.QWidget):
         for name in ("arr_ribbon", "arr_detail"):
             self.win.figures.slot(name).clear()
         self.win.figures.lbl_arr_event_title.configure(text="Select an event")
+        self.win.figures.lbl_arrhythmia_status.configure(text=NEEDS_PEAKS)
