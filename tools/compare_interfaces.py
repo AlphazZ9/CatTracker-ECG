@@ -14,7 +14,8 @@ the outputs are compared:
   same values (numbers to the last bit; a cell holding a date-time stamp
   in both is only required to be a stamp in both);
 * the RR CSV, byte for byte;
-* the report text and the Report tab's provenance rows, line by line;
+* the report text and the Report tab's provenance rows, line by line (a
+  date-time stamp in a line may differ);
 * the session state Save Session writes, key by key (its save / compute
   time stamps excepted).
 
@@ -121,7 +122,8 @@ def compare_dirs(tk: Path, qt: Path) -> "tuple[list[str], dict]":
         lb = (qt / name).read_text(encoding="utf-8").splitlines()
         stats[f"{name} lines"] = len(la)
         for i, (x, y) in enumerate(zip(la, lb)):
-            if x != y:
+            # A date-time stamp (the export time) may differ; nothing else.
+            if x != y and STAMP.sub("<time>", x) != STAMP.sub("<time>", y):
                 diffs.append(f"{name} line {i + 1}: {x!r} != {y!r}")
         if len(la) != len(lb):
             diffs.append(f"{name}: {len(la)} lines != {len(lb)}")
