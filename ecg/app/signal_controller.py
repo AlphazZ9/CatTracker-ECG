@@ -505,8 +505,8 @@ class SignalController:
         if self.app.btn_check_agreement is not None:
             self.app._set_check_agreement_enabled(n > 4)
         self.app._update_signal_quality(self.app.detection.rpeaks_ok)  # type: ignore[union-attr]
-        # Artifact review sits in the always-visible Signal quality panel,
-        # beside the peaks it edits: nothing to open.
+        # Artifact review is a button of the Signal & Detection tab, beside
+        # the peaks it edits: nothing to open.
 
         dur = bundle["dur_s"]
         detector_warning = bundle.get("detector_warning")

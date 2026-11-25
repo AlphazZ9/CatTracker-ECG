@@ -292,8 +292,8 @@ def detect_candidates(
             model = MLPeakModel.load()
             peaks_ml, proms_ml, t_amp_ml = detect_peaks_ml(sig, fs, model, progress_cb=_ml_prog)
         except NoModelError as exc:
-            # No trained model yet: the status bar points at the panel's
-            # ML section, which opens and says what to do (the whole
+            # No trained model yet: the status bar points at the ML
+            # detector… dialog, which says what to do (the whole
             # NO_MODEL_MESSAGE does not fit the status bar).
             log.warning("ML detector: %s", exc)
             detector_warning = NO_MODEL_STATUS

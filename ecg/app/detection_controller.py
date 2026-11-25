@@ -159,12 +159,11 @@ class DetectionController:
             else:
                 self.app._sg_frame.pack_forget()
 
-        # ML Detector needs a trained model before it can run. Its section in
-        # the Signal quality panel is always there (examples are prepared
-        # with the other methods); choosing the method without a model opens
-        # it and says what to do (absent from test doubles without that panel).
-        # Its status line says so while Method = ML Detector (and stops
-        # saying it on another Method): refreshed on every change.
+        # ML Detector needs a trained model before it can run. A host with an
+        # ML status line (lbl_ml_status: the former Tk section; the Qt
+        # interface has the ML detector… dialog instead, and Detect Peaks
+        # reports NO_MODEL_STATUS) refreshes it on every change, and choosing
+        # the method without a model opens it and says what to do.
         if getattr(self.app, "lbl_ml_status", None) is not None:
             self.app.refresh_ml_status()
             if choice == "ML Detector" and not MLPeakModel.exists():
