@@ -86,3 +86,32 @@ def test_mark_noise_drag_and_right_click(qtbot, window):
     assert len(window.recording.analysis.noise_regions) == 1
     det._clicked(20.0, "left")                # no peak edit while Mark Noise is on
     assert (window.recording.detection.rpeaks_ok == peaks_before).all()
+
+
+def test_suggest_from_channels_adds_the_ticked_suggestions(qtbot, window, monkeypatch):
+    from ecg.io.export import ANNOTATION_COLORS
+    from ecg.services import annotation_suggest_service as svc
+    found = [{"t_start": 10.0, "t_end": 11.0, "label": "Keyboard '1'", "source": "Keyboard"},
+             {"t_start": 60.0, "t_end": 61.0, "label": "Stim (20 pulses)", "source": "Stim"},
+             {"t_start": 70.0, "t_end": 71.0, "label": "Stim (5 pulses)", "source": "Stim"}]
+    seen = []
+    monkeypatch.setattr(svc, "collect", lambda *a: seen.append(a) or (found, ["Keyboard", "Stim"]))
+    window.open_path(str(FIXTURE), check_session=False)
+    window.recording.analysis.annotations[:] = [
+        {"t_start": 30.0, "t_end": 31.0, "label": "drug", "color": "#E53935"}]
+    m = PeriodsManager(window, "annotation", window.detection.annotations_changed)
+    qtbot.addWidget(m)
+    m.suggest()
+    dlg = m.suggest_dialog
+    qtbot.waitUntil(lambda: dlg.btn_add.isEnabled(), timeout=10000)
+    assert seen[0][0] == str(FIXTURE) and seen[0][4][0]["label"] == "drug"
+    from PySide6 import QtCore
+    dlg.table.item(0, 0).setCheckState(QtCore.Qt.CheckState.Unchecked)
+    dlg.table.item(1, 2).setText("Stim 20 Hz")
+    dlg.add()
+    anns = window.recording.analysis.annotations
+    assert [(a["t_start"], a["label"]) for a in anns] == \
+        [(30.0, "drug"), (60.0, "Stim 20 Hz"), (70.0, "Stim (5 pulses)")]
+    # one colour per source channel
+    assert anns[1]["color"] == anns[2]["color"] == ANNOTATION_COLORS[0][0]
+    assert m.table.rowCount() == 3 and window.session_dirty

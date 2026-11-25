@@ -40,3 +40,23 @@ def _isolated_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "_schema_retry_at", 0.0)
     monkeypatch.setattr(ml, "TRAINING_DATA_DIR", d / "ml_training")
     monkeypatch.setattr(ml, "MODEL_PATH", d / "model.skops")
+    import ecg.qt.theme as qt_theme
+    monkeypatch.setattr(qt_theme, "PREFS_PATH", d / "ecg_qt_prefs.json")
+    monkeypatch.setattr(qt_theme, "LEGACY_THEME_PATH", d / "ecg_theme.json")
+
+
+@pytest.fixture(autouse=True)
+def _restore_shared_state():
+    """What a Qt test changes outside its window comes back after it: the
+    figures' theme (light) and the controllers' message boxes (no window),
+    so the toolkit-free tests that run next see the defaults."""
+    yield
+    from ecg.app import dialogs
+    from ecg.qt import theme
+    from ecg.qt.figure_host import sync_figure_theme
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance()
+    if app is not None and (theme.current().is_dark or theme.font_scale() != 1.0):
+        theme.apply(app, theme.LIGHT.name, 1.0)
+    sync_figure_theme(False)
+    dialogs.uninstall()

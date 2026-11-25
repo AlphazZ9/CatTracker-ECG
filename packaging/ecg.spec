@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for the standalone "Tom ECG Analysis" app.
+PyInstaller spec for the standalone "Tom ECG Analysis" app (the Qt
+interface, PySide6; entry script ecg_app.py).
 
 Build (from the repository root):
     pyinstaller --noconfirm packaging/ecg.spec
@@ -10,8 +11,11 @@ Result:
     Windows : dist/Tom ECG Analysis/Tom ECG Analysis.exe   (one-folder build)
     macOS   : dist/Tom ECG Analysis.app                    (app bundle)
 
+Check a build without opening a file (writes "ok ..." to the file):
+    "dist/Tom ECG Analysis/Tom ECG Analysis" --self-test result.txt
+
 Icon: packaging/icon.ico (Windows) and packaging/icon.icns (macOS), next to
-this file, are picked up automatically; ecg/ui/assets (window / taskbar icon
+this file, are picked up automatically; ecg/app/assets (window / taskbar icon
 at run time) is bundled as data. All are generated from packaging/icon/*.svg
 by tools/build_icons.py.
 
@@ -28,7 +32,7 @@ HERE = Path(SPECPATH).resolve()          # packaging/
 ROOT = HERE.parent                       # repository root
 APP_NAME = "Tom ECG Analysis"
 BUNDLE_ID = "com.alphazz9.tom-ecg-analysis"
-VERSION = os.environ.get("APP_VERSION", "").lstrip("v") or "6.2.0"
+VERSION = os.environ.get("APP_VERSION", "").lstrip("v") or "7.0.0"
 IS_MAC = sys.platform == "darwin"
 
 
@@ -42,19 +46,21 @@ def _have(mod: str) -> bool:
 
 # ── Data files ────────────────────────────────────────────────
 datas = []
-datas += collect_data_files("customtkinter")      # themes (.json) + fonts
-datas += [(str(ROOT / "ecg" / "ui" / "assets"), "ecg/ui/assets")]  # app icon (window/taskbar)
+datas += [(str(ROOT / "ecg" / "app" / "assets"), "ecg/app/assets")]  # app icon (window/taskbar)
 datas += collect_data_files("neurokit2")          # bundled datasets / templates
 datas += collect_data_files("matplotlib")         # mpl-data (also done by its hook)
 datas += collect_data_files("skops")
+datas += collect_data_files("pyqtgraph")          # colour maps, icons
 for _opt in ("pzfx",):
     if _have(_opt):
         datas += collect_data_files(_opt)
 
 # ── Hidden imports (imported lazily / by name at runtime) ─────
 hiddenimports = []
-hiddenimports += collect_submodules("customtkinter")
 hiddenimports += collect_submodules("skops")      # skops.io resolves loaders by name
+hiddenimports += collect_submodules("ecg.qt")     # tabs / dialogs imported lazily
+hiddenimports += collect_submodules("pyqtgraph", filter=lambda m: ".examples" not in m
+                                    and ".opengl" not in m and "jupyter" not in m)
 hiddenimports += [
     "sklearn.ensemble",
     "sklearn.ensemble._forest",
@@ -73,8 +79,8 @@ hiddenimports += [
     "scipy.stats",
     "openpyxl",
     "openpyxl.cell._writer",
-    "PIL._tkinter_finder",
-    "matplotlib.backends.backend_tkagg",
+    "matplotlib.backends.backend_qtagg",
+    "PySide6.QtSvg",
     "matplotlib.backends.backend_pdf",
     "matplotlib.backends.backend_svg",
     "sqlite3",
@@ -91,11 +97,13 @@ if _have("neo"):
 
 # Not used by the app; leaving them out keeps the bundle smaller.
 excludes = [
-    "PyQt5", "PyQt6", "PySide2", "PySide6", "wx",
+    "PyQt5", "PyQt6", "PySide2", "wx",
     "IPython", "jupyter", "notebook", "nbformat", "jedi",
-    "pytest", "sphinx", "docutils",
-    "matplotlib.backends.backend_qt", "matplotlib.backends.backend_qtagg",
+    "pytest", "pytestqt", "sphinx", "docutils",
     "matplotlib.backends.backend_wx", "matplotlib.backends.backend_gtk3",
+    "matplotlib.backends.backend_tkagg", "matplotlib.backends._backend_tk",
+    "tkinter", "_tkinter", "customtkinter",
+    "pyqtgraph.opengl", "OpenGL",
 ]
 
 _ico = HERE / "icon.ico"
@@ -107,10 +115,12 @@ elif not IS_MAC and _ico.exists():
     icon = str(_ico)
 
 
+binaries = []
+
 a = Analysis(
     [str(ROOT / "ecg_app.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

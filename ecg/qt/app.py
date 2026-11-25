@@ -33,8 +33,17 @@ def main(argv: "Optional[list[str]]" = None) -> int:
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(argv)
     app.setApplicationName("ECG Analysis")
+    from ecg.app.theme import APP_ICON_PATH, NK_AVAILABLE
+    if APP_ICON_PATH:                          # window / taskbar icon
+        from PySide6 import QtGui
+        app.setWindowIcon(QtGui.QIcon(APP_ICON_PATH))
+    if not NK_AVAILABLE and self_test is None:
+        QtWidgets.QMessageBox.critical(None, "Missing dependency",
+                                       "Install NeuroKit2:\n  pip install neurokit2")
+        return 1
     pg.setConfigOptions(antialias=False, useOpenGL=False)
-    theme.apply(app)
+    prefs = theme.load_prefs()
+    theme.apply(app, prefs["theme"], prefs["font_scale"])
     from ecg.qt.figure_host import sync_figure_theme
     sync_figure_theme(theme.current().is_dark)
     from ecg.qt.errors import install_excepthook, setup_logging

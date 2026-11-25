@@ -14,8 +14,8 @@ from ecg.core import analysis
 from ecg.core.analysis import analyse_core
 from ecg.core.metric_table import build_metric_table
 from ecg.io.export import ExcelExporter
-from ecg.ui.export_controller import ExportController, pdf_metric_rows
-from ecg.ui.state import AnalysisState, DetectionState, SignalState
+from ecg.app.export_controller import ExportController, pdf_metric_rows
+from ecg.app.state import AnalysisState, DetectionState, SignalState
 
 from tests.helpers import make_synth_ecg
 

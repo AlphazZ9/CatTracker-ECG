@@ -130,7 +130,7 @@ class ArtifactReviewDialog(QtWidgets.QDialog):
         if not 0 <= idx < len(self.candidates):
             return
         c, fs, sig = self.candidates[idx], self.fs, self.sig
-        from ecg.ui.theme import ARTIFACT_TYPE_COLOR, ORANGE
+        from ecg.app.theme import ARTIFACT_TYPE_COLOR, ORANGE
         color = ARTIFACT_TYPE_COLOR.get(c["type"], ORANGE)
         samp = int(c["sample"])
         lo = max(0, samp - int(CONTEXT_S * fs))

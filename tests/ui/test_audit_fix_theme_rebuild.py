@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from ecg.ui.session_controller import SessionController
+from ecg.app.session_controller import SessionController
 
 
 class _Switch:

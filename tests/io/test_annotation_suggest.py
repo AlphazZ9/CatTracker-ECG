@@ -7,7 +7,7 @@ import scipy.io
 
 from ecg.core import annotation_suggest as sug
 from ecg.io import event_channels as evc
-from ecg.ui.annotation_suggest_dialog import collect
+from ecg.services.annotation_suggest_service import collect
 
 
 def _spike2_mat(path, fs=1000.0, dur=120.0):
@@ -91,37 +91,3 @@ def test_spike2_keyboard_labels(monkeypatch, tmp_path):
                                                                       (296.0, "b")]}
 
 
-def test_the_dialog_adds_the_ticked_suggestions(monkeypatch, tmp_path):
-    import tkinter as tk
-    from types import SimpleNamespace as NS
-    import customtkinter as ctk
-    import pytest
-    from ecg.ui import annotation_suggest_dialog as asd
-    try:
-        root = ctk.CTk()
-    except tk.TclError:
-        pytest.skip("no display")
-    root.withdraw()
-    try:
-        found = [{"t_start": 10.0, "t_end": 11.0, "label": "Keyboard '1'", "source": "Keyboard"},
-                 {"t_start": 60.0, "t_end": 61.0, "label": "Stim (20 pulses)", "source": "Stim"}]
-        monkeypatch.setattr(asd, "collect", lambda *a: (found, ["Keyboard", "Stim"]))
-        app = NS(signal=NS(filepath="x.mat", channel="ECG", crop=None), _time=None,
-                 analysis=NS(annotations=[]))
-        added = []
-        dlg = asd.AnnotationSuggestDialog(root, app, added.extend)
-        for _ in range(50):
-            root.update()
-            if dlg._rows:
-                break
-            import time
-            time.sleep(0.02)
-        assert len(dlg._rows) == 2
-        dlg._rows[0][0].set(False)
-        dlg._rows[1][1].delete(0, "end")
-        dlg._rows[1][1].insert(0, "Stim 20 Hz")
-        dlg._add()
-        assert [(a["t_start"], a["label"]) for a in added] == [(60.0, "Stim 20 Hz")]
-        assert added[0]["color"]
-    finally:
-        root.destroy()

@@ -12,7 +12,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
 from ecg.core.analysis import (                          # noqa: E402
     INTERVAL_DEFINITIONS_TEXT, LEGACY_INTERVAL_DEFINITIONS_TEXT,
 )
-from ecg.ui.plots import wrap_fig_text                   # noqa: E402
+from ecg.app.plots import wrap_fig_text                   # noqa: E402
 
 
 def _text_extent(fig, txt):
@@ -58,7 +58,7 @@ def test_pdf_footer_states_the_definitions_of_its_frame():
     import numpy as np
     import pandas as pd
     from ecg.core import analysis
-    from ecg.ui.export_controller import pdf_interval_footer
+    from ecg.app.export_controller import pdf_interval_footer
     frame = pd.DataFrame({"R_peak_s": [1.0, 1.1, 1.22, 1.34, 1.46],
                           "RR_ms": [100.0, 120.0, 120.0, 120.0, np.nan],
                           "QT_ms": [50.0, 52.0, 54.0, 56.0, 58.0]})

@@ -154,17 +154,3 @@ def test_csv_opens_in_excel_with_its_symbols(tmp_path):
     assert raw.startswith(b"\xef\xbb\xbf") and "Δ%".encode() in raw
 
 
-def test_main_exports_take_a_comparison_only_while_its_basis_is_current():
-    from types import SimpleNamespace
-    from ecg.ui.compare_segments import CompareSegmentsMixin
-    res = _result()
-    sig = {"now": ("peaks", 1)}
-    app = SimpleNamespace(analysis=SimpleNamespace(last_comparison=res,
-                                                   last_comparison_basis=("peaks", 1)),
-                          _compare_signature=lambda: sig["now"])
-    assert CompareSegmentsMixin._current_comparison(app) is res
-    sig["now"] = ("peaks", 2)                                  # peaks edited since
-    assert CompareSegmentsMixin._current_comparison(app) is None
-    app.analysis.last_comparison_basis = None
-    sig["now"] = None
-    assert CompareSegmentsMixin._current_comparison(app) is None

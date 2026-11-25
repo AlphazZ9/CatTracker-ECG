@@ -14,9 +14,9 @@ import pytest
 
 from ecg.core import analysis
 from ecg.core.models import MouseECG
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.plot_controller import PlotController
-from ecg.ui.state import AnalysisState, DetectionState, SignalState
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.plot_controller import PlotController
+from ecg.app.state import AnalysisState, DetectionState, SignalState
 
 from tests.helpers import rpeaks_from_rr
 
@@ -151,12 +151,6 @@ def test_entropy_cap_comes_from_the_nonlinear_tab():
     assert AnalysisController(SimpleNamespace()).entropy_cap() == MouseECG.ENTROPY_MAX_BEATS
 
 
-def test_beat_level_mann_whitney_is_gone():
-    assert not hasattr(AnalysisController, "mannwhitney_test")
-    from ecg.ui.app import ECGApp
-    assert not hasattr(ECGApp, "_mannwhitney_test")
-    keys = [k for k, _, _ in ECGApp._SEGMENT_TABLE_METRICS]
-    assert {"n_blocks", "hr_block_mean", "hr_block_sd"} <= set(keys)
 
 
 @requires_nk

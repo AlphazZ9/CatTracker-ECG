@@ -17,14 +17,14 @@ import pandas as pd
 import pytest
 
 from ecg.core import analysis
-from ecg.ui import session_controller as sc_module
+from ecg.app import session_controller as sc_module
 from ecg.services import session_service  # where restore reloads the signal
-from ecg.ui.app_async import recording_changed
-from ecg.ui.freshness import UP_TO_DATE
-from ecg.ui.session_controller import SessionController
-from ecg.ui.signal_controller import SignalController
-from ecg.ui.state import AnalysisState, DetectionState, SessionState, SignalState
-from ecg.ui.theme import ORANGE
+from ecg.app.jobs import recording_changed
+from ecg.app.freshness import UP_TO_DATE
+from ecg.app.session_controller import SessionController
+from ecg.app.signal_controller import SignalController
+from ecg.app.state import AnalysisState, DetectionState, SessionState, SignalState
+from ecg.app.theme import ORANGE
 
 
 class _Recorder:
@@ -117,7 +117,7 @@ requires_nk = pytest.mark.skipif(not analysis.NK_AVAILABLE, reason="neurokit2 no
 def ana_app(monkeypatch):
     from tests.ui import test_freshness as tf
     from tests.helpers import make_synth_ecg
-    from ecg.ui import analysis_controller as ac
+    from ecg.app import analysis_controller as ac
     box = SimpleNamespace(showwarning=lambda *a, **k: None, showerror=lambda *a, **k: None,
                           showinfo=lambda *a, **k: None)
     monkeypatch.setattr(ac, "messagebox", box)

@@ -23,17 +23,18 @@ ecg/
     events_service.py   — abnormal-event classification (Events tab)
     autonomic_service.py — CSI / CPI and SPWVD LF / HF (Autonomic view)
     session_service.py  — the recording's side of a session (save / restore)
+    agreement_service.py — Check agreement (the other detectors' cross-check)
+    annotation_suggest_service.py — annotations from the file's channels
+    recording_fields.py — Subject ID / sex from the file name
   io/
     loaders.py       — .mat / HDF5 signal loading
     session.py       — session save/load (JSON)
     export.py        — Excel (openpyxl) and Prism exporters
-  ui/
-    theme.py         — colour/font globals, ThemeConfig, apply_theme_config
-    plots.py         — style_axes, CanvasSlot (matplotlib ↔ Tk bridge)
-    dialogs.py       — ThemeDialog, ArtifactReviewDialog, Annotation dialogs
-    wave_editor.py   — WaveTemplateMiniEditor
-    popover.py       — Popover (Recording sheet, Filters, ⋯ menu, Report > More)
-    app.py           — ECGApp (main CTk window)
+  figures/           — figures drawn on a Matplotlib Figure (Cohort Trends)
+  app/               — the application layer, no toolkit: state, controllers,
+                       figures, freshness, theme of the figures; message boxes
+                       through dialogs.py (installed by the interface)
+  qt/                — the interface (PySide6 + PyQtGraph):  python -m ecg
 """
 
-__version__ = "6.2.0"
+__version__ = "7.0.0"

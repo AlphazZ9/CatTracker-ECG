@@ -10,9 +10,9 @@ from types import SimpleNamespace
 import numpy as np
 
 from ecg.core import peak_editing as dc_module  # where run_detection applies the threshold
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.detection_controller import DetectionController
-from ecg.ui.state import AnalysisState, DetectionState, SessionState, SignalState, UIState
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.detection_controller import DetectionController
+from ecg.app.state import AnalysisState, DetectionState, SessionState, SignalState, UIState
 
 FS = 2000.0
 

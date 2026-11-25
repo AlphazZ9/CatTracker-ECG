@@ -19,7 +19,7 @@ from PySide6 import QtWidgets
 
 from ecg.core.wave_template import WaveTemplate, _mouse_demo_beat
 from ecg.qt.widgets.mpl_canvas import MplCanvas
-from ecg.ui.wave_editor import WaveTemplateMiniEditor as _Tk, dragged_landmark, hit_landmark
+from ecg.app.wave_landmarks import WaveLandmarks as _Tk, dragged_landmark, hit_landmark
 
 KEYS, COLS, LABELS = _Tk._KEYS, _Tk._COLS, _Tk._LABELS
 GRAB_R_MS = _Tk._GRAB_R_MS

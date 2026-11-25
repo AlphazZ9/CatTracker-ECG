@@ -16,13 +16,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from ecg.core.autonomic import COV_METHODS
 from ecg.core.models import MouseECG
 from ecg.qt.figure_host import Field, StatusLabel, TextBox
 from ecg.qt.theme import current as theme_current
-from ecg.ui.autonomic_view import normalise_autonomic_params
+from ecg.app.autonomic_view import normalise_autonomic_params
 
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
@@ -63,7 +63,56 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.btn_epochs.clicked.connect(ctl.compute_epochs)
         self.btn_sliding.clicked.connect(ctl.compute_rolling_hrv)
         self.btn_auto.clicked.connect(lambda: ctl.compute_autonomic())
+        # The out-of-date banner of the page shown (TimeCourseMixin
+        # _refresh_time_banner), above the pages, with its Recompute.
+        from ecg.qt.widgets.stale_banner import StaleBanner
+        self.banner = StaleBanner(self, on_recompute=self.recompute_mode)
+        self.banner.setMaximumWidth(900)
+        self.setCornerWidget(self.banner, QtCore.Qt.Corner.TopRightCorner)
+        self.currentChanged.connect(lambda _i: self.refresh_banner())
         self.results_changed()
+
+    # ── out of date ─────────────────────────────────────────
+    PAGE_MODULES = (("epochs",), ("rolling",), ("autonomic", "event_locked"), ("event_locked",))
+
+    def refresh_banner(self) -> None:
+        """What is out of date on the page shown: the first module of it."""
+        from ecg.app.freshness import stale_banner_text
+        host = self.win.figures
+        a = host.analysis
+        results = {"epochs": a.epoch_df, "rolling": a.rolling_hrv_df,
+                   "autonomic": a.autonomic_result, "event_locked": a.event_locked}
+        page = self.currentIndex()
+        name = ("Epochs", "Sliding", "Autonomic", "Event-locked")[page]
+        text = ""
+        for module in self.PAGE_MODULES[page]:
+            if module == "event_locked" and results[module] is None:
+                continue                      # never computed: nothing to warn about
+            text = stale_banner_text("Event-locked" if module == "event_locked" else name,
+                                     host.freshness.status(module),
+                                     host.ui.module_computed_at.get(module),
+                                     host.ui.peaks_edited_at,
+                                     has_values=results[module] is not None)
+            if text:
+                break
+        self.banner.set_text(text)
+
+    def recompute_mode(self) -> None:
+        """TimeCourseMixin._recompute_time_mode, on the page shown."""
+        from ecg.app.freshness import UP_TO_DATE
+        host = self.win.figures
+        ctl, ev = host.analysis_ctrl, host.event_ctrl
+        page = self.currentIndex()
+        if page == 0:
+            ctl.compute_epochs()
+        elif page == 1:
+            ctl.compute_rolling_hrv()
+        elif host.freshness.status("autonomic").state == UP_TO_DATE:
+            ev.compute()
+        elif host.analysis.event_locked is not None:
+            ctl.compute_autonomic(then=ev.compute)
+        else:
+            ctl.compute_autonomic()
 
     # ── pages ───────────────────────────────────────────────
     def _metrics_row(self, row: QtWidgets.QHBoxLayout, defaults) -> dict:
@@ -178,6 +227,11 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         row.addWidget(QtWidgets.QLabel("kp:"))
         self.sp_kp = _spin(float(p["kp"]), 0.0, 1000.0, 0.5, 2)
         row.addWidget(self.sp_kp)
+        self.btn_calibrate = QtWidgets.QPushButton("Calibrate ks/kp…")
+        self.btn_calibrate.setToolTip("Choose ks / kp on the cohort registry's event-locked rows "
+                                      "(the paper's values are rat values, not validated in mice)")
+        self.btn_calibrate.clicked.connect(self.open_calibration)
+        row.addWidget(self.btn_calibrate)
         self.chk_lfhf = QtWidgets.QCheckBox("LF/HF (SPWVD)")
         self.chk_lfhf.setChecked(bool(p["lf_hf"]))
         row.addWidget(self.chk_lfhf)
@@ -207,12 +261,9 @@ class TimeCourseTab(QtWidgets.QTabWidget):
     def _event_locked_page(self, host) -> QtWidgets.QWidget:
         """Time course > Event-locked: EventLockedController (the Tk one) on
         the host, reading these inputs under the Tk names."""
-        from ecg.ui.event_locked_controller import EventLockedController
-        from ecg.ui.event_locked_view import EVENT_TABLE_COLUMNS, EVENT_TABLE_NOTE, \
+        from ecg.app.event_locked_controller import EventLockedController
+        from ecg.app.event_locked_view import EVENT_TABLE_COLUMNS, EVENT_TABLE_NOTE, \
             EVENT_TABLE_TITLE
-        import ecg.ui.event_locked_controller as elc
-        from ecg.qt.figure_host import QtFileDialog
-        elc.filedialog = QtFileDialog                    # Export CSV… under Qt
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
         row = QtWidgets.QHBoxLayout()
@@ -267,6 +318,13 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         bar.addWidget(self.btn_evt_save)
         bar.addWidget(self.btn_evt_csv)
         bar.addStretch(1)
+        self.btn_to_compare = QtWidgets.QPushButton("Compare segments →")
+        self.btn_to_compare.setToolTip("Open the Compare segments tab: time windows chosen by "
+                                       "hand, block statistics, tachograms and Poincaré, no "
+                                       "annotation needed (Ctrl+M)")
+        self.btn_to_compare.clicked.connect(
+            lambda: self.win.tabs.setCurrentWidget(self.win.compare))
+        bar.addWidget(self.btn_to_compare)
         right.addLayout(bar)
         body.addLayout(right, 2)
         lay.addLayout(body, 1)
@@ -282,6 +340,17 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         ctl.apply_params(host.analysis.event_locked_params)
         ctl.invalidate(None)
         return page
+
+    def open_calibration(self) -> None:
+        """EventLockedController.open_calibration, with the Qt dialog."""
+        from ecg.qt.dialogs.calibration_dialog import CalibrationDialog
+        ctl = self.win.figures.event_ctrl
+        ks, kp = ctl.current_gains()
+        _fp, _sub, project = ctl._identity()
+        self.calibration = CalibrationDialog(self.win, ks=ks, kp=kp,
+                                             config=ctl.current_config(), project=project,
+                                             on_apply=ctl.apply_gains)
+        self.calibration.show()
 
     def _fill_event_rows(self, rows) -> None:
         """The compact per-event table (TimeCourseMixin._fill_event_rows)."""

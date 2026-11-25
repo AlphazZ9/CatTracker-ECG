@@ -92,7 +92,7 @@ def test_report(tmp_path):
 
 
 def test_group_figure_one_ellipse_per_animal_and_the_mean():
-    from ecg.ui.group_figure import draw_group_figure
+    from ecg.app.group_figure import draw_group_figure
     df = _table()
     fig = Figure(figsize=(14, 4.6))
     assert draw_group_figure(fig, df, "Pre", "Post", ("Before", "After"))

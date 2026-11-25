@@ -11,13 +11,13 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from ecg.core.metric_table import REPORT_INTERVALS, REPORT_RHYTHM
-from ecg.ui.analysis_controller import draw_windowed_panels
-from ecg.ui.event_locked_view import event_rows
-from ecg.ui.freshness import COMPUTING, NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE, ModuleFreshness
-from ecg.ui.plot_controller import landmark_label_levels, overview_rr
-from ecg.ui.report_view import report_states
-from ecg.ui.tab_morphology import morphology_steps, step_tip
-from ecg.ui.wave_editor import dragged_landmark, hit_landmark
+from ecg.app.analysis_controller import draw_windowed_panels
+from ecg.app.event_locked_view import event_rows
+from ecg.app.freshness import COMPUTING, NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE, ModuleFreshness
+from ecg.app.plot_controller import landmark_label_levels, overview_rr
+from ecg.app.report_view import report_states
+from ecg.app.morphology_helpers import morphology_steps, step_tip
+from ecg.app.wave_landmarks import dragged_landmark, hit_landmark
 
 
 def test_a_running_module_makes_its_report_line_computing():

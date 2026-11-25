@@ -52,5 +52,5 @@ Enregistrements : `D:\Expériences\Expérience N°13 - Stimulation Optogénétiq
 - Méthode CSI/CPI : ks/kp sont des valeurs de rat, à calibrer pour la souris.
 
 ## Règles du projet
-- `ecg/core` n'importe pas `ecg.ui` ; les tests n'écrivent pas dans le profil utilisateur.
+- `ecg/core`, `ecg/services`, `ecg/figures` et `ecg/app` n'importent ni Qt ni Tk (l'interface est `ecg/qt` ; l'interface Tk `ecg/ui` a été retirée en version 7) ; les tests n'écrivent pas dans le profil utilisateur.
 - Textes de l'interface en anglais ; échanges avec l'utilisateur en français.

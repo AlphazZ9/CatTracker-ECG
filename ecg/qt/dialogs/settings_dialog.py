@@ -78,8 +78,12 @@ class SettingsDialog(QtWidgets.QDialog):
         form.addRow("Resampling (Hz)", self.sp_sg_fs)
         close = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
         close.rejected.connect(self.hide)
+        reset = close.addButton("Reset to mouse ECG defaults",
+                                QtWidgets.QDialogButtonBox.ButtonRole.ResetRole)
+        reset.clicked.connect(self.reset_defaults)
         form.addRow(close)
 
+        self.win = window
         det = window.detection
         # The Tk widget names FilterParams.from_widgets, the controllers and
         # the session restore read and write.
@@ -102,3 +106,20 @@ class SettingsDialog(QtWidgets.QDialog):
         host.sw_epoch = Field(self.chk_epochs)
         host.ent_sg_target_fs = Field(self.sp_sg_fs)
         host.ent_sg_window_ms = Field(self.sp_sg_win, text=True)
+
+    def reset_defaults(self) -> None:
+        """ECGApp._reset_params: channel, sampling rate, crop, band-pass, RR
+        bounds and the SG + Derivative options back to FilterParams'
+        defaults (the switches stay as they are, as in Tk)."""
+        from ecg.core.models import FilterParams
+        fp = FilterParams()
+        self.ed_channel.setText(fp.channel)
+        self.sp_fs.setValue(float(fp.fs))
+        self.sp_t0.setValue(float(fp.t_start))
+        self.sp_t1.setValue(float(fp.t_end))
+        self.sp_lp.setValue(float(fp.lp))
+        self.sp_hp.setValue(float(int(fp.hp)))
+        self.sp_minrr.setValue(float(fp.min_rr_ms))
+        self.sp_maxrr.setValue(float(fp.max_rr_ms))
+        self.sp_sg_fs.setValue(float(fp.sg_target_fs))
+        self.sp_sg_win.setValue(20.0)

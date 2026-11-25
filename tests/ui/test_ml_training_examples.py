@@ -13,10 +13,10 @@ import numpy as np
 import pytest
 
 from ecg.core import ml_detector
-from ecg.ui import ml_examples
-from ecg.ui import session_controller as sc_module
-from ecg.ui.session_controller import SessionController
-from ecg.ui.state import DetectionState, SessionState, SignalState
+from ecg.app import ml_examples
+from ecg.app import session_controller as sc_module
+from ecg.app.session_controller import SessionController
+from ecg.app.state import DetectionState, SessionState, SignalState
 from tests.helpers import add_qrs_pulse, rpeaks_from_rr
 
 FS = 1000
@@ -282,7 +282,7 @@ def test_save_session_does_not_add_or_remove_examples(tmp_path, cache, monkeypat
 # ── Method = ML Detector without a model ─────────────────────────────────
 
 def test_choosing_ml_without_a_model_opens_the_section_and_says_why(cache, monkeypatch):
-    from ecg.ui.detection_controller import DetectionController
+    from ecg.app.detection_controller import DetectionController
     expanded = []
     app = SimpleNamespace(_sg_frame=None, lbl_ml_status=object(), refresh_ml_status=_Rec(),
                           _set_ml_expanded=lambda v: expanded.append(v), _set_status=_Rec())
@@ -304,62 +304,6 @@ def test_choosing_ml_without_a_model_opens_the_section_and_says_why(cache, monke
 
 # ── the training dialog ──────────────────────────────────────────────────
 
-def test_dialog_lists_examples_and_removes_one(tmp_path, cache, monkeypatch):
-    ctk = pytest.importorskip("customtkinter")
-    import tkinter as tk
-    from ecg.ui import dialogs
-    monkeypatch.setattr(dialogs, "_DB_AVAILABLE", False)
-    monkeypatch.setattr(dialogs.MLTrainingDialog, "grab_set", lambda self: None)
-    sig, rp = _ecg()
-    path = _recording(tmp_path, "mouse01.mat")
-    ml_detector.save_training_sample(_fp(path), sig, FS, rp, source_path=path)
-    try:
-        root = ctk.CTk()
-    except tk.TclError as exc:
-        pytest.skip(f"no display: {exc}")
-    try:
-        synced = []
-        root.signal = SimpleNamespace(filepath=path)
-        root.session = SessionState(verified_for_training=True)
-        root.session_ctrl = SimpleNamespace(sync_verified_switch=lambda: synced.append(1))
-        dlg = dialogs.MLTrainingDialog(root)
-        root.update()
-        # One example: listed with its name, date, peaks and rate; Train
-        # disabled with the reason.
-        [row] = [e for e in dlg._examples()]
-        assert row["name"] == "mouse01.mat" and row["n_peaks"] == len(rp)
-        texts = [w.cget("text") for r in dlg._list_frame.winfo_children()
-                 for w in r.winfo_children() if isinstance(w, ctk.CTkLabel)]
-        assert "mouse01.mat" in texts and f"{len(rp)}" in texts
-        assert any(t.endswith(" bpm") for t in texts)
-        assert dlg.btn_train.cget("state") == "disabled"
-        assert "at least 2" in dlg._lbl_gate.cget("text")
-        assert "No model yet · 1 training example" in dlg._lbl_verified.cget("text")
-        assert len(dlg.HOW_TO) == 5 and "Check agreement" in dlg.HOW_TO[4]
-
-        # A second example: Train allowed, with the under-5 warning.
-        sig2, rp2 = _ecg(seed=1)
-        path2 = _recording(tmp_path, "mouse02.mat")
-        ml_detector.save_training_sample(_fp(path2), sig2, FS, rp2, source_path=path2)
-        dlg._refresh_stats()
-        assert dlg.btn_train.cget("state") == "normal"
-        assert "At least 5" in dlg._lbl_gate.cget("text")
-        assert len(dlg._row_buttons) == 2
-
-        # Remove (declined, then confirmed) the open recording's example.
-        monkeypatch.setattr(dialogs.messagebox, "askyesno", lambda *a, **k: False)
-        names = [e["name"] for e in dlg._examples()]
-        dlg._row_buttons[names.index("mouse01.mat")].invoke()
-        assert len(ml_detector.list_training_files()) == 2
-        monkeypatch.setattr(dialogs.messagebox, "askyesno", lambda *a, **k: True)
-        dlg._row_buttons[names.index("mouse01.mat")].invoke()
-        assert [e["source_path"] for e in ml_detector.list_training_files()] == [path2]
-        assert root.session.verified_for_training is False and synced == [1]
-        assert len(dlg._row_buttons) == 1
-        assert dlg.btn_train.cget("state") == "disabled"
-        dlg.destroy()
-    finally:
-        root.destroy()
 
 
 def test_training_records_its_examples_and_status_suggests_retrain(tmp_path, cache):
@@ -418,68 +362,5 @@ def test_remove_waits_while_a_job_may_write_the_example(tmp_path, cache, monkeyp
     assert ml_detector.training_example_state(_fp(path), rp) == "absent"
 
 
-def test_dialog_remove_and_train_wait_for_a_main_window_job(tmp_path, cache, monkeypatch):
-    ctk = pytest.importorskip("customtkinter")
-    import tkinter as tk
-    from ecg.ui import dialogs
-    monkeypatch.setattr(dialogs, "_DB_AVAILABLE", False)
-    monkeypatch.setattr(dialogs.MLTrainingDialog, "grab_set", lambda self: None)
-    trained = []
-    monkeypatch.setattr(dialogs, "train_model", lambda *a, **k: trained.append(1) or {"ok": False})
-    for seed in range(2):
-        sig, rp = _ecg(seed=seed)
-        path = _recording(tmp_path, f"m{seed}.mat")
-        ml_detector.save_training_sample(_fp(path), sig, FS, rp, source_path=path)
-    try:
-        root = ctk.CTk()
-    except tk.TclError as exc:
-        pytest.skip(f"no display: {exc}")
-    try:
-        root.signal = SimpleNamespace(filepath=None)
-        root._async_busy = True
-        dlg = dialogs.MLTrainingDialog(root)
-        root.update()
-        monkeypatch.setattr(dialogs.messagebox, "askyesno", lambda *a, **k: True)
-        dlg._row_buttons[0].invoke()
-        assert len(ml_detector.list_training_files()) == 2
-        assert ml_examples.BUSY_MESSAGE in dlg._lbl_result.cget("text")
-        dlg._train()
-        assert trained == []
-        root._async_busy = False
-        dlg._row_buttons[0].invoke()
-        assert len(ml_detector.list_training_files()) == 1
-        dlg.destroy()
-    finally:
-        root.destroy()
 
 
-def test_dialog_fits_a_768_px_screen(cache, monkeypatch):
-    """620x760 plus its title bar and the taskbar pushed Train and Close off
-    a 768-px screen at open."""
-    ctk = pytest.importorskip("customtkinter")
-    import tkinter as tk
-    from ecg.ui import dialogs
-    monkeypatch.setattr(dialogs.MLTrainingDialog, "grab_set", lambda self: None)
-    monkeypatch.setattr(dialogs.MLTrainingDialog, "winfo_screenheight", lambda self: 768)
-    seen = []
-    real = dialogs.MLTrainingDialog.geometry
-
-    def _geom(self, spec=None):
-        if spec is not None:
-            seen.append(spec)
-        return real(self, spec)
-    monkeypatch.setattr(dialogs.MLTrainingDialog, "geometry", _geom)
-    try:
-        root = ctk.CTk()
-    except tk.TclError as exc:
-        pytest.skip(f"no display: {exc}")
-    try:
-        root.signal = SimpleNamespace(filepath=None)
-        dlg = dialogs.MLTrainingDialog(root)
-        size, x, y = seen[0].split("+")
-        w, h = (int(v) for v in size.split("x"))
-        scaling = float(dlg._get_window_scaling())
-        assert w == 620 and int(y) + h * scaling + 31 <= 768 - 40, seen[0]
-        dlg.destroy()
-    finally:
-        root.destroy()

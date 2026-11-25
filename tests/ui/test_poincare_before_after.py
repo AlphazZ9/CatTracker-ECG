@@ -9,7 +9,7 @@ from matplotlib.patches import Ellipse
 
 from ecg.core.analysis import compute_segment_stats
 from ecg.io.group_table import append_group_row, group_row
-from ecg.ui.poincare_figure import (
+from ecg.app.poincare_figure import (
     draw_poincare_pair, draw_poincare_set, grid_step, shared_limits,
 )
 
@@ -133,7 +133,7 @@ def test_jitter_can_be_turned_off():
     fig = Figure(figsize=(10, 5))
     draw_poincare_pair(fig, sa, sb, ("blue", "orange"))
     fig_off = Figure(figsize=(10, 5))
-    from ecg.ui.poincare_figure import draw_poincare_set as _set
+    from ecg.app.poincare_figure import draw_poincare_set as _set
     _set(fig_off, (sa, sb), ("blue", "orange"), jitter=False)
     pts = fig_off.axes[0].collections[0].get_offsets()
     assert np.array_equal(pts[:, 0], sa["pairs_x"]) and np.array_equal(pts[:, 1], sa["pairs_y"])

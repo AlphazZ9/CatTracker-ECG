@@ -231,8 +231,8 @@ def test_export_controller_writes_the_autonomic_results_before_analyze(result, t
 
     from openpyxl import load_workbook
 
-    from ecg.ui import export_controller as ec
-    from ecg.ui.state import AnalysisState, SignalState
+    from ecg.app import export_controller as ec
+    from ecg.app.state import AnalysisState, SignalState
 
     warnings_shown = []
     monkeypatch.setattr(ec.messagebox, "showwarning",

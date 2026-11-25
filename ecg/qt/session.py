@@ -32,8 +32,8 @@ from ecg.core.models import normalize_qtc_formula
 from ecg.io.session import load_session
 from ecg.qt.figure_host import Value
 from ecg.services.session_service import restore_bundle
-from ecg.ui.state import SessionState
-from ecg.ui.tab_keys import TAB_ORDER
+from ecg.app.state import SessionState
+from ecg.app.tab_keys import TAB_ORDER
 
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
@@ -43,24 +43,23 @@ log = logging.getLogger("ecg")
 
 class QtSession:
     def __init__(self, window: "MainWindow") -> None:
-        from ecg.ui.session_controller import SessionController
+        from ecg.app.session_controller import SessionController
         self.win = window
         host = window.figures
         host.session = SessionState()
         # What collect_session_state reads with getattr(..., None): absent here.
-        # The Recording fields Tk saves: no sex / project entries here yet
-        # (the file name's sex, no project) and the raw view on, as Tk's
-        # defaults, so a session saved here holds the same keys.
-        from ecg.io.subject_name import subject_from_filename
-        host.ent_sex = Value(lambda: (subject_from_filename(window.recording.signal.filepath)
-                                      [1] or "") if window.recording.signal.filepath else "")
-        host.ent_project_name = Value(lambda: "")
+        # The Recording fields Tk saves: Subject / Sex / Project are the
+        # Recording sheet's (ecg.qt.dialogs.recording_dialog); the raw view
+        # on, as Tk's default, so a session saved here holds the same keys.
         host.sw_show_raw = Value(lambda: True)
         for name in (
-                     "_compare_setup_snapshot", "lbl_session_info", "lbl_template_info",
+                     "lbl_session_info", "lbl_template_info",
                      "lbl_npeaks", "ent_analysis_t0", "ent_analysis_t1", "cb_qtc_formula",
-                     "_show_time_mode", "_restore_compare_setup", "ent_ensemble"):
+                     "_show_time_mode", "ent_ensemble"):
             setattr(host, name, None)
+        # Compare segments' setup (rows, block, reference, view, stim and the
+        # windows compared), saved and restored as Tk's.
+        host._compare_setup_snapshot = window.compare.setup_snapshot
         host.tabs = Value(lambda: TAB_ORDER[window.tabs.currentIndex()])
         self.ctrl = SessionController(host)
         self.saved_at: Optional[str] = None
@@ -147,8 +146,8 @@ class QtSession:
 
     def apply(self, bundle: dict, saved_at: str) -> None:
         """SessionController.on_restore_session_done on the Qt state and inputs."""
-        from ecg.ui.session_controller import _TAB_KEY_MAP
-        from ecg.ui.tab_keys import time_course_mode
+        from ecg.app.session_controller import _TAB_KEY_MAP
+        from ecg.app.tab_keys import time_course_mode
         win, host = self.win, self.win.figures
         rec = win.recording
         s, d, a = rec.signal, rec.detection, rec.analysis
@@ -193,6 +192,7 @@ class QtSession:
         host.event_ctrl.apply_params(bundle.get("event_locked_params"))
         a.t_start = bundle["analysis_t_start"]
         a.t_end = bundle["analysis_t_end"]
+        win.detection.show_window_in_entries()
         a.analysed_window = bundle.get("analysed_window") if bundle["results"] is not None else None
 
         formula = normalize_qtc_formula(bundle.get("qtc_formula", "mitchell"))
@@ -215,6 +215,7 @@ class QtSession:
         det.btn_edit.setEnabled(True)
         det.btn_mark_noise.setEnabled(True)
         det.btn_review.setEnabled(True)
+        det.btn_agreement.setEnabled(True)
         det.btn_edit.setChecked(bool(bundle["edit_mode"]))
         thr = float(bundle["thresh_frac"])
         for w in (det.sp_thr, det.sl_thr):
@@ -242,6 +243,14 @@ class QtSession:
                 win.settings.sp_sg_win.setValue(float(fields["sg_window_ms"]))
             except ValueError:
                 pass
+        if isinstance(fields, dict):
+            # Subject, sex and project (SessionController.apply_recording_fields:
+            # a typed value is kept over the file name's; the project only
+            # fills an empty field).
+            self.ctrl.apply_recording_fields({k: v for k, v in fields.items()
+                                              if k in ("subject", "sex", "project_name")})
+        win.recording_sheet.notes_restored()
+        win.update_file_label()
 
         # The plot and the peaks: re-derived from the candidates (DetectionController
         # .run_detection), then the saved artifact removals re-applied.
@@ -284,6 +293,12 @@ class QtSession:
         if a.results is not None:
             win.results_restored()
             host.analysis_ctrl.refresh_result_labels(freq_done_label="Loaded from session ✓")
+        # Compare segments: the setup saved, its comparison re-run on the
+        # restored peaks (SessionController's restore_cmp).
+        try:
+            win.compare.restore_setup(bundle.get("compare_segments"))
+        except Exception as exc:
+            log.warning("Compare segments setup not restored: %s", exc, exc_info=True)
         win.session_dirty = False
         self.saved_at = saved_at
         win.set_status(status, warn=bool(legacy))

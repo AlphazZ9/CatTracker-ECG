@@ -16,16 +16,15 @@ from matplotlib.figure import Figure
 
 from ecg.core import analysis
 from ecg.core.models import MouseECG
-from ecg.ui.analysis_controller import AnalysisController, draw_windowed_panels
-from ecg.ui.freshness import (
+from ecg.app.analysis_controller import AnalysisController, draw_windowed_panels
+from ecg.app.freshness import (
     NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE, ModuleFreshness, stale_banner_text,
 )
-from ecg.ui.state import AnalysisState, DetectionState, SignalState, UIState
-from ecg.ui.tab_keys import (
+from ecg.app.state import AnalysisState, DetectionState, SignalState, UIState
+from ecg.app.tab_keys import (
     MODE_AUTONOMIC, MODE_EPOCHS, MODE_EVENT_LOCKED, MODE_MODULES, MODE_SLIDING,
     TAB_HRV, TAB_MODULES, TAB_ORDER, TAB_TIME_COURSE, TIME_COURSE_MODES, time_course_mode,
 )
-from ecg.ui.tab_time_course import _EPOCH_DEFAULTS, _SLIDING_DEFAULTS, TabTimeCourseMixin
 
 from tests.helpers import rpeaks_from_rr
 
@@ -46,12 +45,6 @@ def test_modules_moved_from_rhythm_to_time_course():
     assert not set(TAB_MODULES[TAB_HRV]) & set(MODE_MODULES.values())
 
 
-def test_selector_left_rhythm_and_hrv():
-    src = (UI_DIR / "tab_hrv.py").read_text(encoding="utf-8")
-    for gone in ("CTkSegmentedButton", "_hrv_seg", "_build_hrv_view_rolling", "_auto_seg"):
-        assert gone not in src
-    for gone in ("hrv_current_view", "autonomic_subview"):
-        assert not hasattr(UIState(), gone)
 
 
 # ── former values ─────────────────────────────────────────────────────────
@@ -82,18 +75,10 @@ def test_a_stored_mode_wins_and_former_names_are_understood():
     assert time_course_mode("nonsense") is None
 
 
-def test_show_mode_keeps_the_state_and_accepts_a_former_name():
-    calls = []
-    app = SimpleNamespace(ui=UIState(), _time_frames={}, _time_seg=None,
-                          _refresh_time_banner=lambda: calls.append(1))
-    TabTimeCourseMixin._show_time_mode(app, "Rolling")
-    assert app.ui.time_course_mode == MODE_SLIDING
-    TabTimeCourseMixin._show_time_mode(app, "nonsense")
-    assert app.ui.time_course_mode == MODE_EPOCHS
 
 
 def test_session_reads_the_former_values():
-    src = inspect.getsource(__import__("ecg.ui.session_controller", fromlist=["x"]))
+    src = inspect.getsource(__import__("ecg.app.session_controller", fromlist=["x"]))
     assert re.search(r'time_course_mode\(state\.get\("time_course_mode"\),\s*'
                      r'state\.get\("hrv_current_view"\),\s*state\.get\("autonomic_subview"\)\)', src)
 
@@ -137,36 +122,10 @@ def test_banner_gives_the_reasons_when_the_times_are_unknown_or_not_the_cause():
 
 # ── Recompute runs the mode shown ─────────────────────────────────────────
 
-def _recompute(mode: str, autonomic_state: str = UP_TO_DATE,
-               had_event_locked: bool = False) -> "list[str]":
-    calls: "list[str]" = []
-    app = SimpleNamespace(
-        ui=UIState(time_course_mode=mode),
-        analysis=SimpleNamespace(event_locked=object() if had_event_locked else None),
-        _compute_epochs=lambda: calls.append("epochs"),
-        _compute_rolling_hrv=lambda: calls.append("rolling"),
-        _compute_autonomic=lambda: calls.append("autonomic"),
-        _compute_event_locked=lambda: calls.append("event_locked"),
-        freshness=SimpleNamespace(status=lambda m: ModuleFreshness(autonomic_state)),
-        analysis_ctrl=SimpleNamespace(
-            compute_autonomic=lambda then=None: (calls.append("autonomic"), then())),
-    )
-    TabTimeCourseMixin._recompute_time_mode(app)
-    return calls
 
 
-def test_recompute_runs_the_mode_shown():
-    assert _recompute(MODE_EPOCHS) == ["epochs"]
-    assert _recompute(MODE_SLIDING) == ["rolling"]
-    # Autonomic current: only the event-locked means can be what is stale.
-    assert _recompute(MODE_AUTONOMIC) == ["event_locked"]
-    assert _recompute(MODE_AUTONOMIC, OUT_OF_DATE) == ["autonomic"]
 
 
-def test_recompute_of_event_locked_first_renews_a_stale_autonomic_result():
-    for state in (OUT_OF_DATE, NOT_COMPUTED):
-        assert _recompute(MODE_AUTONOMIC, state, had_event_locked=True) == [
-            "autonomic", "event_locked"]
 
 
 # ── one figure, one confidence rule ───────────────────────────────────────
@@ -208,27 +167,10 @@ def test_figure_with_a_single_panel():
     assert len(fig.axes) == 1
 
 
-def test_lw_metrics_are_ticked_in_autonomic_but_stay_with_sliding():
-    auto = inspect.getsource(TabTimeCourseMixin._build_time_view_autonomic)
-    sliding = inspect.getsource(TabTimeCourseMixin._build_time_view_sliding)
-    assert "self._roll_metrics[metric] = cb" in auto and "SD1_LW" in auto
-    assert "SD1_LW" not in sliding
-    assert "compute_rolling_hrv" in inspect.getsource(AnalysisController.compute_rolling_hrv)
 
 
-def test_default_ticks_match_what_each_mode_always_did():
-    assert _EPOCH_DEFAULTS == AnalysisController.EPOCH_BASE_METRICS
-    assert _SLIDING_DEFAULTS == ("HR", "SDNN", "RMSSD")
 
 
-def test_caveat_and_calibration_stay_with_autonomic():
-    auto = inspect.getsource(TabTimeCourseMixin._build_time_view_autonomic)
-    assert "CALIBRATION_WARNING" in auto and "_calibrate_button" in auto
-    ev = inspect.getsource(TabTimeCourseMixin._build_time_view_event_locked)
-    # One Calibrate button, on the Autonomic part the Event-locked section sits under.
-    assert "_open_compare_segments" in ev and "_calibrate_button" not in ev
-    tab = inspect.getsource(TabTimeCourseMixin._build_tab_time_course)
-    assert tab.index("_build_time_view_autonomic(") < tab.index("_build_time_view_event_locked(")
 
 
 # ── stubs for the two jobs ────────────────────────────────────────────────
@@ -331,16 +273,6 @@ def test_a_finished_rolling_run_opens_sliding():
 
 # ── Epochs: extras only when ticked ───────────────────────────────────────
 
-@requires_nk
-def test_default_epochs_frame_is_unchanged():
-    # Stub without ticks, and the default ticks: the same base columns.
-    peaks = rpeaks_from_rr(_rr(1500), FS)
-    a, *_ = _app(peaks)
-    b, *_ = _app(peaks, _EPOCH_DEFAULTS)
-    AnalysisController(a).compute_epochs()
-    AnalysisController(b).compute_epochs()
-    assert list(a.analysis.epoch_df.columns) == BASE_COLUMNS
-    pd.testing.assert_frame_equal(a.analysis.epoch_df, b.analysis.epoch_df)
 
 
 @requires_nk
@@ -496,8 +428,8 @@ def _assert_epochs_empty(app, texts, store) -> None:
 @requires_nk
 def test_a_new_file_empties_epochs_and_sliding():
     from unittest.mock import MagicMock
-    from ecg.ui.signal_controller import SignalController
-    from ecg.ui.state import SessionState
+    from ecg.app.signal_controller import SignalController
+    from ecg.app.state import SessionState
     app, texts, store = _computed_app()
     shell = MagicMock()
     shell.analysis, shell.detection = app.analysis, app.detection
@@ -520,7 +452,7 @@ def test_a_new_file_empties_epochs_and_sliding():
 
 @requires_nk
 def test_a_peak_edit_empties_epochs_like_the_banner_says():
-    from ecg.ui.plot_controller import PlotController
+    from ecg.app.plot_controller import PlotController
     app, texts, store = _computed_app()
     app.analysis.epoch_df = None                    # _drop_results
     app._set_result_btns_enabled = lambda on, attrs: None
@@ -533,7 +465,7 @@ def test_a_peak_edit_empties_epochs_like_the_banner_says():
 
 @requires_nk
 def test_a_peak_edit_keeps_the_sliding_figure_with_its_frame():
-    from ecg.ui.plot_controller import PlotController
+    from ecg.app.plot_controller import PlotController
     app, _texts, store = _computed_app()
     app.analysis.epoch_df = None
     plot = PlotController(app)
@@ -557,39 +489,17 @@ class _Box(_Tick):
         self.on = 0
 
 
-def _tick_ctrl():
-    from ecg.ui.session_controller import SessionController
-    app = SimpleNamespace(
-        _epoch_metrics={m: _Box(m in _EPOCH_DEFAULTS)
-                        for m in ("HR", "SDNN", "RMSSD", "pNN6", "SD1", "LF_HF")},
-        _roll_metrics={m: _Box(m in _SLIDING_DEFAULTS) for m in ("HR", "SDNN", "RMSSD", "CCD")})
-    return app, SessionController(app)
 
 
-def test_restore_ticks_what_was_saved():
-    app, ctrl = _tick_ctrl()
-    ctrl.restore_window_ticks({"epoch_metrics": {"SD1": True, "HR": False, "gone": True},
-                               "roll_metrics": {"CCD": True}})
-    assert app._epoch_metrics["SD1"].on and not app._epoch_metrics["HR"].on
-    assert app._roll_metrics["CCD"].on and app._roll_metrics["HR"].on
 
 
-def test_restore_without_saved_ticks_uses_what_the_frames_were_computed_with():
-    app, ctrl = _tick_ctrl()
-    ctrl.restore_window_ticks({"windowed_view": {"epochs": {"active": ["HR", "LF_HF"]}}})
-    assert {m for m, c in app._epoch_metrics.items() if c.on} == {"HR", "LF_HF"}
-    assert {m for m, c in app._roll_metrics.items() if c.on} == set(_SLIDING_DEFAULTS)
 
 
-def test_session_without_any_record_leaves_the_ticks():
-    app, ctrl = _tick_ctrl()
-    ctrl.restore_window_ticks({})
-    assert {m for m, c in app._epoch_metrics.items() if c.on} == set(_EPOCH_DEFAULTS)
 
 
 def test_session_round_trip_carries_the_ticks(monkeypatch):
     from ecg.services import session_service  # where restore reloads the signal
-    from ecg.ui.session_controller import SessionController
+    from ecg.app.session_controller import SessionController
     from tests.ui.test_autonomic_controller import _session_app
     app = _session_app()
     app._epoch_metrics = {"HR": _Box(True), "SD1": _Box(True), "LF_HF": _Box(False)}
@@ -604,17 +514,6 @@ def test_session_round_trip_carries_the_ticks(monkeypatch):
 
 # ── opening the tab shows its mode ────────────────────────────────────────
 
-def test_opening_the_tab_runs_the_too_short_check_of_the_mode():
-    shown = []
-    tab = [TAB_HRV]
-    app = SimpleNamespace(ui=UIState(), tabs=SimpleNamespace(get=lambda: tab[0]),
-                          _show_time_mode=shown.append)
-    TabTimeCourseMixin._on_main_tab_changed(app)
-    assert shown == []
-    tab[0] = TAB_TIME_COURSE
-    TabTimeCourseMixin._on_main_tab_changed(app)
-    assert shown == [MODE_EPOCHS]
-    assert "command=self._on_main_tab_changed" in (UI_DIR / "app.py").read_text(encoding="utf-8")
 
 
 def test_a_warning_goes_when_the_value_fits_again():

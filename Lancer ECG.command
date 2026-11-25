@@ -58,7 +58,7 @@ PY="$VENV/bin/python"
 STAMP="$TOM_ECG_HOME/requirements.sha256"
 LOG="$TOM_ECG_HOME/dernier_lancement.log"
 # Incrementer LAYOUT force une reinstallation chez tout le monde.
-LAYOUT="py312-v3"
+LAYOUT="py312-v4"
 # uv prive dans TomECG : version connue, PATH de l'utilisateur non modifie
 # (un vieux uv deja installe ne connait pas toutes les options ci-dessous).
 export UV_INSTALL_DIR="${UV_INSTALL_DIR:-$TOM_ECG_HOME/uv}"
@@ -111,7 +111,7 @@ install_env() {
 
     echo "  [3/4] Preparation de l'environnement et des bibliotheques..."
     # Environnement recree a chaque mise a jour (rapide : uv garde un cache).
-    # --managed-python : jamais le Python d'Apple (Tk 8.5) ni celui du systeme.
+    # --managed-python : jamais le Python d'Apple ni celui du systeme.
     "$UV" venv --clear --managed-python --python 3.12 "$VENV" \
         || fail "creation de l'environnement impossible dans $VENV.
   Supprimez ce dossier puis relancez."
@@ -123,7 +123,7 @@ install_env() {
     echo
 
     echo "  [4/4] Verification de l'application..."
-    "$PY" -c "import tkinter, customtkinter, neurokit2, ecg.ui.app" \
+    "$PY" -c "import PySide6, pyqtgraph, neurokit2, ecg.qt.main_window" \
         || fail "les bibliotheques sont installees mais l'application ne se
   charge pas (voir le message Python ci-dessus). Envoyez une capture de
   cette fenetre au responsable de l'application."

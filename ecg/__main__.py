@@ -1,10 +1,12 @@
-"""Entry point — run with:  python -m ecg"""
+"""Entry point — run with:  python -m ecg  [recording.mat]
+
+Starts the Qt interface (ecg.qt). The CustomTkinter interface it replaced
+was removed in version 7."""
 from __future__ import annotations
+
 import multiprocessing
 import os
 import sys
-import tkinter as tk
-from tkinter import messagebox
 
 
 def _ensure_std_streams() -> None:
@@ -30,26 +32,16 @@ def _set_windows_app_id() -> None:
         pass
 
 
-def main() -> None:
+def main(argv: "list[str] | None" = None) -> int:
     # Before anything else: in a frozen build a 'spawn' worker process of
     # ecg.core.delineation_pool re-runs the executable, and this turns that
     # run into the worker rather than a second app. No-op under plain Python.
     multiprocessing.freeze_support()
     _ensure_std_streams()
     _set_windows_app_id()
-    from ecg.ui.theme import NK_AVAILABLE
-    if not NK_AVAILABLE:
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror(
-            "Missing dependency",
-            "Install NeuroKit2:\n  pip install neurokit2",
-        )
-        root.destroy()
-        return
-    from ecg.ui.app import ECGApp
-    ECGApp().mainloop()
+    from ecg.qt.app import main as qt_main
+    return qt_main(argv)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

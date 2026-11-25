@@ -12,7 +12,7 @@ import pytest
 
 from ecg.core.models import QTC_FORMULA_LABELS
 from ecg.io.export import ExcelExporter, PrismExporter
-from ecg.ui.export_controller import pdf_provenance_text
+from ecg.app.export_controller import pdf_provenance_text
 
 ARTIFACTS = {"n_in": 503, "n_out": 500, "n_nonphysio": 1, "n_ectopic": 2, "n_duplicate": 0}
 

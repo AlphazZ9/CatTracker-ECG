@@ -82,6 +82,14 @@ class DetectionTab(QtWidgets.QWidget):
         row.addWidget(self.lbl_peaks)
         self.lbl_quality = QtWidgets.QLabel("Quality: —")
         row.addWidget(self.lbl_quality)
+        self.btn_agreement = QtWidgets.QPushButton("Check agreement")
+        self.btn_agreement.setEnabled(False)
+        self.btn_agreement.setToolTip("Run the other detectors on the same filtered signal and "
+                                      "circle the accepted beats none of them found")
+        self.btn_agreement.clicked.connect(self.check_agreement)
+        row.addWidget(self.btn_agreement)
+        self.lbl_agreement = QtWidgets.QLabel("")
+        row.addWidget(self.lbl_agreement)
         lay.addWidget(bar)
 
         edit_bar = QtWidgets.QHBoxLayout()
@@ -103,6 +111,11 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_redo.clicked.connect(self.redo)
         edit_bar.addWidget(self.btn_undo)
         edit_bar.addWidget(self.btn_redo)
+        self.btn_clear_edits = QtWidgets.QPushButton("Clear Edits")
+        self.btn_clear_edits.setToolTip("Re-include every peak excluded by hand and remove every "
+                                        "peak added by hand (Undo brings them back)")
+        self.btn_clear_edits.clicked.connect(self.clear_edits)
+        edit_bar.addWidget(self.btn_clear_edits)
         self.lbl_edit = QtWidgets.QLabel("")
         self.lbl_edit.setProperty("muted", True)
         edit_bar.addWidget(self.lbl_edit, 1)
@@ -131,11 +144,65 @@ class DetectionTab(QtWidgets.QWidget):
         edit_bar.addWidget(self.btn_noise)
         lay.addLayout(edit_bar)
 
+        nav = QtWidgets.QHBoxLayout()
+        nav.addWidget(QtWidgets.QLabel("Go to (s):"))
+        self.sp_goto = QtWidgets.QDoubleSpinBox()
+        self.sp_goto.setRange(0.0, 1e7)
+        self.sp_goto.setDecimals(3)
+        self.sp_goto.setToolTip("Start of the view, in seconds (Enter or Go)")
+        self.sp_goto.editingFinished.connect(lambda: self.go_to(self.sp_goto.value()))
+        nav.addWidget(self.sp_goto)
+        b_go = QtWidgets.QPushButton("Go")
+        b_go.clicked.connect(lambda: self.go_to(self.sp_goto.value()))
+        nav.addWidget(b_go)
+        nav.addSpacing(16)
+        nav.addWidget(QtWidgets.QLabel("Flagged beat:"))
+        for text, step in (("◀", -1), ("▶", +1)):
+            b = QtWidgets.QPushButton(text)
+            b.setToolTip("The previous / next beat flagged on the RR tachogram (▲ / ▼), centred")
+            b.setMaximumWidth(40)
+            b.clicked.connect(lambda _c=False, d=step: self.step_spike(d))
+            nav.addWidget(b)
+        nav.addSpacing(16)
+        nav.addWidget(QtWidgets.QLabel("Analysis window (s):"))
+        self.ed_win0, self.ed_win1 = QtWidgets.QLineEdit(), QtWidgets.QLineEdit()
+        for ed, ph in ((self.ed_win0, "start"), (self.ed_win1, "end")):
+            ed.setPlaceholderText(ph)
+            ed.setMaximumWidth(80)
+            ed.setToolTip("The part of the recording Analyze uses (empty = signal start / "
+                          "end); applied at the next Analyze")
+            ed.returnPressed.connect(self.apply_analysis_window)
+            nav.addWidget(ed)
+        b = QtWidgets.QPushButton("Apply")
+        b.clicked.connect(self.apply_analysis_window)
+        nav.addWidget(b)
+        b = QtWidgets.QPushButton("Full")
+        b.setToolTip("The whole signal")
+        b.clicked.connect(self.reset_analysis_window)
+        nav.addWidget(b)
+        self.lbl_window = QtWidgets.QLabel("")
+        nav.addWidget(self.lbl_window)
+        nav.addStretch(1)
+        self.btn_strip = QtWidgets.QPushButton("RR/HR/Quality")
+        self.btn_strip.setCheckable(True)
+        self.btn_strip.setToolTip("The RR, heart rate and beat quality (template correlation, "
+                                  "0.90 dashed) under the trace")
+        nav.addWidget(self.btn_strip)
+        lay.addLayout(nav)
+
         self.plot = EcgPlot()
         self.plot.time_clicked.connect(self._clicked)
         self.plot.span_drawn.connect(self._noise_drawn)
         lay.addWidget(self.plot, 1)
         self._update_undo_buttons()
+        on = bool(window.figures.ui.rrhr_strip_visible)
+        self.btn_strip.setChecked(on)
+        self.plot.set_strip_visible(on)
+        self.btn_strip.toggled.connect(self._strip_toggled)
+        # The beat quality is real per-beat work: recomputed 250 ms after the
+        # last peak change (PlotController._ensure_beat_corr_cache).
+        self._corr_timer = QtCore.QTimer(self, singleShot=True, interval=250)
+        self._corr_timer.timeout.connect(self._update_beat_quality)
 
         self._thr_timer = QtCore.QTimer(self, singleShot=True, interval=THRESH_DEBOUNCE_MS)
         self._thr_timer.timeout.connect(self.apply_threshold)
@@ -176,6 +243,11 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_mark_noise.setChecked(False)
         self.btn_mark_noise.setEnabled(False)
         self.btn_review.setEnabled(False)
+        self.btn_agreement.setEnabled(False)
+        self.lbl_agreement.setText("")
+        self.ed_win0.clear()
+        self.ed_win1.clear()
+        self._say_window("")
         self._update_undo_buttons()
         self.plot.clear()
         self.lbl_peaks.setText("Peaks: —")
@@ -216,8 +288,11 @@ class DetectionTab(QtWidgets.QWidget):
         d.manual_added.clear()
         d.edit_undo.clear()
         d.edit_redo.clear()
+        self._clear_agreement()
         rec.analysis.results = None
+        self.reset_analysis_window(quiet=True)
         self.btn_edit.setEnabled(True)
+        self.btn_agreement.setEnabled(True)
         self.btn_mark_noise.setEnabled(True)
         self.btn_review.setEnabled(True)
         self._update_undo_buttons()
@@ -226,6 +301,7 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot.set_annotations(rec.analysis.annotations)
         self._show_peaks()
         self.win.peaks_changed()
+        self.win.update_file_label()
         warning = bundle.get("detector_warning")
         self.win.set_status(warning or f"{len(d.rpeaks_ok):,} peaks detected · "
                                        f"{s.filter_text or ''}", warn=bool(warning))
@@ -375,6 +451,195 @@ class DetectionTab(QtWidgets.QWidget):
         a.results = None
         a.autonomic_result = None
 
+    # ── analysis window ─────────────────────────────────────
+    def _say_window(self, text: str, color: "str | None" = None) -> None:
+        self.lbl_window.setText(text)
+        self.lbl_window.setStyleSheet(f"color: {color};" if color else "")
+
+    def show_window_in_entries(self) -> None:
+        """The entries say the applied window (empty = signal start / end)."""
+        a = self.win.recording.analysis
+        for ed, v in ((self.ed_win0, a.t_start), (self.ed_win1, a.t_end)):
+            ed.setText(f"{v:g}" if v and v > 0 else "")
+
+    def apply_analysis_window(self) -> None:
+        """SignalController.apply_analysis_window: stored for the next
+        Analyze, with the peaks inside it counted (nothing recomputed)."""
+        from ecg.qt import theme
+        p = theme.current()
+        rec = self.win.recording
+        s, d, a = rec.signal, rec.detection, rec.analysis
+        try:
+            t0_raw, t1_raw = self.ed_win0.text().strip(), self.ed_win1.text().strip()
+            t0 = float(t0_raw) if t0_raw else 0.0
+            t1 = float(t1_raw) if t1_raw else 0.0
+        except ValueError:
+            self.win.set_status("Invalid window — enter numeric values.", warn=True)
+            return
+        if t1 > 0 and t0 >= t1:
+            self.win.set_status("Start bound must be less than the end bound.", warn=True)
+            return
+        if s.time is not None and t1 > float(s.time[-1]) + 0.1:
+            self.win.set_status(f"End bound exceeds the signal duration ({s.time[-1]:.1f} s).",
+                                warn=True)
+        a.t_start, a.t_end = t0, t1
+        if d.rpeaks_ok is not None and s.fs is not None:
+            fs = s.fs
+            t_end_eff = float(s.time[-1]) if (s.time is not None and t1 == 0) else t1
+            mask = d.rpeaks_ok / fs >= t0
+            if t1 > 0:
+                mask &= d.rpeaks_ok / fs <= t1
+            n = int(mask.sum())
+            dur = (t_end_eff - t0) if t1 > 0 else (float(s.time[-1]) - t0
+                                                   if s.time is not None else 0)
+            text = (f"✓  {n} peaks  ·  {t0:.1f} s → {t_end_eff:.1f} s  ({dur:.1f} s)"
+                    if t0 > 0 or t1 > 0 else f"✓  {n} peaks  ·  full signal")
+            self._say_window(text, p.GREEN if n >= 5 else p.ORANGE)
+        else:
+            self._say_window("✓  Window applied — run analysis")
+        self.win.session_dirty = True
+        self.win.set_status("Analysis window updated — click Analyze to refresh.")
+        self.win.figures.analysis_ctrl.refresh_autonomic_status()
+
+    def reset_analysis_window(self, quiet: bool = False) -> None:
+        """SignalController.reset_analysis_window: the full signal."""
+        rec = self.win.recording
+        a, d, s = rec.analysis, rec.detection, rec.signal
+        a.t_start = a.t_end = 0.0
+        self.show_window_in_entries()
+        if d.rpeaks_ok is not None:
+            dur = float(s.time[-1]) if s.time is not None else 0.0
+            self._say_window(f"Full signal  ·  {len(d.rpeaks_ok)} peaks  ·  {dur:.1f} s")
+        else:
+            self._say_window("")
+        if not quiet:
+            self.win.set_status("Analysis window reset — full signal.")
+            self.win.figures.analysis_ctrl.refresh_autonomic_status()
+
+    # ── navigation ──────────────────────────────────────────
+    def _view_width(self) -> float:
+        t0, t1 = self.plot.window()
+        return max(t1 - t0, 0.1)
+
+    def _end(self) -> float:
+        time = self.win.recording.signal.time
+        return float(time[-1]) if time is not None and len(time) else 0.0
+
+    def go_to(self, t: float) -> None:
+        """NavigationController.nav_goto: the view starts at *t* (kept inside
+        the recording), its width kept."""
+        if self.win.recording.signal.time is None:
+            return
+        width = self._view_width()
+        start = max(0.0, min(self._end() - width, float(t)))
+        self.plot.set_window(start, start + width)
+
+    def center_on(self, t: float) -> None:
+        """The view centred on *t*, its width kept, on this tab."""
+        width = self._view_width()
+        start = max(0.0, min(float(t) - width / 2, max(0.0, self._end() - width)))
+        self.win.tabs.setCurrentWidget(self)
+        self.plot.set_window(start, start + width)
+
+    def step_spike(self, direction: int) -> None:
+        """NavigationController.step_spike: the next / previous beat flagged
+        on the tachogram (ui.rr_spike_times), from the centre of the view."""
+        import numpy as np
+        spikes = self.win.figures.ui.rr_spike_times
+        if spikes is None or len(spikes) == 0 or self.win.recording.signal.time is None:
+            self.win.set_status("No suspicious beats to step through — run Analyze first")
+            return
+        spikes = np.asarray(spikes, dtype=float)
+        t0, t1 = self.plot.window()
+        cur = (t0 + t1) / 2
+        later, earlier = spikes[spikes > cur + 1e-6], spikes[spikes < cur - 1e-6]
+        if direction > 0:
+            t_nav = float(later.min()) if len(later) else float(spikes.min())
+        else:
+            t_nav = float(earlier.max()) if len(earlier) else float(spikes.max())
+        self.center_on(t_nav)
+        self.win.set_status(f"Navigation → spike at {t_nav:.3f} s")
+
+    def clear_edits(self) -> None:
+        """DetectionController.clear_manual_exclusions (undoable)."""
+        import numpy as np
+        d = self.win.recording.detection
+        if not d.manual_excluded and not d.manual_added:
+            return
+        push_undo(d.edit_undo, d.edit_redo, d.manual_excluded, d.manual_added)
+        n_excl, n_added = len(d.manual_excluded), len(d.manual_added)
+        d.manual_excluded.clear()
+        d.manual_added.clear()
+        self._drop_results()
+        self.mark_peaks_edited()
+        d.rpeaks_manual_excl = np.array([], dtype=int)
+        d.rpeaks_manual_added = np.array([], dtype=int)
+        self.apply_threshold()
+        self._update_undo_buttons()
+        self.win.set_status(f"Manual edits cleared — {n_excl} exclusion(s), {n_added} "
+                            "addition(s) removed.")
+
+    # ── Check agreement ─────────────────────────────────────
+    def _clear_agreement(self) -> None:
+        """A new detection drops the last check (SignalController's reset)."""
+        d = self.win.recording.detection
+        d.agreement_disagree_samples = None
+        d.agreement_summary = ""
+        d.agreement_pct = None
+        d.agreement_peaks = None
+        self.lbl_agreement.setText("")
+        self.plot.set_unconfirmed(None)
+
+    def check_agreement(self) -> None:
+        """DetectionController.check_method_agreement: the other detectors
+        in a background job (ecg.services.agreement_service), then the
+        report and the unconfirmed beats circled on the trace."""
+        from ecg.services.agreement_service import method_agreement
+        rec = self.win.recording
+        s, d = rec.signal, rec.detection
+        if s.filtered is None or d.rpeaks_ok is None or len(d.rpeaks_ok) == 0:
+            QtWidgets.QMessageBox.warning(self, "Not ready", "Click Detect Peaks first.")
+            return
+        sig, fs, primary = s.filtered, s.fs, d.rpeaks_ok.copy()
+        host = self.win.figures
+        min_rr_ms = host._safe_float(host.ent_minrr, MouseECG.MIN_RR_MS)
+        active = self.cb_method.currentText().lower()
+        self.btn_agreement.setEnabled(False)
+        self.lbl_agreement.setProperty("warn", True)
+        self.lbl_agreement.setText("Running other detectors…")
+        self.win.run_job("Check agreement",
+                         lambda progress_cb=None: method_agreement(sig, fs, primary,
+                                                                   min_rr_ms, active),
+                         on_done=lambda r: self._agreement_done(r, primary, fs),
+                         on_end=lambda: self.btn_agreement.setEnabled(True))
+
+    def _agreement_done(self, result: dict, primary, fs: float) -> None:
+        from ecg.qt.dialogs.agreement_dialog import AgreementDialog, agreement_color
+        from ecg.services.agreement_service import agreement_summary
+        d = self.win.recording.detection
+        if d.rpeaks_ok is None:
+            return
+        lbl = self.lbl_agreement
+        if not result.get("ok"):
+            reason = "; ".join(result.get("methods_skipped", [])) or "no other methods available"
+            lbl.setText(f"Agreement check: {reason}")
+            self.win.set_status(f"Cross-method agreement: {reason}", warn=True)
+            return
+        summary, pct = agreement_summary(result)
+        d.agreement_disagree_samples = result["disagree_samples"]
+        d.agreement_summary = summary
+        d.agreement_pct = pct
+        d.agreement_peaks = primary
+        lbl.setProperty("warn", False)
+        lbl.setStyleSheet(f"color: {agreement_color(result['n_disagree'], pct)};")
+        lbl.setText(summary)
+        skipped = result.get("methods_skipped", [])
+        note = ("  ·  skipped: " + ", ".join(skipped)) if skipped else ""
+        self.win.set_status(f"Cross-method agreement done — {summary}{note}")
+        self.plot.set_unconfirmed(d.agreement_disagree_samples)
+        self.agreement_dialog = AgreementDialog(self.win, result, fs)
+        self.agreement_dialog.show()
+
     def _review(self) -> None:
         from ecg.qt.dialogs.artifact_review import review_artifacts
         review_artifacts(self.win)
@@ -415,10 +680,37 @@ class DetectionTab(QtWidgets.QWidget):
         correction)."""
         self._show_peaks()
 
+    def _strip_toggled(self, on: bool) -> None:
+        self.win.figures.ui.rrhr_strip_visible = bool(on)
+        self.plot.set_strip_visible(on)
+
+    def _update_beat_quality(self) -> None:
+        """PlotController._flush_beat_corr_recompute: each beat's template
+        correlation, cached on the detection state for the peaks it is of."""
+        from ecg.core.analysis import compute_beat_correlation
+        rec = self.win.recording
+        s, d = rec.signal, rec.detection
+        if d.rpeaks_ok is not d._beat_corr_for:
+            if s.filtered is None or d.rpeaks_ok is None or len(d.rpeaks_ok) < 3:
+                d.beat_corr = d.beat_corr_peaks = None
+            else:
+                lo, hi = self.win.figures.analysis_ctrl.hrv_rr_bounds(quiet=True)
+                r = compute_beat_correlation(s.filtered, d.rpeaks_ok, s.fs, lo, hi)
+                d.beat_corr, d.beat_corr_peaks = r["beat_corr"], r["valid_rp"]
+            d._beat_corr_for = d.rpeaks_ok
+        q_t = d.beat_corr_peaks / s.fs if d.beat_corr_peaks is not None else None
+        self.plot.set_beats(d.rpeaks_ok, q_t, d.beat_corr)
+
     def _show_peaks(self) -> None:
         rec = self.win.recording
         s, d = rec.signal, rec.detection
         self.plot.set_peaks(d.rpeaks_ok, d.rpeaks_rej, d.rpeaks_manual_excl, d.rpeaks_manual_added)
+        self.plot.set_beats(d.rpeaks_ok,
+                            d.beat_corr_peaks / s.fs if (d.beat_corr_peaks is not None
+                                                         and d._beat_corr_for is d.rpeaks_ok)
+                            else None,
+                            d.beat_corr if d._beat_corr_for is d.rpeaks_ok else None)
+        self._corr_timer.start()
         n = 0 if d.rpeaks_ok is None else len(d.rpeaks_ok)
         self.lbl_peaks.setText(f"Peaks: {n:,}")
         beat_corr = (rec.analysis.results or {}).get("beat_corr")
