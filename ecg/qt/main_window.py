@@ -41,6 +41,7 @@ from ecg.app.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_GROUP, TAB_EVENTS,
 
 FILE_FILTER = "Recordings (*.mat *.smr);;All files (*)"
 SHORTCUTS_TEXT = (
+    "Ctrl+K         Search commands and pages\n"
     "Ctrl+D         Detect Peaks\n"
     "Ctrl+R         Analyze\n"
     "Ctrl+O         Open a recording\n"
@@ -175,7 +176,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # The Tk interface's shortcuts (Help > Keyboard shortcuts).
         # Detect Peaks is Ctrl+D, not Space: a stray Space press re-detected
         # and replaced the peaks edited by hand.
-        for key, fn in (("Ctrl+D", self._shortcut_detect), ("Ctrl+R", self._shortcut_analyze),
+        for key, fn in (("Ctrl+K", self.open_palette),
+                        ("Ctrl+D", self._shortcut_detect), ("Ctrl+R", self._shortcut_analyze),
                         ("Ctrl+E", lambda: self.figures.export_ctrl.export_excel()),
                         ("Ctrl+Shift+E", lambda: self.figures.export_ctrl.export_rr_csv()),
                         ("Ctrl+M", lambda: self.tabs.setCurrentWidget(self.compare)),
@@ -288,6 +290,14 @@ class MainWindow(QtWidgets.QMainWindow):
         chip.addWidget(self.lbl_chip_arrow)
         row.addWidget(self.chip_file)
         row.addStretch(1)
+        self.btn_search = QtWidgets.QPushButton(
+            "Search      " + ("⌘K" if sys.platform == "darwin" else "Ctrl+K"))
+        self.btn_search.setProperty("chip", True)
+        self.btn_search.setMinimumWidth(200)
+        self.btn_search.setStyleSheet("text-align: left; padding: 6px 12px;")
+        self.btn_search.setToolTip("Search every command and page")
+        self.btn_search.clicked.connect(self.open_palette)
+        row.addWidget(self.btn_search)
         self.lbl_saved = QtWidgets.QLabel("")
         self.lbl_saved.setProperty("muted", True)
         row.addWidget(self.lbl_saved)
@@ -358,6 +368,54 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_theme.clicked.connect(self.toggle_theme)
         side.footer.addWidget(self.btn_theme)
         return side
+
+    def palette_commands(self) -> "list[tuple[str, str, Callable[[], None]]]":
+        """What the search finds: the pages, the menus' commands, and the
+        main actions of each page."""
+        go = lambda key: (lambda: self.tabs.setCurrentWidget(self.tab_widgets[key]))
+        cmds = [(f"Go to {item.text().replace('&&', '&')}", "page", go(key))
+                for key, item in self.sidebar.items.items()]
+        ex = self.figures.export_ctrl
+        cmds += [
+            ("Open a recording…", "Ctrl+O", self.open_dialog),
+            ("Detect peaks", "Ctrl+D", self._shortcut_detect),
+            ("Analyze", "Ctrl+R", self._shortcut_analyze),
+            ("Save session", "Ctrl+S", lambda: self.session.save()),
+            ("Detection settings…", "Signal", lambda: (
+                self.tabs.setCurrentWidget(self.detection), self.detection.btn_detection.click())),
+            ("Check agreement", "Signal", self.detection.check_agreement),
+            ("Review artifacts…", "Signal", self.detection.btn_review.click),
+            ("Annotations…", "Signal", self.detection.btn_annotations.click),
+            ("Noisy regions…", "Signal", self.detection.btn_noise.click),
+            ("Compute epochs", "Time course", lambda: (
+                self.tabs.setCurrentWidget(self.time_course), self.time_course.setCurrentIndex(0),
+                self.figures.analysis_ctrl.compute_epochs())),
+            ("Measure intervals", "Morphology", lambda: (
+                self.tabs.setCurrentWidget(self.morphology), self.morphology.measure())),
+            ("Classify events", "Events", lambda: (
+                self.tabs.setCurrentWidget(self.events),
+                self.figures.analysis_ctrl.run_arrhythmia_analysis())),
+            ("Export Excel…", "Ctrl+E", ex.export_excel),
+            ("Export PDF report…", "Report", ex.export_pdf_report),
+            ("Export figures (ZIP)…", "Report", ex.export_zip),
+            ("Export to Prism…", "Report", ex.export_prism),
+            ("Export RR series (CSV)…", "Ctrl+Shift+E", ex.export_rr_csv),
+            ("Recording: subject, project, notes…", "", self.show_recording_sheet),
+            ("Settings…", "channel, filters, RR bounds", lambda: (self.settings.show(),
+                                                                 self.settings.raise_())),
+            ("ML detector…", "Tools", self.open_ml_dialog),
+            ("Recent recordings…", "File", self.open_recent),
+            ("Light / dark mode", "View", self.toggle_theme),
+            ("Text size…", "View", self.choose_text_size),
+            ("Keyboard shortcuts", "F1", self.show_shortcuts),
+        ]
+        return cmds
+
+    def open_palette(self) -> None:
+        from ecg.qt.widgets.shell import CommandPalette
+        if getattr(self, "_palette", None) is None:
+            self._palette = CommandPalette(self, self.palette_commands)
+        self._palette.open_over(self.btn_search)
 
     def _page_changed(self, index: int) -> None:
         w = self.tabs.widget(index)
@@ -531,6 +589,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.morphology.results_changed()
         self.time_course.results_changed()
         self.figures.plot_ctrl.draw_all_results()
+        QtCore.QTimer.singleShot(0, self.rhythm.refresh_charts)
 
     def peaks_changed(self) -> None:
         """Detection or a hand edit changed the peaks: results are stale."""
@@ -598,8 +657,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.time_course.results_changed()
         self.morphology.wave_template()       # the saved default, first time (as Tk)
         self.figures.plot_ctrl.draw_core_results(
-            on_complete=lambda: self._run_freq(then=lambda: self._run_nonlinear(
-                then=self._analysis_chain_done)))
+            on_complete=lambda: (self.rhythm.refresh_charts(), self._run_freq(
+                then=lambda: self._run_nonlinear(then=self._analysis_chain_done))))
 
     def _run_freq(self, then: "Optional[Callable[[], None]]" = None) -> None:
         """Frequency HRV of the analysis window (AnalysisController.run_freq),
@@ -625,7 +684,8 @@ class MainWindow(QtWidgets.QMainWindow):
         pc = self.figures.plot_ctrl
         pc.run_plot_chain([("PSD", lambda: pc.plot_psd(r)),
                            ("HRV tables (freq)", lambda: pc.plot_hrv_tables(r)),
-                           ("Metrics", lambda: pc.plot_table_views(r))],
+                           ("Metrics", lambda: pc.plot_table_views(r)),
+                           ("Charts", self.rhythm.refresh_charts)],
                           on_complete=self._freq_then)
 
     def _run_nonlinear(self, then: "Optional[Callable[[], None]]" = None) -> None:
@@ -650,7 +710,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.figures.lbl_nonlin_status.configure(text=text.strip(), text_color=color)
         pc = self.figures.plot_ctrl
         pc.run_plot_chain([("Non-linear metrics", lambda: pc.plot_nonlinear(r)),
-                           ("Metrics", lambda: pc.plot_table_views(r))],
+                           ("Metrics", lambda: pc.plot_table_views(r)),
+                           ("Charts", self.rhythm.refresh_charts)],
                           on_complete=self._nonlin_then)
 
     def refresh_tab_states(self) -> None:
@@ -903,6 +964,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sync_figure_theme(p.is_dark)
         self.apply_shell_palette(p)
         self.detection.apply_palette(p)
+        self.rhythm.apply_palette(p)
         self.redraw_figures()
         self._tab_state_shown.clear()          # the dots in the new colours
         theme.save_prefs()

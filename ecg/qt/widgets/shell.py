@@ -306,3 +306,66 @@ def card(title: "Optional[str]" = None, widget: "Optional[QtWidgets.QWidget]" = 
             widget.setMinimumHeight(min_height)
         lay.addWidget(widget, 1)
     return frame
+
+
+class CommandPalette(QtWidgets.QDialog):
+    """Search every command and page by name (Ctrl+K / ⌘K): type, then
+    Enter (or a click) runs the first match."""
+
+    def __init__(self, parent: QtWidgets.QWidget,
+                 commands: "callable") -> None:
+        super().__init__(parent, QtCore.Qt.WindowType.Popup)
+        self.setObjectName("Palette")
+        self._commands = commands            # () -> [(name, hint, fn), ...]
+        self.setFixedWidth(520)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(10, 10, 10, 10)
+        self.edit = QtWidgets.QLineEdit()
+        self.edit.setPlaceholderText("Search commands and pages")
+        self.edit.textChanged.connect(self._filter)
+        self.edit.returnPressed.connect(self._run_current)
+        lay.addWidget(self.edit)
+        self.list = QtWidgets.QListWidget()
+        self.list.setMinimumHeight(300)
+        self.list.itemActivated.connect(lambda _i: self._run_current())
+        self.list.itemClicked.connect(lambda _i: self._run_current())
+        lay.addWidget(self.list)
+        self.edit.installEventFilter(self)
+
+    def open_over(self, anchor: QtWidgets.QWidget) -> None:
+        self.edit.clear()
+        self._filter("")
+        pos = anchor.mapToGlobal(QtCore.QPoint(anchor.width() - self.width(), anchor.height() + 6))
+        self.move(pos)
+        self.show()
+        self.edit.setFocus()
+
+    def _filter(self, text: str) -> None:
+        words = text.lower().split()
+        self.list.clear()
+        for name, hint, fn in self._commands():
+            hay = f"{name} {hint}".lower()
+            if all(w in hay for w in words):
+                item = QtWidgets.QListWidgetItem(f"{name}" + (f"    {hint}" if hint else ""))
+                item.setData(QtCore.Qt.ItemDataRole.UserRole, fn)
+                self.list.addItem(item)
+        if self.list.count():
+            self.list.setCurrentRow(0)
+
+    def eventFilter(self, obj, ev) -> bool:
+        if obj is self.edit and ev.type() == QtCore.QEvent.Type.KeyPress:
+            key = ev.key()
+            if key in (QtCore.Qt.Key.Key_Down, QtCore.Qt.Key.Key_Up):
+                row = self.list.currentRow() + (1 if key == QtCore.Qt.Key.Key_Down else -1)
+                self.list.setCurrentRow(max(0, min(self.list.count() - 1, row)))
+                return True
+        return super().eventFilter(obj, ev)
+
+    def _run_current(self) -> None:
+        item = self.list.currentItem()
+        if item is None:
+            return
+        fn = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        self.hide()
+        if callable(fn):
+            fn()
