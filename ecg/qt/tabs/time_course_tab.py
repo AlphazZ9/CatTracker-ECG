@@ -122,6 +122,73 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         else:
             ctl.compute_autonomic()
 
+    # ── settings behind a button (as the mockup) ────────────
+    def _sheetify(self, lay: QtWidgets.QVBoxLayout, rows: list,
+                  keep: "list[QtWidgets.QWidget]") -> None:
+        """Move the parameter rows *rows* of a page into a sheet under a
+        'Settings…' button; the widgets in *keep* (the Compute button, the
+        status lines) stay on the page's top row, after a one-line summary
+        of the settings."""
+        head = QtWidgets.QHBoxLayout()
+        head.setSpacing(10)
+        summary = QtWidgets.QLabel("")
+        summary.setProperty("muted", True)
+        summary.setWordWrap(True)
+        head.addWidget(summary, 1)
+        sheet = QtWidgets.QWidget()
+        sl = QtWidgets.QVBoxLayout(sheet)
+        sl.setContentsMargins(14, 10, 14, 10)
+        fields: "list[QtWidgets.QWidget]" = []
+        for row in rows:
+            line = QtWidgets.QHBoxLayout()
+            while row.count():
+                item = row.takeAt(0)
+                w = item.widget()
+                if w is None:
+                    continue
+                if w in keep:
+                    continue
+                line.addWidget(w)
+                fields.append(w)
+            line.addStretch(1)
+            sl.addLayout(line)
+            lay.removeItem(row)
+        btn = QtWidgets.QToolButton()
+        btn.setText("Settings…")
+        btn.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QtWidgets.QMenu(btn)
+        wa = QtWidgets.QWidgetAction(menu)
+        wa.setDefaultWidget(sheet)
+        menu.addAction(wa)
+        btn.setMenu(menu)
+        head.addWidget(btn)
+        for w in keep:
+            head.addWidget(w)
+        lay.insertLayout(0, head)
+
+        def describe() -> None:
+            parts, ticked, label = [], [], None
+            for w in fields:
+                if isinstance(w, QtWidgets.QCheckBox):
+                    if w.isChecked():
+                        ticked.append(w.text())
+                elif isinstance(w, QtWidgets.QLabel):
+                    label = w.text().rstrip(":").strip()
+                elif isinstance(w, (QtWidgets.QAbstractSpinBox, QtWidgets.QComboBox)):
+                    value = (w.currentText() if isinstance(w, QtWidgets.QComboBox)
+                             else w.text().strip())
+                    if label and value:
+                        parts.append(f"{label} {value}")
+                    label = None
+            if ticked:
+                parts.append(", ".join(ticked))
+            summary.setText(" · ".join(parts))
+        for w in fields:
+            for sig in ("valueChanged", "toggled", "currentTextChanged"):
+                if hasattr(w, sig):
+                    getattr(w, sig).connect(lambda *_a: describe())
+        describe()
+
     # ── pages ───────────────────────────────────────────────
     def _metrics_row(self, row: QtWidgets.QHBoxLayout, defaults) -> dict:
         row.addWidget(QtWidgets.QLabel("Metrics:"))
@@ -175,6 +242,8 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host.ent_epoch = Field(self.sp_epoch)
         host.ent_overlap = Field(self.sp_overlap)
         host.txt_epochs = self._results(lay, host, "epochs")
+        self._sheetify(lay, [row, mrow], [host.lbl_epoch_info, host.lbl_epoch_count,
+                                          self.btn_epochs])
         return page
 
     def _sliding_page(self, host) -> QtWidgets.QWidget:
@@ -213,6 +282,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         lay.addLayout(lw)
         host.ent_roll_win = Field(self.sp_roll_win)
         host.ent_roll_step = Field(self.sp_roll_step)
+        self._sheetify(lay, [row, mrow, lw], [host.lbl_roll_status, self.btn_sliding])
         host.txt_rolling = self._results(lay, host, "rolling_hrv")
         return page
 
@@ -264,8 +334,8 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.btn_auto = QtWidgets.QPushButton("Compute")
         self.btn_auto.setProperty("action", True)
         row.addWidget(self.btn_auto)
-        row.addStretch(1)
         lay.addLayout(row)
+        self._sheetify(lay, [row], [self.btn_calibrate, self.btn_auto])
         host.lbl_auto_status = StatusLabel("")
         host.lbl_auto_status.setProperty("muted", True)
         host.lbl_auto_status.setWordWrap(True)
@@ -311,8 +381,8 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.btn_evt = QtWidgets.QPushButton("Compute event-locked")
         self.btn_evt.setProperty("action", True)
         row.addWidget(self.btn_evt)
-        row.addStretch(1)
         lay.addLayout(row)
+        self._sheetify(lay, [row], [self.btn_evt])
         host.lbl_evt_status = StatusLabel("")
         host.lbl_evt_status.setProperty("muted", True)
         host.lbl_evt_status.setWordWrap(True)
