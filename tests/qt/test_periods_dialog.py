@@ -74,7 +74,8 @@ def test_mark_noise_drag_and_right_click(qtbot, window):
     qtbot.waitUntil(lambda: window.recording.detection.rpeaks_ok is not None, timeout=60000)
     det = window.detection
     det.btn_mark_noise.setChecked(True)
-    assert det.btn_edit.isChecked() and det.plot.span_mode
+    # One tool at a time: Mark noise is on, Edit peaks and Move are off.
+    assert det.plot.span_mode and not det.btn_edit.isChecked() and not det.btn_move.isChecked()
     det._noise_drawn(10.0, 12.34567)
     det._noise_drawn(5.0, 5.02)               # shorter than 50 ms: a click, not a region
     det._noise_drawn(2.0, 3.0)

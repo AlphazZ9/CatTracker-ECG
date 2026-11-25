@@ -32,6 +32,7 @@ WINDOW_METRICS = (("HR", "HR"), ("SDNN", "SDNN"), ("RMSSD", "RMSSD"), ("pNN6", "
                   ("SD1", "SD1"), ("SD2", "SD2"), ("LF_nu", "LF (n.u.)"),
                   ("HF_nu", "HF (n.u.)"), ("LF_HF", "LF/HF"))
 EPOCH_DEFAULTS = ("HR", "SDNN", "RMSSD", "pNN6")
+TABLE_PLACEHOLDER = "The values of each window appear here once computed, ready to copy into Excel."
 SLIDING_DEFAULTS = ("HR", "SDNN", "RMSSD")
 
 
@@ -48,6 +49,13 @@ def _spin(value: float, lo: float, hi: float, step: float = 1.0,
 class TimeCourseTab(QtWidgets.QTabWidget):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
+        # The page's title beside its modes (the tab bar, drawn as a
+        # segmented control by the style sheet).
+        self.setObjectName("TimeCourse")
+        title = QtWidgets.QLabel("Time course")
+        title.setProperty("role", "title")
+        title.setContentsMargins(24, 12, 18, 4)
+        self.setCornerWidget(title, QtCore.Qt.Corner.TopLeftCorner)
         self.win = window
         host = window.figures
         ctl = host.analysis_ctrl
@@ -114,6 +122,73 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         else:
             ctl.compute_autonomic()
 
+    # ── settings behind a button (as the mockup) ────────────
+    def _sheetify(self, lay: QtWidgets.QVBoxLayout, rows: list,
+                  keep: "list[QtWidgets.QWidget]") -> None:
+        """Move the parameter rows *rows* of a page into a sheet under a
+        'Settings…' button; the widgets in *keep* (the Compute button, the
+        status lines) stay on the page's top row, after a one-line summary
+        of the settings."""
+        head = QtWidgets.QHBoxLayout()
+        head.setSpacing(10)
+        summary = QtWidgets.QLabel("")
+        summary.setProperty("muted", True)
+        summary.setWordWrap(True)
+        head.addWidget(summary, 1)
+        sheet = QtWidgets.QWidget()
+        sl = QtWidgets.QVBoxLayout(sheet)
+        sl.setContentsMargins(14, 10, 14, 10)
+        fields: "list[QtWidgets.QWidget]" = []
+        for row in rows:
+            line = QtWidgets.QHBoxLayout()
+            while row.count():
+                item = row.takeAt(0)
+                w = item.widget()
+                if w is None:
+                    continue
+                if w in keep:
+                    continue
+                line.addWidget(w)
+                fields.append(w)
+            line.addStretch(1)
+            sl.addLayout(line)
+            lay.removeItem(row)
+        btn = QtWidgets.QToolButton()
+        btn.setText("Settings…")
+        btn.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QtWidgets.QMenu(btn)
+        wa = QtWidgets.QWidgetAction(menu)
+        wa.setDefaultWidget(sheet)
+        menu.addAction(wa)
+        btn.setMenu(menu)
+        head.addWidget(btn)
+        for w in keep:
+            head.addWidget(w)
+        lay.insertLayout(0, head)
+
+        def describe() -> None:
+            parts, ticked, label = [], [], None
+            for w in fields:
+                if isinstance(w, QtWidgets.QCheckBox):
+                    if w.isChecked():
+                        ticked.append(w.text())
+                elif isinstance(w, QtWidgets.QLabel):
+                    label = w.text().rstrip(":").strip()
+                elif isinstance(w, (QtWidgets.QAbstractSpinBox, QtWidgets.QComboBox)):
+                    value = (w.currentText() if isinstance(w, QtWidgets.QComboBox)
+                             else w.text().strip())
+                    if label and value:
+                        parts.append(f"{label} {value}")
+                    label = None
+            if ticked:
+                parts.append(", ".join(ticked))
+            summary.setText(" · ".join(parts))
+        for w in fields:
+            for sig in ("valueChanged", "toggled", "currentTextChanged"):
+                if hasattr(w, sig):
+                    getattr(w, sig).connect(lambda *_a: describe())
+        describe()
+
     # ── pages ───────────────────────────────────────────────
     def _metrics_row(self, row: QtWidgets.QHBoxLayout, defaults) -> dict:
         row.addWidget(QtWidgets.QLabel("Metrics:"))
@@ -134,12 +209,16 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         legend.setWordWrap(True)
         lay.addWidget(legend)
         box = TextBox()
+        box.setPlaceholderText(TABLE_PLACEHOLDER)
         lay.addWidget(box, 2)
+        from ecg.qt.figure_host import data_table
+        lay.addWidget(data_table(box), 2)
         return box
 
     def _epochs_page(self, host) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(24, 10, 24, 16)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Window (s):"))
         self.sp_epoch = _spin(MouseECG.EPOCH_DEFAULT_S, MouseECG.EPOCH_MIN_S, 36000.0, 5.0, 0)
@@ -148,7 +227,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.sp_overlap = _spin(0.0, 0.0, 36000.0, 5.0, 0)
         row.addWidget(self.sp_overlap)
         self.btn_epochs = QtWidgets.QPushButton("Compute epochs")
-        self.btn_epochs.setProperty("primary", True)
+        self.btn_epochs.setProperty("action", True)
         row.addWidget(self.btn_epochs)
         host.lbl_epoch_info = StatusLabel("")
         host.lbl_epoch_info.setProperty("muted", True)
@@ -163,11 +242,14 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host.ent_epoch = Field(self.sp_epoch)
         host.ent_overlap = Field(self.sp_overlap)
         host.txt_epochs = self._results(lay, host, "epochs")
+        self._sheetify(lay, [row, mrow], [host.lbl_epoch_info, host.lbl_epoch_count,
+                                          self.btn_epochs])
         return page
 
     def _sliding_page(self, host) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(24, 10, 24, 16)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Window (s):"))
         self.sp_roll_win = _spin(30.0, 3.0, 36000.0, 5.0, 0)
@@ -176,7 +258,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.sp_roll_step = _spin(5.0, 1.0, 36000.0, 1.0, 0)
         row.addWidget(self.sp_roll_step)
         self.btn_sliding = QtWidgets.QPushButton("Compute sliding window")
-        self.btn_sliding.setProperty("primary", True)
+        self.btn_sliding.setProperty("action", True)
         row.addWidget(self.btn_sliding)
         host.lbl_roll_status = StatusLabel("")
         host.lbl_roll_status.setProperty("muted", True)
@@ -200,6 +282,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         lay.addLayout(lw)
         host.ent_roll_win = Field(self.sp_roll_win)
         host.ent_roll_step = Field(self.sp_roll_step)
+        self._sheetify(lay, [row, mrow, lw], [host.lbl_roll_status, self.btn_sliding])
         host.txt_rolling = self._results(lay, host, "rolling_hrv")
         return page
 
@@ -207,11 +290,12 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         p = normalise_autonomic_params(host.analysis.autonomic_params or None)
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(24, 10, 24, 16)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Window (s):"))
         self.sp_auto_win = _spin(float(p["window_s"]), 0.5, 600.0, 0.5, 1)
         row.addWidget(self.sp_auto_win)
-        row.addWidget(QtWidgets.QLabel("Min pairs:"))
+        row.addWidget(QtWidgets.QLabel("Min RR pairs:"))
         self.sp_auto_pairs = QtWidgets.QSpinBox()
         self.sp_auto_pairs.setRange(1, 10000)
         self.sp_auto_pairs.setValue(int(p["min_pairs"]))
@@ -221,13 +305,25 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.cb_auto_method.addItems(list(COV_METHODS.values()))
         self.cb_auto_method.setCurrentText(COV_METHODS[p["method"]])
         row.addWidget(self.cb_auto_method)
-        row.addWidget(QtWidgets.QLabel("ks:"))
+        self.cb_auto_method.setToolTip("How the SD1 / SD2 of each window are estimated")
+        self.cb_auto_method.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cb_auto_method.setMinimumContentsLength(18)
+        lbl = QtWidgets.QLabel("Sympathetic scale ks:")
+        lbl.setToolTip("Scale of the cardiac sympathetic index (CSI). The paper's value is "
+                       "for rats; calibrate it for mice.")
+        row.addWidget(lbl)
         self.sp_ks = _spin(float(p["ks"]), 0.0, 1000.0, 0.5, 2)
+        self.sp_ks.setToolTip(lbl.toolTip())
         row.addWidget(self.sp_ks)
-        row.addWidget(QtWidgets.QLabel("kp:"))
+        lbl = QtWidgets.QLabel("Parasympathetic scale kp:")
+        lbl.setToolTip("Scale of the cardiac parasympathetic index (CPI). The paper's value is "
+                       "for rats; calibrate it for mice.")
+        row.addWidget(lbl)
         self.sp_kp = _spin(float(p["kp"]), 0.0, 1000.0, 0.5, 2)
+        self.sp_kp.setToolTip(lbl.toolTip())
         row.addWidget(self.sp_kp)
-        self.btn_calibrate = QtWidgets.QPushButton("Calibrate ks/kp…")
+        self.btn_calibrate = QtWidgets.QPushButton("Calibrate…")
         self.btn_calibrate.setToolTip("Choose ks / kp on the cohort registry's event-locked rows "
                                       "(the paper's values are rat values, not validated in mice)")
         self.btn_calibrate.clicked.connect(self.open_calibration)
@@ -236,10 +332,10 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.chk_lfhf.setChecked(bool(p["lf_hf"]))
         row.addWidget(self.chk_lfhf)
         self.btn_auto = QtWidgets.QPushButton("Compute")
-        self.btn_auto.setProperty("primary", True)
+        self.btn_auto.setProperty("action", True)
         row.addWidget(self.btn_auto)
-        row.addStretch(1)
         lay.addLayout(row)
+        self._sheetify(lay, [row], [self.btn_calibrate, self.btn_auto])
         host.lbl_auto_status = StatusLabel("")
         host.lbl_auto_status.setProperty("muted", True)
         host.lbl_auto_status.setWordWrap(True)
@@ -255,6 +351,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         canvas.setMinimumHeight(460)
         lay.addWidget(canvas, 3)
         host.txt_autonomic = TextBox()
+        host.txt_autonomic.setPlaceholderText(TABLE_PLACEHOLDER)
         lay.addWidget(host.txt_autonomic, 2)
         return page
 
@@ -266,6 +363,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
             EVENT_TABLE_TITLE
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(24, 10, 24, 16)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Events:"))
         self.cb_evt_label = QtWidgets.QComboBox()
@@ -281,10 +379,10 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.chk_evt_z.setToolTip("Traces as z-scores of each event's pre window (display only)")
         row.addWidget(self.chk_evt_z)
         self.btn_evt = QtWidgets.QPushButton("Compute event-locked")
-        self.btn_evt.setProperty("primary", True)
+        self.btn_evt.setProperty("action", True)
         row.addWidget(self.btn_evt)
-        row.addStretch(1)
         lay.addLayout(row)
+        self._sheetify(lay, [row], [self.btn_evt])
         host.lbl_evt_status = StatusLabel("")
         host.lbl_evt_status.setProperty("muted", True)
         host.lbl_evt_status.setWordWrap(True)
@@ -329,6 +427,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         body.addLayout(right, 2)
         lay.addLayout(body, 1)
         host.txt_event_locked = TextBox()
+        host.txt_event_locked.setPlaceholderText(TABLE_PLACEHOLDER)
         lay.addWidget(host.txt_event_locked)
         host._fill_event_rows = self._fill_event_rows
         ctl = EventLockedController(host)

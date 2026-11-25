@@ -108,7 +108,10 @@ def test_rr_hr_quality_strip(qtbot, window):
     _detect(qtbot, window)
     s, d = window.recording.signal, window.recording.detection
     det = window.detection
-    assert det.btn_strip.isChecked() and det.plot.strip[0].isVisible() is not False
+    # Off at first: the heart rate has its own card under the trace.
+    assert not det.btn_strip.isChecked() and not det.plot.strip[0].isVisible()
+    det.btn_strip.setChecked(True)
+    assert window.figures.ui.rrhr_strip_visible and det.plot.strip[0].isVisible() is not False
     qtbot.waitUntil(lambda: d._beat_corr_for is d.rpeaks_ok, timeout=10000)
     x, y = det.plot.rr_curve.getData()
     assert np.allclose(y, np.diff(d.rpeaks_ok) / s.fs * 1000.0)

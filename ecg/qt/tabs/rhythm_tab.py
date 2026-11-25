@@ -24,8 +24,13 @@ if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
 
 
+CARD_NAMES = {"hr": "Heart rate", "sdnn": "SDNN", "rmssd": "RMSSD", "pnn6": "pNN6",
+              "lf_hf": "LF / HF", "sd1_sd2": "SD1 / SD2"}
+
+
 class _Cards(dict):
-    """KPI tiles by card key, created on first use in *layout*."""
+    """KPI tiles by card key, created on first use in *layout*: the heart
+    rate first and in red, the others plain."""
 
     def __init__(self, layout: QtWidgets.QHBoxLayout) -> None:
         super().__init__()
@@ -35,163 +40,258 @@ class _Cards(dict):
         return True
 
     def __missing__(self, key: str) -> dict:
-        box = QtWidgets.QFrame(objectName="Card")
+        hero = key == "hr"
+        box = QtWidgets.QFrame(objectName="Hero" if hero else "Card")
         lay = QtWidgets.QVBoxLayout(box)
-        name = QtWidgets.QLabel(key.split(".")[-1])
-        name.setProperty("muted", True)
+        lay.setContentsMargins(16, 12, 16, 12)
+        lay.setSpacing(2)
+        name = QtWidgets.QLabel(CARD_NAMES.get(key, key.split(".")[-1]))
+        name.setProperty("muted", not hero)
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(6)
         value = StatusLabel("—")
-        value.setStyleSheet("font-size: 16pt; font-weight: 600;")
+        value.setProperty("role", "value")
+        if hero:
+            value.setStyleSheet("font-size: 26pt; font-weight: 700; color: white;")
         unit = StatusLabel("")
-        unit.setProperty("muted", True)
+        unit.setProperty("muted", not hero)
+        row.addWidget(value, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
+        row.addWidget(unit, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
+        row.addStretch(1)
         note = StatusLabel("")
-        note.setProperty("muted", True)
+        note.setProperty("muted", not hero)
         note.setWordWrap(True)
-        for w in (name, value, unit, note):
-            lay.addWidget(w)
-        self._layout.addWidget(box)
+        lay.addWidget(name)
+        lay.addLayout(row)
+        lay.addWidget(note)
+        self._layout.addWidget(box, 3 if hero else 2)
         widgets = self[key] = {"value": value, "unit": unit, "note": note, "name": name}
         return widgets
 
 
 class RhythmTab(QtWidgets.QScrollArea):
+    """Rhythm & HRV: the key numbers first (heart rate in red), then the
+    tachogram, Poincaré, spectrum and RR distribution, the metric table, and
+    the raw text tables on demand."""
+
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
+        from ecg.qt.widgets.shell import card, page_header
         self.win = window
         host = window.figures
         self.setWidgetResizable(True)
         page = QtWidgets.QWidget()
-        grid = QtWidgets.QGridLayout(page)
+        lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(24, 16, 24, 20)
+        lay.setSpacing(14)
         self.setWidget(page)
 
-        def card(title: str, widget: QtWidgets.QWidget, min_h: int = 320) -> QtWidgets.QFrame:
-            f = QtWidgets.QFrame(objectName="Card")
-            lay = QtWidgets.QVBoxLayout(f)
-            lbl = QtWidgets.QLabel(f"<b>{title}</b>")
-            lay.addWidget(lbl)
-            widget.setMinimumHeight(min_h)
-            lay.addWidget(widget, 1)
-            return f
-
         self.lbl_info = QtWidgets.QLabel("Detect the peaks, then click Analyze.")
-        self.lbl_info.setProperty("muted", True)
-        grid.addWidget(self.lbl_info, 0, 0, 1, 2)
+        lay.addLayout(page_header("Rhythm & HRV", self.lbl_info))
         cards_row = QtWidgets.QHBoxLayout()
+        cards_row.setSpacing(12)
         host._rhythm_cards = _Cards(cards_row)
-        grid.addLayout(cards_row, 5, 0, 1, 2)
+        lay.addLayout(cards_row)
+        for key in ("hr", "sdnn", "rmssd", "pnn6", "lf_hf", "sd1_sd2"):   # in this order
+            host._rhythm_cards[key]
+        grid = QtWidgets.QGridLayout()
+        grid.setSpacing(14)
+        lay.addLayout(grid)
 
-        # The metric table (ecg.core.metric_table.rhythm_rows), with its basis.
-        table_box = QtWidgets.QWidget()
-        tl = QtWidgets.QVBoxLayout(table_box)
-        tl.setContentsMargins(0, 0, 0, 0)
-        head = QtWidgets.QHBoxLayout()
-        host._rhythm_labels = {k: StatusLabel("") for k in ("excluded", "nonlinear_basis",
-                                                            "asymmetry")}
-        for lbl in host._rhythm_labels.values():
-            lbl.setProperty("muted", True)
-            lbl.setWordWrap(True)
-        head.addWidget(host._rhythm_labels["excluded"], 1)
-        self.chk_all = QtWidgets.QCheckBox("Show all metrics")
-        self.chk_all.toggled.connect(self._show_all_toggled)
-        head.addWidget(self.chk_all)
-        tl.addLayout(head)
-        self.table = QtWidgets.QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Metric", "Value", "Unit", "Basis"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        tl.addWidget(self.table, 1)
-        tl.addWidget(host._rhythm_labels["nonlinear_basis"])
-        grid.addWidget(card("Metrics", table_box, 380), 6, 0)
-        asym = QtWidgets.QWidget()
-        al = QtWidgets.QVBoxLayout(asym)
-        al.setContentsMargins(0, 0, 0, 0)
-        al.addWidget(host._rhythm_labels["asymmetry"])
-        al.addWidget(host.slot("asymmetry", page, 6.0, 3.0), 1)
-        grid.addWidget(card("RR asymmetry", asym, 380), 6, 1)
-        host.on_rhythm_table = self.show_table
-        self._table: "MetricTable | None" = None
-        tacho = QtWidgets.QWidget()
-        tl2 = QtWidgets.QVBoxLayout(tacho)
-        tl2.setContentsMargins(0, 0, 0, 0)
-        srow = QtWidgets.QHBoxLayout()
-        srow.addStretch(1)
-        self.btn_spikes = QtWidgets.QPushButton("▲▼ Spike markers")
+        # Tachogram, with its flagged-beat controls.
+        spikes = QtWidgets.QWidget()
+        srow = QtWidgets.QHBoxLayout(spikes)
+        srow.setContentsMargins(0, 0, 0, 0)
+        self.btn_spikes = QtWidgets.QPushButton("Flagged beats")
         self.btn_spikes.setCheckable(True)
         self.btn_spikes.setChecked(bool(host.ui.show_spike_markers))
         self.btn_spikes.setToolTip("Show / hide the flagged beats (▲ / ▼) of the tachogram: "
                                    "the trace and the mean ± SD band stay")
         self.btn_spikes.toggled.connect(self._spikes_toggled)
         srow.addWidget(self.btn_spikes)
-        self.btn_review = QtWidgets.QPushButton("Review ▶")
-        self.btn_review.setToolTip("The next flagged beat (▲ / ▼), centred in Signal & "
-                                   "Detection; press again for the following one")
+        self.btn_review = QtWidgets.QPushButton("Review ›")
+        self.btn_review.setToolTip("The next flagged beat (▲ / ▼), centred in Signal; press "
+                                   "again for the following one")
         self.btn_review.clicked.connect(lambda: window.detection.step_spike(+1))
         srow.addWidget(self.btn_review)
-        tl2.addLayout(srow)
-        tl2.addWidget(host.slot("rr", page, 9.0, 4.4), 1)
-        grid.addWidget(card("RR / HR tachogram", tacho, 420), 1, 0)
-        grid.addWidget(card("Poincaré", host.slot("poincare", page, 5.0, 4.4), 420), 1, 1)
+        # The charts on screen (PyQtGraph); the Matplotlib figures of the same
+        # results are kept, hidden, for the exports (drawn when one reads them).
+        from ecg.qt.widgets.rhythm_charts import RhythmCharts
+        from ecg.qt.widgets.shell import Segmented
+        self.charts = RhythmCharts(on_time_clicked=self._show_beat, parent=self)
+        for name in ("rr", "poincare", "psd", "rr_hist"):
+            host.slot(name, page, 6.0, 4.0).hide()
+        self.seg_unit = Segmented(["HR", "RR"])
+        self.seg_unit.buttons[0].setChecked(True)
+        for b in self.seg_unit.buttons:
+            b.clicked.connect(lambda _c=False, u=b.text(): self.charts.set_unit(u))
+        srow.insertWidget(0, self.seg_unit)
+        self.lbl_flagged = QtWidgets.QLabel("")
+        self.lbl_flagged.setProperty("muted", True)
+        srow.insertWidget(0, self.lbl_flagged)
+        grid.addWidget(card("Heart rate over time", self.charts.tacho, 0, spikes), 0, 0,
+                       QtCore.Qt.AlignmentFlag.AlignTop)
 
+        # Poincaré, with the non-linear recompute and the entropy cap.
+        nl = QtWidgets.QWidget()
+        nrow = QtWidgets.QHBoxLayout(nl)
+        nrow.setContentsMargins(0, 0, 0, 0)
+        nrow.addWidget(QtWidgets.QLabel("Entropy cap (RR)"))
+        # Runtime cap of the O(N²) entropy block only (SampEn, ApEn, MSE…):
+        # Poincaré and DFA always use every beat of the analysis window.
+        self.sp_entropy = QtWidgets.QSpinBox()
+        self.sp_entropy.setRange(0, 10_000_000)
+        self.sp_entropy.setValue(int(MouseECG.ENTROPY_MAX_BEATS))
+        self.sp_entropy.setToolTip("Valid RR intervals used by the entropy block, for "
+                                   "runtime (0 = no cap). SD1 / SD2 and DFA always use "
+                                   "every valid RR of the window. Takes effect at the "
+                                   "next Analyze or Recompute.")
+        nrow.addWidget(self.sp_entropy)
+        self.btn_nonlin = QtWidgets.QPushButton("Recompute")
+        self.btn_nonlin.setToolTip("Non-linear HRV again on the current peaks, window and RR "
+                                   "bounds")
+        self.btn_nonlin.clicked.connect(window.recompute_nonlinear)
+        nrow.addWidget(self.btn_nonlin)
+        host.ent_entropy_cap = Field(self.sp_entropy, text=True)
+        pc_box = QtWidgets.QWidget()
+        pcl = QtWidgets.QVBoxLayout(pc_box)
+        pcl.setContentsMargins(0, 0, 0, 0)
+        host.lbl_nonlin_status = StatusLabel("")
+        host.lbl_nonlin_status.setWordWrap(True)
+        pcl.addWidget(host.lbl_nonlin_status)
+        prow = QtWidgets.QHBoxLayout()
+        prow.addWidget(self.charts.poincare, 3)
+        stats = QtWidgets.QVBoxLayout()
+        self.lbl_sd = {}
+        for key, label in (("sd1", "SD1"), ("sd2", "SD2"), ("ratio", "SD1 / SD2")):
+            name = QtWidgets.QLabel(label)
+            name.setProperty("muted", True)
+            val = QtWidgets.QLabel("—")
+            val.setProperty("role", "value")
+            stats.addWidget(name)
+            stats.addWidget(val)
+            self.lbl_sd[key] = val
+        stats.addStretch(1)
+        prow.addLayout(stats, 1)
+        pcl.addLayout(prow, 3)
+        pcl.addWidget(self.charts.mse, 1)
+        grid.addWidget(card("Poincaré and entropy", pc_box, 0, nl), 0, 1)
+
+        # Spectrum.
         psd_box = QtWidgets.QWidget()
         psd_lay = QtWidgets.QVBoxLayout(psd_box)
         psd_lay.setContentsMargins(0, 0, 0, 0)
-        frow = QtWidgets.QHBoxLayout()
-        self.btn_freq = QtWidgets.QPushButton("Recompute Frequency")
+        host.lbl_freq_status = StatusLabel("")
+        host.lbl_freq_status.setWordWrap(True)
+        psd_lay.addWidget(host.lbl_freq_status)
+        psd_lay.addWidget(self.charts.psd, 1)
+        self.btn_freq = QtWidgets.QPushButton("Recompute")
         self.btn_freq.setToolTip("Frequency HRV again on the current peaks, analysis window and "
                                  "RR bounds")
         self.btn_freq.clicked.connect(window.recompute_freq)
-        frow.addWidget(self.btn_freq)
-        host.lbl_freq_status = StatusLabel("")
-        host.lbl_freq_status.setWordWrap(True)
-        frow.addWidget(host.lbl_freq_status, 1)
-        psd_lay.addLayout(frow)
-        psd_lay.addWidget(host.slot("psd", page, 6.0, 3.6), 1)
-        grid.addWidget(card("Power spectral density", psd_box, 360), 2, 0)
+        grid.addWidget(card("Power spectrum", psd_box, 0, self.btn_freq), 1, 0)
 
-        dist = QtWidgets.QWidget()
-        dist_lay = QtWidgets.QVBoxLayout(dist)
-        dist_lay.setContentsMargins(0, 0, 0, 0)
-        dist_lay.addWidget(host.slot("rr_hist", page, 5.0, 2.6), 1)
-        host.txt_rr = TextBox()
-        host.txt_rr.setMaximumHeight(120)
-        dist_lay.addWidget(host.txt_rr)
-        grid.addWidget(card("RR distribution (valid intervals)", dist, 360), 2, 1)
+        grid.addWidget(card("RR distribution (valid intervals)", self.charts.hist, 0), 1, 1)
 
+        # The metric table (ecg.core.metric_table.rhythm_rows), with its basis:
+        # as tall as its rows, so the page is the only thing that scrolls.
+        table_box = QtWidgets.QWidget()
+        tl = QtWidgets.QVBoxLayout(table_box)
+        tl.setContentsMargins(0, 0, 0, 0)
+        host._rhythm_labels = {k: StatusLabel("") for k in ("excluded", "nonlinear_basis",
+                                                            "asymmetry")}
+        for lbl in host._rhythm_labels.values():
+            lbl.setProperty("muted", True)
+            lbl.setWordWrap(True)
+        tl.addWidget(host._rhythm_labels["excluded"])
+        self.chk_all = QtWidgets.QCheckBox("Show all metrics")
+        self.chk_all.toggled.connect(self._show_all_toggled)
+        self.table = QtWidgets.QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Metric", "Value", "Unit", "Basis"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        tl.addWidget(self.table)
+        tl.addWidget(host._rhythm_labels["nonlinear_basis"])
+        tl.addStretch(1)
+        grid.addWidget(card("Metrics", table_box, 0, self.chk_all), 2, 0)
+        asym = QtWidgets.QWidget()
+        al = QtWidgets.QVBoxLayout(asym)
+        al.setContentsMargins(0, 0, 0, 0)
+        al.addWidget(host._rhythm_labels["asymmetry"])
+        al.addWidget(host.slot("asymmetry", page, 6.0, 3.0), 1)
+        al.addStretch(0)
+        grid.addWidget(card("RR asymmetry", asym, 380), 2, 1, QtCore.Qt.AlignmentFlag.AlignTop)
+        host.on_rhythm_table = self.show_table
+        self._table: "MetricTable | None" = None
+        grid.setColumnStretch(0, 3)
+        grid.setColumnStretch(1, 2)
+
+        # The raw text tables (right click: copy as a table), on demand.
+        self.btn_text = QtWidgets.QPushButton("Show the text tables")
+        self.btn_text.setCheckable(True)
+        self.btn_text.setProperty("flat", True)
+        lay.addWidget(self.btn_text, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         raw = QtWidgets.QWidget()
         raw_lay = QtWidgets.QHBoxLayout(raw)
         raw_lay.setContentsMargins(0, 0, 0, 0)
         for title, attr in (("HRV time domain", "txt_td"), ("Frequency domain", "txt_fd"),
-                            ("Non-linear", "txt_nl")):
+                            ("Non-linear", "txt_nl"), ("RR intervals", "txt_rr")):
             col = QtWidgets.QVBoxLayout()
             col.addWidget(QtWidgets.QLabel(title))
-            if attr == "txt_nl":
-                nrow = QtWidgets.QHBoxLayout()
-                self.btn_nonlin = QtWidgets.QPushButton("Recompute Non-linear")
-                self.btn_nonlin.clicked.connect(window.recompute_nonlinear)
-                nrow.addWidget(self.btn_nonlin)
-                nrow.addWidget(QtWidgets.QLabel("Entropy cap (RR):"))
-                # Runtime cap of the O(N²) entropy block only (SampEn, ApEn, MSE…):
-                # Poincaré and DFA always use every beat of the analysis window.
-                self.sp_entropy = QtWidgets.QSpinBox()
-                self.sp_entropy.setRange(0, 10_000_000)
-                self.sp_entropy.setValue(int(MouseECG.ENTROPY_MAX_BEATS))
-                self.sp_entropy.setToolTip("Valid RR intervals used by the entropy block, for "
-                                           "runtime (0 = no cap). SD1 / SD2 and DFA always use "
-                                           "every valid RR of the window. Takes effect at the "
-                                           "next Analyze or Recompute.")
-                nrow.addWidget(self.sp_entropy)
-                nrow.addStretch(1)
-                col.addLayout(nrow)
-                host.ent_entropy_cap = Field(self.sp_entropy, text=True)
-                host.lbl_nonlin_status = StatusLabel("")
-                col.addWidget(host.lbl_nonlin_status)
             box = TextBox()
+            box.setMinimumHeight(260)
             setattr(host, attr, box)
             col.addWidget(box, 1)
             raw_lay.addLayout(col, 1)
-        grid.addWidget(card("HRV tables (right click: copy as a table)", raw, 300), 3, 0, 1, 2)
-        grid.setColumnStretch(0, 3)
-        grid.setColumnStretch(1, 2)
+        self.text_card = card(None, raw)
+        self.text_card.setVisible(False)
+        self.btn_text.toggled.connect(self._text_toggled)
+        lay.addWidget(self.text_card)
+        lay.addStretch(1)
+
+    def refresh_charts(self) -> None:
+        """The charts from the current results (after each step of Analyze,
+        a recompute, a session restored, a theme change)."""
+        host = self.win.figures
+        r = self.win.recording.analysis.results
+        psd = None
+        if r is not None and r.get("rr_ms") is not None:
+            try:
+                psd = host.plot_ctrl.psd_for_display(r)
+            except Exception:                        # a chart never breaks the page
+                psd = None
+        spikes = host.ui.rr_spike_times if host.ui.show_spike_markers else None
+        self.charts.set_results(r, spikes, self.win.recording.analysis.annotations, psd)
+        self.win.detection.refresh_to_check()
+        n = 0 if host.ui.rr_spike_times is None else len(host.ui.rr_spike_times)
+        self.lbl_flagged.setText(f"{n} beats flagged" if r is not None and n else "")
+        nl = (r or {}).get("hrv_nonlin")
+        vals = {}
+        for key, col in (("sd1", "HRV_SD1"), ("sd2", "HRV_SD2"), ("ratio", "HRV_SD1SD2")):
+            try:
+                vals[key] = float(nl[col].values[0])
+            except Exception:
+                vals[key] = float("nan")
+        import math
+        for key, v in vals.items():
+            unit = "" if key == "ratio" else " ms"
+            self.lbl_sd[key].setText(f"{v:.2f}{unit}" if key == "ratio" and math.isfinite(v)
+                                     else f"{v:.1f}{unit}" if math.isfinite(v) else "—")
+
+    def _show_beat(self, t: float) -> None:
+        """A click on the heart-rate chart: that beat, centred in Signal."""
+        self.win.detection.center_on(t)
+
+    def apply_palette(self, p) -> None:
+        self.charts.apply_palette(p)
+
+    def _text_toggled(self, on: bool) -> None:
+        self.text_card.setVisible(on)
+        self.btn_text.setText("Hide the text tables" if on else "Show the text tables")
 
     def _spikes_toggled(self, on: bool) -> None:
         """ECGApp._toggle_spike_markers: only the flagged-beat layer."""
@@ -200,6 +300,7 @@ class RhythmTab(QtWidgets.QScrollArea):
         r = self.win.recording.analysis.results
         if r is not None:
             host.plot_ctrl.plot_rr(r)
+        self.refresh_charts()
 
     def _show_all_toggled(self, on: bool) -> None:
         self.win.figures.ui.hrv_show_all = on
@@ -237,12 +338,24 @@ class RhythmTab(QtWidgets.QScrollArea):
                         QtGui.QPalette.ColorRole.PlaceholderText)))
                 self.table.setItem(r, c, item)
         self.table.resizeColumnsToContents()
+        self._fit_table()
+
+    def _fit_table(self) -> None:
+        """The table as tall as its rows: no scroll inside the page's scroll."""
+        h = self.table.horizontalHeader().height() + 2 * self.table.frameWidth() + 2
+        h += sum(self.table.rowHeight(r) for r in range(self.table.rowCount()))
+        self.table.setFixedHeight(max(h, 80))
 
     def clear(self) -> None:
         self._table = None
         self.table.setRowCount(0)
+        self._fit_table()
         for name in ("rr", "poincare", "psd", "rr_hist", "asymmetry"):
             self.win.figures.slot(name).clear()
+        self.charts.set_results(None)
+        for v in self.lbl_sd.values():
+            v.setText("—")
+        self.lbl_flagged.setText("")
         for attr in ("txt_rr", "txt_td", "txt_fd", "txt_nl"):
             getattr(self.win.figures, attr).setPlainText("")
         self.win.figures.lbl_freq_status.setText("")

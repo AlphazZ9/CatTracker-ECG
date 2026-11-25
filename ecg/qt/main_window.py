@@ -41,7 +41,8 @@ from ecg.app.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_GROUP, TAB_EVENTS,
 
 FILE_FILTER = "Recordings (*.mat *.smr);;All files (*)"
 SHORTCUTS_TEXT = (
-    "Space          Detect Peaks\n"
+    "Ctrl+K         Search commands and pages\n"
+    "Ctrl+D         Detect Peaks\n"
     "Ctrl+R         Analyze\n"
     "Ctrl+O         Open a recording\n"
     "Ctrl+S         Save session\n"
@@ -90,8 +91,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         central = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(central)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
         lay.addWidget(self._build_header())
+        body = QtWidgets.QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        lay.addLayout(body, 1)
+        # The pages are a tab widget whose tab bar is hidden: the navigation
+        # column on the left chooses the page (and shows each one's state).
         self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().hide()
         self.tab_widgets: "dict[str, QtWidgets.QWidget]" = {}
         for name in TAB_ORDER:
             if name == TAB_DETECTION:
@@ -114,9 +125,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 raise ValueError(f"no tab named {name!r}")
             self.tab_widgets[name] = w
             self.tabs.addTab(w, name.replace("&", "&&"))   # "&" alone marks a shortcut
-        lay.addWidget(self.tabs, 1)
+        self.sidebar = self._build_sidebar()
+        body.addWidget(self.sidebar)
+        body.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
         self.setStatusBar(QtWidgets.QStatusBar())
+        self.statusBar().setSizeGripEnabled(False)
+        for w in (self.lbl_progress, self.progress, self.btn_cancel):
+            self.statusBar().addPermanentWidget(w)
+        from ecg.qt.widgets.shell import Toast
+        self.toast = Toast(self)
         self.detection: DetectionTab = self.tab_widgets[TAB_DETECTION]   # type: ignore[assignment]
         self.rhythm: RhythmTab = self.tab_widgets[TAB_HRV]                # type: ignore[assignment]
         self.morphology: MorphologyTab = self.tab_widgets[TAB_MORPHOLOGY]  # type: ignore[assignment]
@@ -131,6 +149,8 @@ class MainWindow(QtWidgets.QMainWindow):
         from ecg.qt.dialogs.recording_dialog import RecordingDialog
         self.recording_sheet = RecordingDialog(self)
         self.session = QtSession(self)
+        self.tabs.currentChanged.connect(self._page_changed)
+        self.sidebar.select(TAB_DETECTION)
         self.tabs.currentChanged.connect(
             lambda i: self.report.refresh() if self.tabs.widget(i) is self.report else None)
         self.tabs.currentChanged.connect(       # the group table may have changed
@@ -149,16 +169,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self._banner_timer.timeout.connect(self.refresh_banners)
         self._banner_timer.start()
         self.tabs.currentChanged.connect(lambda _i: self.refresh_banners())
-        QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self, activated=self.detection.undo)
-        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Y"), self, activated=self.detection.redo)
+        QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self,
+                        activated=lambda: self._shortcut_edit(redo=False))
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Y"), self,
+                        activated=lambda: self._shortcut_edit(redo=True))
         # The Tk interface's shortcuts (Help > Keyboard shortcuts).
-        for key, fn in (("Space", self._shortcut_detect), ("Ctrl+R", self._shortcut_analyze),
+        # Detect Peaks is Ctrl+D, not Space: a stray Space press re-detected
+        # and replaced the peaks edited by hand.
+        for key, fn in (("Ctrl+K", self.open_palette),
+                        ("Ctrl+D", self._shortcut_detect), ("Ctrl+R", self._shortcut_analyze),
                         ("Ctrl+E", lambda: self.figures.export_ctrl.export_excel()),
                         ("Ctrl+Shift+E", lambda: self.figures.export_ctrl.export_rr_csv()),
                         ("Ctrl+M", lambda: self.tabs.setCurrentWidget(self.compare)),
                         ("Left", lambda: self._shortcut_pan(-1)),
                         ("Right", lambda: self._shortcut_pan(+1))):
             QtGui.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
+        self.apply_shell_palette(theme.current())
+        self.refresh_primary()
 
     # ── layout ──────────────────────────────────────────────
     def _build_menu(self) -> None:
@@ -191,6 +218,10 @@ class MainWindow(QtWidgets.QMainWindow):
         v = mb.addMenu("&View")
         v.addAction("Light / dark mode").triggered.connect(self.toggle_theme)
         v.addAction("Text size…").triggered.connect(self.choose_text_size)
+        t = mb.addMenu("&Tools")
+        t.addAction("Settings…").triggered.connect(
+            lambda: (self.settings.show(), self.settings.raise_()))
+        t.addAction("ML detector…").triggered.connect(self.open_ml_dialog)
         h = mb.addMenu("&Help")
         act = h.addAction("Keyboard shortcuts")
         act.setShortcut(QtGui.QKeySequence("F1"))
@@ -230,58 +261,233 @@ class MainWindow(QtWidgets.QMainWindow):
         QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(d)))
 
     def _build_header(self) -> QtWidgets.QFrame:
+        """The app's mark, the recording (a chip: click for its subject,
+        project and notes), whether it is saved, and one primary button that
+        follows the step: Open, then Detect peaks, then Analyze."""
+        from ecg.qt.widgets.shell import ClickableFrame
         bar = QtWidgets.QFrame(objectName="Header")
+        bar.setFixedHeight(54)
         row = QtWidgets.QHBoxLayout(bar)
-        title = QtWidgets.QLabel("<b>ECG Analysis</b>")
+        row.setContentsMargins(16, 0, 16, 0)
+        row.setSpacing(10)
+        self.lbl_logo = QtWidgets.QLabel()
+        row.addWidget(self.lbl_logo)
+        title = QtWidgets.QLabel("ECG Analysis")
+        title.setStyleSheet("font-weight: 600;")
+        title.setMinimumWidth(150)
         row.addWidget(title)
+        self.chip_file = ClickableFrame(objectName="Chip")
+        self.chip_file.setFixedHeight(34)
+        self.chip_file.setToolTip("Subject ID, sex, project and notes of this recording")
+        self.chip_file.clicked.connect(self._file_chip_clicked)
+        chip = QtWidgets.QHBoxLayout(self.chip_file)
+        chip.setContentsMargins(12, 6, 10, 6)
+        chip.setSpacing(8)
         self.lbl_file = QtWidgets.QLabel("No recording")
-        self.lbl_file.setProperty("muted", True)
-        row.addWidget(self.lbl_file, 1)
+        self.lbl_file.setStyleSheet("font-weight: 600;")
+        chip.addWidget(self.lbl_file)
+        self.lbl_chip_arrow = QtWidgets.QLabel()
+        chip.addWidget(self.lbl_chip_arrow)
+        row.addWidget(self.chip_file)
+        row.addStretch(1)
+        self.btn_search = QtWidgets.QPushButton(
+            "Search      " + ("⌘K" if sys.platform == "darwin" else "Ctrl+K"))
+        self.btn_search.setProperty("chip", True)
+        self.btn_search.setMinimumWidth(200)
+        self.btn_search.setStyleSheet("text-align: left; padding: 6px 12px;")
+        self.btn_search.setToolTip("Search every command and page")
+        self.btn_search.clicked.connect(self.open_palette)
+        row.addWidget(self.btn_search)
+        self.lbl_saved = QtWidgets.QLabel("")
+        self.lbl_saved.setProperty("muted", True)
+        row.addWidget(self.lbl_saved)
         self.btn_open = QtWidgets.QPushButton("Open…")
+        self.btn_open.setToolTip("Open a recording (Ctrl+O)")
         self.btn_open.clicked.connect(self.open_dialog)
         row.addWidget(self.btn_open)
-        self.btn_recording = QtWidgets.QPushButton("Recording…")
-        self.btn_recording.setToolTip("Subject ID, sex, project and notes of this recording")
-        self.btn_recording.clicked.connect(
-            lambda: (self.recording_sheet.show(), self.recording_sheet.raise_()))
-        row.addWidget(self.btn_recording)
+        self.btn_save = QtWidgets.QPushButton("Save")
+        self.btn_save.setToolTip("Save the peaks, edits, results and settings of this recording; "
+                                 "they are offered again when the file is reopened (Ctrl+S)")
+        self.btn_save.setEnabled(False)
+        self.btn_save.clicked.connect(lambda: self.session.save())
+        row.addWidget(self.btn_save)
         self.btn_settings = QtWidgets.QPushButton("Settings…")
         self.btn_settings.setToolTip("Channel, crop, filters, RR bounds, artifact correction")
         self.btn_settings.clicked.connect(lambda: (self.settings.show(), self.settings.raise_()))
         row.addWidget(self.btn_settings)
-        self.btn_ml = QtWidgets.QPushButton("ML detector…")
-        self.btn_ml.setToolTip("Training examples and training of the ML R-peak detector")
-        self.btn_ml.clicked.connect(self.open_ml_dialog)
-        row.addWidget(self.btn_ml)
-        self.btn_save = QtWidgets.QPushButton("Save Session")
-        self.btn_save.setToolTip("Save the peaks, edits, results and settings of this recording; "
-                                 "they are offered again when the file is reopened")
-        self.btn_save.setEnabled(False)
-        self.btn_save.clicked.connect(lambda: self.session.save())
-        row.addWidget(self.btn_save)
         self.btn_analyze = QtWidgets.QPushButton("Analyze")
         self.btn_analyze.setProperty("primary", True)
-        self.btn_analyze.setEnabled(False)
-        self.btn_analyze.setToolTip("RR / HR, time-domain HRV and beat template, then frequency "
-                                    "and non-linear HRV")
-        self.btn_analyze.clicked.connect(self.analyze)
+        self.btn_analyze.setMinimumWidth(120)
+        self.btn_analyze.clicked.connect(self._primary_clicked)
         row.addWidget(self.btn_analyze)
+        self._analyzing = False
+        # Rarely used: reached from the menus, not the header.
+        self.btn_recording = QtWidgets.QPushButton("Recording…", self)
+        self.btn_recording.clicked.connect(self.show_recording_sheet)
+        self.btn_recording.hide()
+        self.btn_ml = QtWidgets.QPushButton("ML detector…", self)
+        self.btn_ml.clicked.connect(self.open_ml_dialog)
+        self.btn_ml.hide()
+        # The running jobs: in the status bar (MainWindow.__init__ places them).
         self.progress = QtWidgets.QProgressBar()
         self.progress.setRange(0, 100)
-        self.progress.setFixedWidth(220)
+        self.progress.setFixedWidth(120)
         self.progress.setVisible(False)
-        row.addWidget(self.progress)
         self.lbl_progress = QtWidgets.QLabel("")
-        self.lbl_progress.setProperty("muted", True)
-        row.addWidget(self.lbl_progress)
         self.btn_cancel = QtWidgets.QPushButton("Cancel")
         self.btn_cancel.setVisible(False)
         self.btn_cancel.clicked.connect(self.cancel_jobs)
-        row.addWidget(self.btn_cancel)
-        self.btn_theme = QtWidgets.QPushButton("Dark mode")
-        self.btn_theme.clicked.connect(self.toggle_theme)
-        row.addWidget(self.btn_theme)
         return bar
+
+    def _build_sidebar(self):
+        from ecg.qt.widgets.shell import Sidebar
+        side = Sidebar([
+            ("Analysis", [(TAB_DETECTION, "Signal", "signal"), (TAB_HRV, "Rhythm & HRV", "heart"),
+                          (TAB_TIME_COURSE, "Time course", "trend"),
+                          (TAB_MORPHOLOGY, "Morphology", "beat"), (TAB_EVENTS, "Events", "alert")]),
+            ("Compare", [(TAB_COMPARE, "Segments", "split"), (TAB_GROUP, "Group", "group")]),
+            ("Output", [(TAB_REPORT, "Report & exports", "report")]),
+        ])
+        side.selected.connect(lambda key: self.tabs.setCurrentWidget(self.tab_widgets[key]))
+        legend = QtWidgets.QGridLayout()
+        legend.setHorizontalSpacing(8)
+        legend.setVerticalSpacing(4)
+        self._legend_dots = []
+        for r, text in enumerate(("Up to date", "Out of date", "Not computed")):
+            dot = QtWidgets.QLabel()
+            self._legend_dots.append(dot)
+            legend.addWidget(dot, r, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+            lbl = QtWidgets.QLabel(text)
+            lbl.setProperty("muted", True)
+            legend.addWidget(lbl, r, 1)
+        legend.setColumnStretch(1, 1)
+        side.footer.addLayout(legend)
+        self.btn_theme = QtWidgets.QPushButton("Dark mode")
+        self.btn_theme.setProperty("flat", True)
+        self.btn_theme.setStyleSheet("text-align: left; padding: 6px 4px;")
+        self.btn_theme.clicked.connect(self.toggle_theme)
+        side.footer.addWidget(self.btn_theme)
+        return side
+
+    def palette_commands(self) -> "list[tuple[str, str, Callable[[], None]]]":
+        """What the search finds: the pages, the menus' commands, and the
+        main actions of each page."""
+        go = lambda key: (lambda: self.tabs.setCurrentWidget(self.tab_widgets[key]))
+        cmds = [(f"Go to {item.text().replace('&&', '&')}", "page", go(key))
+                for key, item in self.sidebar.items.items()]
+        ex = self.figures.export_ctrl
+        cmds += [
+            ("Open a recording…", "Ctrl+O", self.open_dialog),
+            ("Detect peaks", "Ctrl+D", self._shortcut_detect),
+            ("Analyze", "Ctrl+R", self._shortcut_analyze),
+            ("Save session", "Ctrl+S", lambda: self.session.save()),
+            ("Detection settings…", "Signal", lambda: (
+                self.tabs.setCurrentWidget(self.detection), self.detection.btn_detection.click())),
+            ("Check agreement", "Signal", self.detection.check_agreement),
+            ("Review artifacts…", "Signal", self.detection.btn_review.click),
+            ("Annotations…", "Signal", self.detection.btn_annotations.click),
+            ("Noisy regions…", "Signal", self.detection.btn_noise.click),
+            ("Compute epochs", "Time course", lambda: (
+                self.tabs.setCurrentWidget(self.time_course), self.time_course.setCurrentIndex(0),
+                self.figures.analysis_ctrl.compute_epochs())),
+            ("Measure intervals", "Morphology", lambda: (
+                self.tabs.setCurrentWidget(self.morphology), self.morphology.measure())),
+            ("Classify events", "Events", lambda: (
+                self.tabs.setCurrentWidget(self.events),
+                self.figures.analysis_ctrl.run_arrhythmia_analysis())),
+            ("Export Excel…", "Ctrl+E", ex.export_excel),
+            ("Export PDF report…", "Report", ex.export_pdf_report),
+            ("Export figures (ZIP)…", "Report", ex.export_zip),
+            ("Export to Prism…", "Report", ex.export_prism),
+            ("Export RR series (CSV)…", "Ctrl+Shift+E", ex.export_rr_csv),
+            ("Recording: subject, project, notes…", "", self.show_recording_sheet),
+            ("Settings…", "channel, filters, RR bounds", lambda: (self.settings.show(),
+                                                                 self.settings.raise_())),
+            ("ML detector…", "Tools", self.open_ml_dialog),
+            ("Recent recordings…", "File", self.open_recent),
+            ("Light / dark mode", "View", self.toggle_theme),
+            ("Text size…", "View", self.choose_text_size),
+            ("Keyboard shortcuts", "F1", self.show_shortcuts),
+        ]
+        return cmds
+
+    def open_palette(self) -> None:
+        from ecg.qt.widgets.shell import CommandPalette
+        if getattr(self, "_palette", None) is None:
+            self._palette = CommandPalette(self, self.palette_commands)
+        self._palette.open_over(self.btn_search)
+
+    def _page_changed(self, index: int) -> None:
+        w = self.tabs.widget(index)
+        for key, page in self.tab_widgets.items():
+            if page is w:
+                self.sidebar.select(key)
+
+    def _file_chip_clicked(self) -> None:
+        if self.recording.signal.filepath:
+            self.show_recording_sheet()
+        else:
+            self.open_dialog()
+
+    def show_recording_sheet(self) -> None:
+        self.recording_sheet.show()
+        self.recording_sheet.raise_()
+
+    def apply_shell_palette(self, p) -> None:
+        """The header's mark and the navigation icons, in the theme's colours."""
+        from ecg.qt.widgets.shell import dot_pixmap, icon_pixmap, logo_pixmap
+        self.lbl_logo.setPixmap(logo_pixmap(p.ACCENT))
+        self.lbl_chip_arrow.setPixmap(icon_pixmap("chevron_down", p.MUTED, 12, 2.4))
+        self.sidebar.apply_palette(p)
+        for dot, color in zip(self._legend_dots, (p.GREEN, p.ORANGE, None)):
+            dot.setPixmap(dot_pixmap(color, p.LIGHT))
+        self._tab_state_shown.clear()
+
+    # ── the primary action ─────────────────────────────────
+    def refresh_primary(self) -> None:
+        """The header's one primary button: Open… with no recording, then
+        Detect peaks, then Analyze once there are peaks."""
+        rec = self.recording
+        has_file = bool(rec.signal.filepath)
+        rp = rec.detection.rpeaks_ok
+        if not has_file:
+            text, on, tip = "Open…", True, "Open a recording (Ctrl+O)"
+        elif rp is None:
+            text = "Detect peaks"
+            on = self.detection.btn_detect.isEnabled()
+            tip = "Find the R peaks of this recording (Ctrl+D)"
+        else:
+            text, on = "Analyze", (len(rp) >= 5 and not self._analyzing)
+            tip = ("RR / HR, time-domain HRV and beat template, then frequency and non-linear "
+                   "HRV (Ctrl+R)")
+        self.btn_analyze.setText(text)
+        self.btn_analyze.setEnabled(on)
+        self.btn_analyze.setToolTip(tip)
+
+    def _primary_clicked(self) -> None:
+        text = self.btn_analyze.text()
+        if text == "Open…":
+            self.open_dialog()
+        elif text == "Detect peaks":
+            self.detection.detect()
+        else:
+            self.analyze()
+
+    def refresh_saved(self) -> None:
+        """Saved / not saved, in the header."""
+        if not self.recording.signal.filepath:
+            text = ""
+        elif self.session_dirty:
+            text = "Not saved"
+        else:
+            saved = getattr(self.session, "saved_at", None) or ""
+            try:                                        # an ISO time: "Saved 14:02"
+                import datetime as dt
+                text = f"Saved {dt.datetime.fromisoformat(str(saved)):%H:%M}"
+            except ValueError:
+                text = ""
+        if self.lbl_saved.text() != text:
+            self.lbl_saved.setText(text)
 
     # ── recording ───────────────────────────────────────────
     def open_dialog(self) -> None:
@@ -319,7 +525,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.figures.ui.computed_at = None
         self.figures.ui.peaks_edited_at = None
         self.figures._generation = self.generation
-        self.btn_analyze.setEnabled(False)
         self.rhythm.clear()
         self.morphology.results_changed()
         self.time_course.results_changed()
@@ -336,6 +541,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.detection.file_opened()
         self.compare.file_opened()
         self.btn_save.setEnabled(False)
+        self.refresh_primary()
         self.recording_changed.emit()
         self.set_status(kept_note or f"Opened {Path(path).name} — click Detect Peaks",
                         warn=bool(kept_note))
@@ -383,14 +589,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.morphology.results_changed()
         self.time_course.results_changed()
         self.figures.plot_ctrl.draw_all_results()
+        QtCore.QTimer.singleShot(0, self.rhythm.refresh_charts)
 
     def peaks_changed(self) -> None:
         """Detection or a hand edit changed the peaks: results are stale."""
         self.session_dirty = True
         self.peaks_version += 1
         self.btn_save.setEnabled(self.recording.signal.filtered is not None)
-        has_peaks = self.recording.detection.rpeaks_ok is not None
-        self.btn_analyze.setEnabled(has_peaks and len(self.recording.detection.rpeaks_ok) >= 5)
+        self.refresh_primary()
         if self.recording.analysis.results is None:
             self.rhythm.clear()
             self.morphology.results_changed()
@@ -415,11 +621,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if d.rpeaks_ok is None or len(d.rpeaks_ok) < 5:
             self.set_status("Too few peaks — adjust the detection first.", warn=True)
             return
-        self.btn_analyze.setEnabled(False)
+        self._analyzing = True
+        self.refresh_primary()
+
+        def _end() -> None:
+            self._analyzing = False
+            self.refresh_primary()
         self.run_job("Analyze", run_core_analysis, d.rpeaks_ok.copy(), s.filtered, s.fs,
                      self.analysis_params(), rec.analysis.artifact_report,
-                     peaks_bound=True, on_done=self._core_done,
-                     on_end=lambda: self.btn_analyze.setEnabled(True))
+                     peaks_bound=True, on_done=self._core_done, on_end=_end)
 
     def _core_done(self, bundle: dict) -> None:
         """AnalysisController.on_analysis_done's state writes, then drawing."""
@@ -447,8 +657,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.time_course.results_changed()
         self.morphology.wave_template()       # the saved default, first time (as Tk)
         self.figures.plot_ctrl.draw_core_results(
-            on_complete=lambda: self._run_freq(then=lambda: self._run_nonlinear(
-                then=self._analysis_chain_done)))
+            on_complete=lambda: (self.rhythm.refresh_charts(), self._run_freq(
+                then=lambda: self._run_nonlinear(then=self._analysis_chain_done))))
 
     def _run_freq(self, then: "Optional[Callable[[], None]]" = None) -> None:
         """Frequency HRV of the analysis window (AnalysisController.run_freq),
@@ -474,7 +684,8 @@ class MainWindow(QtWidgets.QMainWindow):
         pc = self.figures.plot_ctrl
         pc.run_plot_chain([("PSD", lambda: pc.plot_psd(r)),
                            ("HRV tables (freq)", lambda: pc.plot_hrv_tables(r)),
-                           ("Metrics", lambda: pc.plot_table_views(r))],
+                           ("Metrics", lambda: pc.plot_table_views(r)),
+                           ("Charts", self.rhythm.refresh_charts)],
                           on_complete=self._freq_then)
 
     def _run_nonlinear(self, then: "Optional[Callable[[], None]]" = None) -> None:
@@ -499,7 +710,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.figures.lbl_nonlin_status.configure(text=text.strip(), text_color=color)
         pc = self.figures.plot_ctrl
         pc.run_plot_chain([("Non-linear metrics", lambda: pc.plot_nonlinear(r)),
-                           ("Metrics", lambda: pc.plot_table_views(r))],
+                           ("Metrics", lambda: pc.plot_table_views(r)),
+                           ("Charts", self.rhythm.refresh_charts)],
                           on_complete=self._nonlin_then)
 
     def refresh_tab_states(self) -> None:
@@ -538,12 +750,15 @@ class MainWindow(QtWidgets.QMainWindow):
             painter.drawEllipse(1, 1, 8, 8)
             painter.end()
             self.tabs.setTabIcon(i, QtGui.QIcon(pix))
-            self.tabs.setTabToolTip(i, f"{tab}: {state}" + ("\n" + "\n".join(reasons)
-                                                            if reasons else ""))
+            tip = f"{tab}: {state}" + ("\n" + "\n".join(reasons) if reasons else "")
+            self.tabs.setTabToolTip(i, tip)
+            self.sidebar.set_state(tab, colors.get(state) if state != NOT_COMPUTED else None,
+                                   p.LIGHT, tip)
 
     def refresh_banners(self) -> None:
         try:
             self.refresh_tab_states()
+            self.refresh_saved()
         except Exception as exc:
             log.debug("tab states refresh failed: %s", exc, exc_info=True)
         w = self.tabs.currentWidget()
@@ -585,18 +800,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._auto_epochs = False
             self.figures.analysis_ctrl.compute_epochs()
 
-    def redraw_results(self) -> None:
-        """Draw the current results again (after a theme change)."""
-        r = self.recording.analysis.results
-        if r is None:
-            return
-        pc = self.figures.plot_ctrl
-        tasks = [("RR / HR tachogram", lambda: pc.plot_rr(r)),
-                 ("HRV tables", lambda: pc.plot_hrv_tables(r)),
-                 ("Poincaré", lambda: pc.plot_nonlinear(r))]
-        if r.get("hrv_freq") is not None and not r["hrv_freq"].empty:
-            tasks.append(("PSD", lambda: pc.plot_psd(r)))
-        pc.run_plot_chain(tasks)
+    def redraw_figures(self) -> None:
+        """Every figure again in the current theme (after a theme change):
+        those on screen now, the others when their tab is shown."""
+        from ecg.qt.figure_host import FigureSlot
+        from ecg.qt.widgets.mpl_canvas import MplCanvas
+        slots = list(self.figures._slots.values())
+        for slot in slots:
+            slot.retheme()
+        for w in QtWidgets.QApplication.allWidgets():       # the dialogs' figures
+            if isinstance(w, MplCanvas) and not isinstance(w, FigureSlot) \
+                    and w._draw_fn is not None:
+                w.redraw()
 
     # ── jobs ────────────────────────────────────────────────
     def run_job(self, what: str, fn: Callable[..., Any], *args: Any,
@@ -701,17 +916,32 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ── status, theme ───────────────────────────────────────
     def set_status(self, text: str, warn: bool = False) -> None:
+        """The status bar's message; a warning also rises as a notice over
+        the page, where it is seen (the status bar alone was missed)."""
         p = theme.current()
         self.statusBar().setStyleSheet(f"color: {p.WARN_TEXT if warn else p.MUTED};")
         self.statusBar().showMessage(text)
+        if warn and text:
+            self.toast.show_text(text)
 
     def _shortcut_detect(self) -> None:
         if self.detection.btn_detect.isEnabled() and not self._typing():
             self.detection.detect()
 
     def _shortcut_analyze(self) -> None:
-        if self.btn_analyze.isEnabled():
+        if self.btn_analyze.isEnabled() and self.btn_analyze.text() == "Analyze":
             self.analyze()
+
+    def _shortcut_edit(self, redo: bool) -> None:
+        """Ctrl+Z / Ctrl+Y: undo / redo a peak edit, where peaks are edited
+        (Signal, Events); elsewhere it would change the peaks out of sight."""
+        if self._typing():
+            return
+        if self.tabs.currentWidget() not in (self.detection, self.events):
+            self.set_status("Ctrl+Z / Ctrl+Y undo and redo peak edits: open Signal to use them.",
+                            warn=True)
+            return
+        (self.detection.redo if redo else self.detection.undo)()
 
     def _shortcut_pan(self, direction: int) -> None:
         """← / →: move the Signal & Detection view by 70 % of its width."""
@@ -732,8 +962,11 @@ class MainWindow(QtWidgets.QMainWindow):
         p = theme.apply(app, theme.LIGHT.name if theme.current().is_dark else theme.DARK.name)
         self.btn_theme.setText("Light mode" if p.is_dark else "Dark mode")
         sync_figure_theme(p.is_dark)
+        self.apply_shell_palette(p)
         self.detection.apply_palette(p)
-        self.redraw_results()
+        self.rhythm.apply_palette(p)
+        self.morphology.beat_chart.apply_palette(p)
+        self.redraw_figures()
         self._tab_state_shown.clear()          # the dots in the new colours
         theme.save_prefs()
 

@@ -30,23 +30,125 @@ from ecg.qt.widgets.mpl_canvas import MplCanvas
 log = logging.getLogger("ecg")
 
 
+# What an empty figure says, by slot: which step fills it.
+PLACEHOLDERS = {
+    "rr": "Detect the peaks, then click Analyze: the RR interval and heart rate of every "
+          "beat appear here.",
+    "poincare": "Click Analyze to see the Poincaré plot.",
+    "psd": "Click Analyze to see the power spectrum.",
+    "rr_hist": "Click Analyze to see the RR distribution.",
+    "asymmetry": "Click Analyze to see the RR asymmetry.",
+    "beat": "Click Analyze: the mean beat and its landmarks appear here.",
+    "intervals": "Click Measure intervals: PR, QRS and the other intervals of every beat "
+                 "appear here.",
+    "qtc_rr": "Click Measure intervals to see QTc against RR.",
+    "beat_dist": "Click Measure intervals to see the beat distributions.",
+    "epochs": "Click Compute epochs: the metrics ticked above, window by window, through "
+              "the recording.",
+    "rolling_hrv": "Click Compute: heart rate variability in a window sliding along the "
+                   "recording.",
+    "autonomic": "Click Compute: the sympathetic (CSI) and parasympathetic (CPI) indices "
+                 "through the recording.",
+    "event_locked": "Label a period in Signal & Detection (Annotations), then click Compute: "
+                    "the indices before and after each event.",
+    "arr_ribbon": "Click Classify events: the episodes appear here along the recording.",
+    "arr_detail": "Select an event in the list to see the ECG around it.",
+    "compare": "Set the segments above, then click Compare.",
+}
+
+
+class _DrawQueue:
+    """Figures waiting to be drawn, one per turn of the event loop: a tab
+    of seven figures stays responsive (and paints) while they come in,
+    instead of freezing until the last one is drawn."""
+
+    def __init__(self) -> None:
+        self._queue: "list[FigureSlot]" = []
+
+    def add(self, slot: "FigureSlot") -> None:
+        if slot not in self._queue:
+            self._queue.append(slot)
+            if len(self._queue) == 1:
+                QtCore.QTimer.singleShot(0, self._next)
+
+    def _next(self) -> None:
+        if not self._queue:
+            return
+        slot = self._queue.pop(0)
+        try:
+            if slot.isVisible():
+                slot.flush()
+        except RuntimeError:                    # the widget was deleted meanwhile
+            pass
+        if self._queue:
+            QtCore.QTimer.singleShot(0, self._next)
+
+
+_DRAWS = _DrawQueue()
+
+
 class FigureSlot(MplCanvas):
-    """A CanvasSlot (ecg.app.plots) as PlotController uses it."""
+    """A CanvasSlot (ecg.app.plots) as PlotController uses it.
+
+    Drawn when seen: a figure whose tab is hidden keeps its draw function
+    and draws it when the tab is shown, or as soon as the figure is read
+    (an export, a test). Analyze and a theme change therefore only draw
+    the figures on screen, instead of every figure of every tab, and those
+    one per turn of the event loop (_DrawQueue)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._pending: "Optional[Callable]" = None
 
     def update(self, draw_fn: Callable) -> None:          # noqa: A003 (CanvasSlot API)
-        self.update_figure(draw_fn)
+        self._draw_fn = draw_fn
+        self._sync_placeholder()
+        self._pending = draw_fn
+        if self.isVisible():
+            _DRAWS.add(self)
+
+    @property
+    def figure(self):
+        self.flush()
+        return self._figure
 
     @property
     def fig(self):                                        # CanvasSlot.fig (exports)
         return self.figure
 
+    def flush(self) -> None:
+        """Draw now what is waiting to be drawn."""
+        if self._pending is not None:
+            self._pending = None
+            self.redraw()
+
+    def retheme(self) -> None:
+        """The figure again in the current theme: now if it is on screen,
+        else when it is next shown."""
+        if self._draw_fn is None:                         # empty: its background only
+            import matplotlib
+            self._figure.set_facecolor(matplotlib.rcParams["figure.facecolor"])
+            self.canvas.draw_idle()
+            return
+        self._pending = self._draw_fn
+        if self.isVisible():
+            _DRAWS.add(self)
+
+    def clear(self) -> None:
+        self._pending = None
+        super().clear()
+
+    def showEvent(self, ev: QtGui.QShowEvent) -> None:
+        super().showEvent(ev)
+        if self._pending is not None:
+            # After the tab itself has painted: it appears at once, its
+            # figures one after the other.
+            _DRAWS.add(self)
+
     def _show_placeholder(self, force: bool = False) -> None:
         self.clear()
 
     def enable_wheel_yzoom(self) -> None:                 # Qt: the toolbar-free canvas
-        pass
-
-    def flush(self) -> None:
         pass
 
 
@@ -197,6 +299,7 @@ class _Slots(dict):
 
     def __missing__(self, name: str) -> FigureSlot:
         slot = self[name] = FigureSlot(None)
+        slot.set_placeholder(PLACEHOLDERS.get(name, ""))
         return slot
 
 
@@ -340,6 +443,7 @@ class FigureHost:
              width_in: float = 6.0, height_in: float = 3.5) -> FigureSlot:
         if name not in self._slots:
             dict.__setitem__(self._slots, name, FigureSlot(parent, width_in, height_in))
+            self._slots[name].set_placeholder(PLACEHOLDERS.get(name, ""))
         elif parent is not None and self._slots[name].parent() is None:
             self._slots[name].setParent(parent)
         return self._slots[name]
@@ -370,6 +474,11 @@ class FigureHost:
         if isinstance(widget, TextBox):
             widget.setPlainText(text)
             widget.tsv = tsv
+            table = getattr(widget, "table", None)
+            if table is not None:
+                fill_table(table, tsv)
+                widget.setVisible(not tsv)
+                table.setVisible(bool(tsv))
 
     def _windowed_peaks(self):
         d, s, a = self.detection, self.signal, self.analysis
@@ -422,6 +531,68 @@ class FigureHost:
         if name.startswith("__"):
             raise AttributeError(name)
         return _NULL
+
+
+def pretty_column(name: str) -> str:
+    """A table column's name for the eye: 'Epoch_start_s' -> 'Epoch start (s)',
+    'N_beats' -> 'Beats', 'HR_mean' -> 'HR mean' (the exports keep theirs)."""
+    import re
+    n = str(name)
+    unit = ""
+    for suffix, u in (("_s", "s"), ("_ms", "ms"), ("_bpm", "bpm"), ("_pct", "%")):
+        if n.endswith(suffix):
+            n, unit = n[: -len(suffix)], u
+            break
+    if n.startswith("N_"):
+        n = n[2:]
+    n = re.sub(r"^HRV_", "", n).replace("_", " ")
+    n = n[:1].upper() + n[1:]
+    return f"{n} ({unit})" if unit else n
+
+
+def fill_table(table: QtWidgets.QTableWidget, tsv: "Optional[str]") -> None:
+    """A table from tab-separated text (header line first): sortable, numbers
+    right-aligned; 'Copy' gives the TSV back."""
+    rows = [r.split("\t") for r in (tsv or "").splitlines() if r.strip()]
+    table.setSortingEnabled(False)
+    if not rows:
+        table.setRowCount(0)
+        table.setColumnCount(0)
+        return
+    head, body = rows[0], rows[1:]
+    table.setColumnCount(len(head))
+    table.setHorizontalHeaderLabels([pretty_column(h) for h in head])
+    table.setRowCount(len(body))
+    for r, row in enumerate(body):
+        for c, text in enumerate(row[:len(head)]):
+            item = QtWidgets.QTableWidgetItem(text)
+            try:
+                item.setData(QtCore.Qt.ItemDataRole.DisplayRole, float(text))
+                item.setText(text)
+                item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight
+                                      | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            except ValueError:
+                pass
+            table.setItem(r, c, item)
+    table.resizeColumnsToContents()
+    table.setSortingEnabled(True)
+
+
+def data_table(box: "TextBox") -> QtWidgets.QTableWidget:
+    """A table twin of the text box *box*: shown instead of it when what
+    fills it comes with a table (FigureHost._set_textbox)."""
+    table = QtWidgets.QTableWidget(0, 0)
+    table.verticalHeader().setVisible(False)
+    table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.setVisible(False)
+    table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.ActionsContextMenu)
+    act = QtGui.QAction("Copy as table (paste into Excel)", table)
+    act.triggered.connect(lambda: QtWidgets.QApplication.clipboard().setText(box.tsv or ""))
+    table.addAction(act)
+    box.table = table
+    return table
 
 
 def _safe_float(widget: Any, default: float) -> float:

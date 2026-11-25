@@ -16,17 +16,16 @@ from PySide6 import QtWidgets
 class StaleBanner(QtWidgets.QFrame):
     def __init__(self, parent: "Optional[QtWidgets.QWidget]" = None,
                  on_recompute: "Optional[Callable[[], None]]" = None) -> None:
-        super().__init__(parent, objectName="Card")
+        super().__init__(parent, objectName="Warning")
         lay = QtWidgets.QHBoxLayout(self)
-        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setContentsMargins(14, 8, 10, 8)
         self.label = QtWidgets.QLabel("")
         self.label.setWordWrap(True)
         self.label.setProperty("warn", True)
         lay.addWidget(self.label, 1)
         self.button: "Optional[QtWidgets.QPushButton]" = None
         if on_recompute is not None:
-            self.button = QtWidgets.QPushButton("⟳  Recompute")
-            self.button.setProperty("primary", True)
+            self.button = QtWidgets.QPushButton("Recompute")
             self.button.clicked.connect(on_recompute)
             lay.addWidget(self.button)
         self.setVisible(False)

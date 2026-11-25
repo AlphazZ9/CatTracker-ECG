@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from ecg.core.analysis import (ENSEMBLE_BEATS_DEFAULT, analyse_intervals,
                                normalize_ensemble_beats, recompute_qtc_column)
@@ -28,6 +28,8 @@ from ecg.qt.figure_host import StatusLabel
 
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
+
+NEEDS_ANALYZE = "Click Analyze first"
 
 
 class MorphologyTab(QtWidgets.QScrollArea):
@@ -39,6 +41,10 @@ class MorphologyTab(QtWidgets.QScrollArea):
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
         self.setWidget(page)
+        lay.setContentsMargins(24, 16, 24, 16)
+        lay.setSpacing(12)
+        from ecg.qt.widgets.shell import page_header
+        lay.addLayout(page_header('Morphology & intervals'))
 
         bar = QtWidgets.QFrame(objectName="Card")
         row = QtWidgets.QHBoxLayout(bar)
@@ -70,7 +76,7 @@ class MorphologyTab(QtWidgets.QScrollArea):
         self.btn_template.clicked.connect(self._edit_template)
         row.addWidget(self.btn_template)
         self.btn_measure = QtWidgets.QPushButton("Measure intervals")
-        self.btn_measure.setProperty("primary", True)
+        self.btn_measure.setProperty("action", True)
         self.btn_measure.setEnabled(False)
         self.btn_measure.clicked.connect(self.measure)
         row.addWidget(self.btn_measure)
@@ -79,7 +85,7 @@ class MorphologyTab(QtWidgets.QScrollArea):
         from ecg.qt.widgets.stale_banner import StaleBanner
         self.banner = StaleBanner(self, on_recompute=lambda: self.measure())
         lay.addWidget(self.banner)
-        host.lbl_ivl_status = StatusLabel("Click Analyze first")
+        host.lbl_ivl_status = StatusLabel(NEEDS_ANALYZE)
         host.lbl_ivl_status.setProperty("muted", True)
         lay.addWidget(host.lbl_ivl_status)
         # The three steps (TabMorphologyMixin's chips): mean beat, check the
@@ -102,7 +108,8 @@ class MorphologyTab(QtWidgets.QScrollArea):
         self.tbl_ivl.verticalHeader().setVisible(False)
         self.tbl_ivl.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tbl_ivl.horizontalHeader().setStretchLastSection(True)
-        self.tbl_ivl.setMaximumHeight(170)
+        self.tbl_ivl.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.tbl_ivl.setShowGrid(False)
         lay.addWidget(self.tbl_ivl)
         self._ivl_shown: object = False
 
@@ -114,7 +121,12 @@ class MorphologyTab(QtWidgets.QScrollArea):
             fl.addWidget(widget, 1)
             return f
 
-        lay.addWidget(card("Mean beat and landmarks", host.slot("beat", page, 12.0, 4.6), 420))
+        # The mean beat on screen (PyQtGraph); the Matplotlib figure stays,
+        # hidden, for the exports.
+        from ecg.qt.widgets.beat_chart import BeatChart
+        self.beat_chart = BeatChart()
+        host.slot("beat", page, 12.0, 4.6).hide()
+        lay.addWidget(card("Mean beat and landmarks", self.beat_chart, 0))
         lay.addWidget(card("Intervals per beat", host.slot("intervals", page, 12.0, 5.4), 460))
         if QT_REPORTED:
             lay.addWidget(card("QTc vs RR", host.slot("qtc_rr", page, 6.0, 2.0), 220))
@@ -149,11 +161,34 @@ class MorphologyTab(QtWidgets.QScrollArea):
         open_editor(self.win)
 
     # ── Measure intervals ───────────────────────────────────
+    def refresh_beat(self) -> None:
+        """The mean beat chart from the results and the template in use."""
+        from ecg.app.plot_controller import beat_template_overlay
+        from ecg.app.wave_landmarks import WaveLandmarks
+        a = self.win.recording.analysis
+        r = a.results
+        marks: dict = {}
+        if r is not None:
+            wt, _note = beat_template_overlay(a.wave_template, r.get("intervals"))
+            if wt is None:
+                wt, _n = WaveTemplate.load_default_checked(quiet=True)
+            marks = {k: (float(v[0]), float(v[1])) for k, v in wt.landmarks.items()}
+        key = (id(r), tuple(sorted(marks.items())))
+        if key == getattr(self, "_beat_key", None):
+            return
+        self._beat_key = key
+        self.beat_chart.set_beat(r, marks, WaveLandmarks.WAVE_SHORT_LABELS,
+                                 WaveLandmarks.WAVE_COLORS)
+
     def results_changed(self) -> None:
+        QtCore.QTimer.singleShot(0, self.refresh_beat)
         has = self.win.recording.analysis.results is not None
         self.btn_measure.setEnabled(has)
+        lbl = self.win.figures.lbl_ivl_status
+        if has and lbl.text() == NEEDS_ANALYZE:
+            lbl.configure(text="")          # the steps below say what comes next
         if not has:
-            self.win.figures.lbl_ivl_status.configure(text="Click Analyze first")
+            lbl.configure(text=NEEDS_ANALYZE)
             for name in ("beat", "intervals", "beat_dist", "qtc_rr"):
                 if name in self.win.figures._slots:
                     self.win.figures._slots[name].clear()
@@ -161,6 +196,7 @@ class MorphologyTab(QtWidgets.QScrollArea):
     def refresh_banner(self) -> None:
         """TabMorphologyMixin._refresh_morphology: the steps, the interval
         table (rebuilt only when the frame changes) and the stale line."""
+        self.refresh_beat()                     # a template moved in the editor
         from ecg.qt import theme
         from ecg.app.freshness import COMPUTING, OUT_OF_DATE, UP_TO_DATE, stale_banner_text
         from ecg.app.morphology_helpers import (interval_lines, measured_headline,
@@ -193,6 +229,9 @@ class MorphologyTab(QtWidgets.QScrollArea):
                                        line.measured)):
                     self.tbl_ivl.setItem(i, c, QtWidgets.QTableWidgetItem(v))
             self.tbl_ivl.resizeColumnsToContents()
+            h = self.tbl_ivl.horizontalHeader().height() + 4 + sum(       # every line shown
+                self.tbl_ivl.rowHeight(r) for r in range(self.tbl_ivl.rowCount()))
+            self.tbl_ivl.setFixedHeight(max(h, 60))
         self.banner.set_text(stale_banner_text(
             "Intervals", host.freshness.status("intervals"),
             host.ui.module_computed_at.get("intervals"), host.ui.peaks_edited_at,
