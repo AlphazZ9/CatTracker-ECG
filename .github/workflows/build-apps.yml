@@ -1,5 +1,7 @@
-# Builds the standalone "Tom ECG Analysis" apps with PyInstaller
-# (packaging/ecg.spec) for Windows and macOS (Apple Silicon + Intel).
+# Builds the standalone "Tom ECG Analysis" app (the Qt interface,
+# packaging/ecg.spec) with PyInstaller for Windows and macOS (Apple Silicon
+# + Intel); each build runs Detect / Analyze / intervals on the test
+# recording with --self-test.
 #
 #   - push a tag vX.Y.Z  -> build + GitHub Release with the three zips
 #   - Actions tab > "Build apps" > Run workflow -> build only (zips under
@@ -28,22 +30,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        os: [windows-latest, macos-15, macos-15-intel]
         include:
           - os: windows-latest
             label: Windows
-            zip: Tom-ECG-Analysis-Windows.zip
+            arch: Windows
           # Apple Silicon (arm64). macos-14 is no longer offered by GitHub
           # ("configuration 'macos-14-arm64' is not supported", Nov 2026).
           - os: macos-15
             label: macOS arm64
-            zip: Tom-ECG-Analysis-macOS-arm64.zip
+            arch: macOS-arm64
           # Intel Macs. GitHub retired the macos-13 image (Dec 2025);
           # macos-15-intel is its x86_64 replacement.
           - os: macos-15-intel
             label: macOS x86_64
-            zip: Tom-ECG-Analysis-macOS-x86_64.zip
+            arch: macOS-x86_64
     env:
       APP_NAME: Tom ECG Analysis
+      ZIP: Tom-ECG-Analysis-${{ matrix.arch }}.zip
       # Version shown in the macOS bundle: the tag name, else the spec's default.
       APP_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
     steps:
@@ -73,16 +77,27 @@ jobs:
         run: |
           $exe = "dist/$env:APP_NAME/$env:APP_NAME.exe"
           if (-not (Test-Path $exe)) { throw "Missing $exe" }
-          if (-not (Test-Path "dist/$env:APP_NAME/_internal/customtkinter")) { throw "customtkinter assets missing" }
+          if (Test-Path "dist/$env:APP_NAME/_internal/customtkinter") { throw "customtkinter bundled (the Tk interface was removed)" }
           $mb = [math]::Round(((Get-ChildItem "dist/$env:APP_NAME" -Recurse | Measure-Object Length -Sum).Sum) / 1MB)
           Write-Host "OK: $exe ($mb MB)"
+
+      - name: Self-test of the frozen app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = "dist/$env:APP_NAME/$env:APP_NAME.exe"
+          $out = Join-Path $PWD "self_test.txt"
+          $p = Start-Process -FilePath $exe -ArgumentList @("--self-test", "`"$out`"", "tests/fixtures/synthetic_mouse_ecg.mat") -Wait -PassThru
+          if (-not (Test-Path $out)) { throw "No self-test result (exit code $($p.ExitCode))" }
+          Get-Content $out
+          if ($p.ExitCode -ne 0) { throw "Self-test failed (exit code $($p.ExitCode))" }
 
       - name: Zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         working-directory: dist
         run: |
-          7z a -tzip -mx=7 "../${{ matrix.zip }}" "$env:APP_NAME"
+          7z a -tzip -mx=7 "../$env:ZIP" "$env:APP_NAME"
           if ($LASTEXITCODE -ne 0) { throw "7z failed" }
 
       # ---- macOS ---------------------------------------------------------
@@ -97,15 +112,22 @@ jobs:
           codesign --verify --deep --verbose=1 "$app" || echo "::warning::codesign verify failed (app is ad-hoc signed only)"
           du -sh "$app"
 
+      - name: Self-test of the frozen app (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          bin="dist/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+          "$bin" --self-test "$PWD/self_test.txt" tests/fixtures/synthetic_mouse_ecg.mat
+          cat self_test.txt
+
       - name: Zip (macOS)
         if: runner.os == 'macOS'
         working-directory: dist
-        run: ditto -c -k --sequesterRsrc --keepParent "${APP_NAME}.app" "../${{ matrix.zip }}"
+        run: ditto -c -k --sequesterRsrc --keepParent "${APP_NAME}.app" "../${ZIP}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.zip }}
-          path: ${{ matrix.zip }}
+          name: ${{ env.ZIP }}
+          path: ${{ env.ZIP }}
           if-no-files-found: error
           retention-days: 30
           compression-level: 0     # already zipped

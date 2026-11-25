@@ -39,8 +39,7 @@ sécurité > Ouvrir quand même*. Pas à pas complet :
 
 - **Premier lancement : une connexion Internet est nécessaire.** Le lanceur
   installe [uv](https://docs.astral.sh/uv/) s'il est absent, un Python 3.12
-  privé (jamais le Python du système, ni celui d'Apple avec son ancien
-  Tk 8.5) et les bibliothèques de `requirements.txt` — quelques minutes et
+  privé (jamais le Python du système, ni celui d'Apple) et les bibliothèques de `requirements.txt` — quelques minutes et
   environ 400 Mo, avec une fenêtre de progression. Ensuite l'application
   démarre en quelques secondes, y compris hors ligne ; les bibliothèques ne
   sont réinstallées que si `requirements.txt` ou

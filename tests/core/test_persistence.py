@@ -1,6 +1,6 @@
 from ecg.core import wave_template
 from ecg.io import session
-from ecg.ui import theme
+from ecg.app import theme
 
 
 def test_legacy_pickle_session_is_quarantined_without_deserializing(tmp_path, monkeypatch):

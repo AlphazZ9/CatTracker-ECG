@@ -14,8 +14,8 @@ The computation is that of the Tk tab (ecg/ui/compare_segments.py
 _run_compare / _on_done), and its result is kept the same way
 (analysis.last_comparison) for the Report exports.
 
-Not yet in this tab (Tk only for now): the saved configurations, Prism
-exports, the group table and the figure export.
+The configurations, the Prism / figure exports, Add to group table, the
+group Poincaré and the setup kept in sessions: ecg.qt.tabs.compare_more.
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ from ecg.core.segment_plan import (MAX_SEGMENTS, PAIRS, PAIRWISE, comparators_ca
                                    reference_comparators, unique_tags)
 from ecg.io.segment_export import ComparisonResult, comparison_tsv, write_csv, write_xlsx
 from ecg.qt.figure_host import StatusLabel
+from ecg.qt.tabs.compare_more import CompareMoreMixin, fmt_s
 
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
@@ -93,7 +94,7 @@ def run_segments(sig: np.ndarray, rp: np.ndarray, fs: float,
     return [compute_segment_stats(sig, rp, fs, lo, hi, lbl, **seg_kw) for lbl, lo, hi in windows]
 
 
-class CompareTab(QtWidgets.QScrollArea):
+class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
         self.win = window
@@ -109,6 +110,7 @@ class CompareTab(QtWidgets.QScrollArea):
         card = QtWidgets.QFrame(objectName="Card")
         cl = QtWidgets.QVBoxLayout(card)
         cl.addWidget(QtWidgets.QLabel("<b>Segments</b> (label, start and end in seconds)"))
+        self._build_config_bar(cl)
         self.rows = QtWidgets.QTableWidget(0, 3)
         self.rows.setHorizontalHeaderLabels(["Label", "Start (s)", "End (s)"])
         self.rows.verticalHeader().setVisible(False)
@@ -185,14 +187,18 @@ class CompareTab(QtWidgets.QScrollArea):
         self.btn_excel.clicked.connect(self.export_excel)
         self.btn_copy = QtWidgets.QPushButton("Copy table")
         self.btn_copy.clicked.connect(self.copy_table)
-        for b in (self.btn_excel, self.btn_copy):
-            b.setEnabled(False)
+        self.export_buttons = [self.btn_excel, self.btn_copy]
+        for b in self.export_buttons:
             ex.addWidget(b)
+        self.export_buttons += self._build_more_exports(ex)
+        for b in self.export_buttons:
+            b.setEnabled(False)
         self.lbl_exp = QtWidgets.QLabel("")
-        self.lbl_exp.setProperty("muted", True)
+        self.lbl_exp.setWordWrap(True)
         ex.addWidget(self.lbl_exp, 1)
         rl.addLayout(ex)
         lay.addWidget(res)
+        self._build_group_card(lay)
         lay.addStretch(1)
 
     # ── segments ────────────────────────────────────────────
@@ -209,7 +215,7 @@ class CompareTab(QtWidgets.QScrollArea):
     def _append_row(self, lbl: str, lo: float, hi: float) -> None:
         r = self.rows.rowCount()
         self.rows.insertRow(r)
-        for c, v in enumerate((lbl, f"{lo:g}", f"{hi:g}")):
+        for c, v in enumerate((lbl, fmt_s(lo), fmt_s(hi))):
             self.rows.setItem(r, c, QtWidgets.QTableWidgetItem(v))
 
     def read_rows(self) -> "list[tuple[str, float, float]]":
@@ -251,6 +257,8 @@ class CompareTab(QtWidgets.QScrollArea):
         rec = self.win.recording
         ok = rec.detection.rpeaks_ok is not None and rec.signal.filtered is not None
         self.btn_run.setEnabled(ok)
+        if ok:
+            self.fill_markers()
         if ok and self.rows.rowCount() == 0:
             dur = self._duration()
             self.set_rows([("Segment A", 0.0, float(int(dur / 2))),
@@ -262,6 +270,9 @@ class CompareTab(QtWidgets.QScrollArea):
 
     def file_opened(self) -> None:
         self.rows.setRowCount(0)
+        self.ed_stim.clear()
+        self.cfg_say("")
+        self.fill_markers()
         self._clear_results("Detect the peaks first.")
         self.btn_run.setEnabled(False)
 
@@ -275,23 +286,27 @@ class CompareTab(QtWidgets.QScrollArea):
         self.lbl_ref.setText("")
         self.cb_ref.clear()
         self.plot.clear()
-        for b in (self.btn_excel, self.btn_copy):
+        for b in self.export_buttons:
             b.setEnabled(False)
+        self.lbl_exp.setText("")
         self.lbl_status.configure(text=status)
 
     # ── Compare ─────────────────────────────────────────────
-    def run(self) -> None:
+    def run(self, windows: "Optional[list]" = None, block_s: "Optional[float]" = None) -> None:
+        """Compare the rows typed (or *windows* / *block_s*: the comparison
+        a restored session showed)."""
         rec, host = self.win.recording, self.win.figures
         s, d = rec.signal, rec.detection
         if s.filtered is None or d.rpeaks_ok is None:
             return
         dur = self._duration()
-        try:
-            windows = self.read_rows()
-        except ValueError as exc:
-            self.lbl_status.configure(text=f"⚠  {exc}", text_color="#C62828")
-            return
-        block_s = float(self.sp_block.value())
+        if windows is None:
+            try:
+                windows = self.read_rows()
+            except ValueError as exc:
+                self.lbl_status.configure(text=f"⚠  {exc}", text_color="#C62828")
+                return
+        block_s = float(self.sp_block.value()) if block_s is None else float(block_s)
         for i, (_lbl, lo, hi) in enumerate(windows):
             if lo >= hi:
                 self.lbl_status.configure(text=f"⚠  Segment {i + 1}: start ≥ end",
@@ -312,7 +327,7 @@ class CompareTab(QtWidgets.QScrollArea):
         self.lbl_status.configure(text="Computing…")
         gen = self.win.generation
         self.win.run_job("Compare segments", run_segments, s.filtered, rp, s.fs, windows,
-                         progress=False, **seg_kw,
+                         progress=False, peaks_bound=True, **seg_kw,
                          on_done=lambda segs: self._done(segs, windows, block_s, lf, hf)
                          if gen == self.win.generation else None,
                          on_end=lambda: self.btn_run.setEnabled(
@@ -348,8 +363,9 @@ class CompareTab(QtWidgets.QScrollArea):
             hf_band=tuple(hf), comparators=list(self.comps))
         a.last_comparison_run = {"rows": [[str(l), float(lo), float(hi)]
                                           for l, lo, hi in windows], "block_s": float(block_s)}
-        for b in (self.btn_excel, self.btn_copy):
+        for b in self.export_buttons:
             b.setEnabled(True)
+        self.lbl_exp.setText("")
         if errs:
             self.lbl_status.configure(text=f"⚠  {errs[0]}", text_color="#C62828")
         else:
@@ -360,6 +376,7 @@ class CompareTab(QtWidgets.QScrollArea):
                      + (f"  ·  ⚠ {n_flag} segment(s) to check" if n_flag else ""))
         self.render()
         self.redraw_plot()
+        self.group_refresh()
 
     def _compare(self) -> None:
         self.comps = reference_comparators(len(self.segs), self.ref)
@@ -396,7 +413,7 @@ class CompareTab(QtWidgets.QScrollArea):
         self.lbl_flags.setText("\n".join(
             f"{name}: " + (("⚠  " + "  ·  ".join(fl)) if fl else "✓  quality ok")
             for name, fl in zip(names, self.flags)))
-        from ecg.ui.compare_segments import segment_color
+        from ecg.app.compare_helpers import segment_color
         heads, cols = ["Metric", "Unit"], []
         n = len(segs)
         for k in range(n):
@@ -440,8 +457,8 @@ class CompareTab(QtWidgets.QScrollArea):
     def redraw_plot(self) -> None:
         if not self.segs:
             return
-        from ecg.ui.compare_segments import draw_rr_tachograms, segment_color
-        from ecg.ui.poincare_figure import draw_poincare_set
+        from ecg.app.compare_helpers import draw_rr_tachograms, segment_color
+        from ecg.app.poincare_figure import draw_poincare_set
         segs = self.segs
         colors = [segment_color(k) for k in range(len(segs))]
         if self.cb_view.currentIndex() == 1:

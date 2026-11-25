@@ -15,7 +15,7 @@ How
     ``run_pipeline`` drives the app's own code without a window: the
     SignalController / DetectionController / AnalysisController methods the
     buttons call (Detect Peaks, Analyze, Epochs, Sliding...) run on a stub app
-    that holds the state dataclasses of ecg.ui.state and no widget. Where a
+    that holds the state dataclasses of ecg.app.state and no widget. Where a
     button only assembles parameters and calls one ecg.core function, that
     function is called here with the same parameters (the defaults of
     FilterParams and of the widgets' initial values). The scientific code
@@ -167,10 +167,10 @@ def _safe_float(widget: Any, default: float) -> float:
 def _new_app(path: "str | Path") -> _StubApp:
     from ecg.core.models import MouseECG
     from ecg.core.wave_template import WaveTemplate
-    from ecg.ui.analysis_controller import AnalysisController
-    from ecg.ui.detection_controller import DetectionController
-    from ecg.ui.signal_controller import SignalController
-    from ecg.ui.state import AnalysisState, DetectionState, SignalState, UIState
+    from ecg.app.analysis_controller import AnalysisController
+    from ecg.app.detection_controller import DetectionController
+    from ecg.app.signal_controller import SignalController
+    from ecg.app.state import AnalysisState, DetectionState, SignalState, UIState
 
     app = _StubApp(
         signal=SignalState(filepath=str(path)),
@@ -341,7 +341,7 @@ def _autonomic(app: _StubApp, lf_hf: bool) -> dict:
     from ecg.core.autonomic import beat_dataframe, compute_autonomic_indices, to_dataframe
     from ecg.core.models import MouseECG
     from ecg.core.spwvd import spwvd_lf_hf
-    from ecg.ui.autonomic_view import normalise_autonomic_params
+    from ecg.app.autonomic_view import normalise_autonomic_params
     ctl = app.analysis_ctrl
     p = normalise_autonomic_params(None)
     rp = app._windowed_peaks()

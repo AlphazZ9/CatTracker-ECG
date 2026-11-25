@@ -61,6 +61,10 @@ class EventsTab(QtWidgets.QWidget):
         self.btn_classify.clicked.connect(host.analysis_ctrl.run_arrhythmia_analysis)
         row.addWidget(self.btn_classify)
         row.addStretch(1)
+        self.btn_copy = QtWidgets.QPushButton("Copy for Excel")
+        self.btn_copy.setToolTip("The events as tab-separated text: paste them into Excel")
+        self.btn_copy.clicked.connect(host.analysis_ctrl.copy_arrhythmia_tsv)
+        row.addWidget(self.btn_copy)
         lay.addWidget(bar)
         host.ent_arr_baseline = Value(self.sp_baseline.value)
         host.ent_arr_brady_pct = Value(self.sp_brady.value)
@@ -69,6 +73,9 @@ class EventsTab(QtWidgets.QWidget):
         host.lbl_arrhythmia_status.setProperty("muted", True)
         host.lbl_arrhythmia_status.setWordWrap(True)
         lay.addWidget(host.lbl_arrhythmia_status)
+        from ecg.qt.widgets.stale_banner import StaleBanner
+        self.banner = StaleBanner(self)
+        lay.addWidget(self.banner)
 
         ribbon = host.slot("arr_ribbon", self, 12.0, 2.0)
         ribbon.setMinimumHeight(170)
@@ -89,6 +96,27 @@ class EventsTab(QtWidgets.QWidget):
         head = QtWidgets.QHBoxLayout()
         host.lbl_arr_event_title = StatusLabel("Select an event")
         head.addWidget(host.lbl_arr_event_title, 1)
+        nav = host.nav_ctrl
+        for text, tip, fn in (
+                ("◀ Previous", "The event before the one selected", lambda: self.step_event(-1)),
+                ("Next ▶", "The event after the one selected", lambda: self.step_event(+1))):
+            b = QtWidgets.QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(fn)
+            head.addWidget(b)
+        self.btn_edit = QtWidgets.QPushButton("Edit peaks here")
+        self.btn_edit.setCheckable(True)
+        self.btn_edit.setToolTip("Left click near a peak on the trace below: exclude / restore "
+                                 "it. Right click: add a peak at the local maximum (or remove "
+                                 "one added by hand). Undo: Ctrl+Z.")
+        self.btn_edit.toggled.connect(self._edit_toggled)
+        head.addWidget(self.btn_edit)
+        for text, step in (("←", -1), ("→", +1)):
+            b = QtWidgets.QPushButton(text)
+            b.setToolTip("Pan the trace")
+            b.setMaximumWidth(36)
+            b.clicked.connect(lambda _c=False, d=step: nav.arr_navigate(d))
+            head.addWidget(b)
         head.addWidget(QtWidgets.QLabel("Window (s)"))
         self.sp_win = QtWidgets.QDoubleSpinBox()
         self.sp_win.setRange(0.1, 30.0)
@@ -99,11 +127,55 @@ class EventsTab(QtWidgets.QWidget):
         host.ent_arr_win = Value(self.sp_win.value)
         detail = host.slot("arr_detail", right, 9.0, 4.0)
         detail.setMinimumHeight(360)
+        detail.canvas.mpl_connect("button_press_event", host.analysis_ctrl.on_arr_detail_click)
         rl.addWidget(detail, 1)
         split.addWidget(right)
         split.setSizes([480, 900])
         lay.addWidget(split, 1)
         host.on_events_list = self.show_events
+        # What AnalysisController.on_arr_detail_click calls on the app (Tk's
+        # DetectionController): the undo snapshot, the peaks rebuilt, the
+        # Signal & Detection trace and the Undo buttons follow.
+        # (window.detection is set once every tab is built: looked up at call time.)
+        def _push_undo() -> None:
+            from ecg.core.peak_editing import push_undo
+            d = window.recording.detection
+            window.detection.mark_peaks_edited()
+            push_undo(d.edit_undo, d.edit_redo, d.manual_excluded, d.manual_added)
+            window.detection._update_undo_buttons()
+        host._push_edit_undo = _push_undo
+        host._run_detection = lambda _thr=None: window.detection.apply_threshold()
+        host._update_undo_btns = lambda: window.detection._update_undo_buttons()
+        host._draw_detail = lambda *_a: None        # apply_threshold redraws it
+        host.btn_arr_edit = Value(lambda: None)
+        host.lbl_arr_edit_hint = Value(lambda: None)
+
+    def _edit_toggled(self, on: bool) -> None:
+        """AnalysisController.toggle_arr_edit_mode, the button holding the state."""
+        a = self.win.recording.analysis
+        a.arr_edit_mode = bool(on)
+        self.btn_edit.setText("Edit Mode ON" if on else "Edit peaks here")
+        if a.arr_selected_idx >= 0:
+            self.win.figures._draw_arr_detail()
+
+    def step_event(self, direction: int) -> None:
+        """NavigationController.arr_step_event, the table row selected with it."""
+        a = self.win.recording.analysis
+        n = len(a.arrhythmia_events)
+        if not n:
+            return
+        cur = a.arr_selected_idx
+        idx = (0 if direction > 0 else n - 1) if cur < 0 else cur + direction
+        if 0 <= idx < n:
+            self.table.selectRow(idx)          # -> _selected -> select_arrhythmia_event
+
+    def refresh_banner(self) -> None:
+        """TabEventsMixin._refresh_events_readout: the events shown no longer
+        match the peaks."""
+        from ecg.app.freshness import stale_banner_text
+        host = self.win.figures
+        self.banner.set_text(stale_banner_text("Events", host.freshness.status("events"), None,
+                                               host.ui.peaks_edited_at))
 
     def peaks_changed(self) -> None:
         self.btn_classify.setEnabled(self.win.recording.detection.rpeaks_ok is not None)

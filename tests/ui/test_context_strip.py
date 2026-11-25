@@ -4,21 +4,24 @@ the state of the analysis; a tab's state combines those of its modules."""
 from __future__ import annotations
 
 import datetime as dt
-import tkinter as tk
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from ecg.core.metric_table import build_metric_table
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.context_strip import (
-    TONE_WARN, ContextStrip, ContextStripMixin, StripField, artifact_field, context_fields, exclusion_field,
-    tab_states, times_text, window_text,
-)
-from ecg.ui.freshness import NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE
-from ecg.ui.tab_keys import TAB_DETECTION, TAB_EVENTS, TAB_HRV, TAB_MORPHOLOGY
-from ecg.ui.theme import THEME
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.freshness import NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE
+from ecg.app.tab_keys import TAB_DETECTION, TAB_EVENTS, TAB_HRV, TAB_MORPHOLOGY
+from ecg.app.theme import THEME
+from ecg.app.context_fields import StripField
+from ecg.app.context_fields import TONE_WARN
+from ecg.app.context_fields import artifact_field
+from ecg.app.context_fields import context_fields
+from ecg.app.context_fields import exclusion_field
+from ecg.app.context_fields import tab_states
+from ecg.app.context_fields import times_text
+from ecg.app.context_fields import window_text
 
 
 def _results(**hr):
@@ -116,40 +119,8 @@ def test_tab_state_rule():
     assert out[TAB_EVENTS] == UP_TO_DATE
 
 
-def test_strip_wraps_instead_of_clipping():
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:
-        pytest.skip(f"no display: {exc}")
-    root.geometry("300x100")
-    strip = ContextStrip(root)
-    strip.pack(fill="x")
-    strip.show([StripField(str(i), "a field of some width") for i in range(6)], "Computed 14:32")
-    root.update()
-    assert strip.text().count("|") == 5
-    assert strip.times() == "Computed 14:32"
-    ys = {int(strip._labels[str(i)].place_info()["y"]) for i in range(6)}
-    assert len(ys) > 1
-    assert int(strip._flow.cget("height")) == max(ys) + 22
-    root.destroy()
 
 
-def test_strip_rows_hold_the_largest_font_scale(monkeypatch):
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:
-        pytest.skip(f"no display: {exc}")
-    monkeypatch.setattr(THEME, "font_scale", 1.5)
-    root.geometry("300x200")
-    strip = ContextStrip(root)
-    strip.pack(fill="x")
-    strip.show([StripField(str(i), "a field of some width") for i in range(4)], "")
-    root.update()
-    labels = [strip._labels[str(i)] for i in range(4)]
-    assert all(lbl.winfo_height() >= lbl.winfo_reqheight() for lbl in labels)
-    ys = sorted({lbl.winfo_y() for lbl in labels})
-    assert len(ys) > 1 and ys[1] - ys[0] >= labels[0].winfo_reqheight()
-    root.destroy()
 
 
 def _artifact_app(peaks):
@@ -166,29 +137,5 @@ def _artifact_app(peaks):
     return app
 
 
-def test_artifact_field_follows_beats_that_come_back():
-    """Re-detection gives a removed beat back: the strip stops counting it, and
-    says what a saved session would (current_artifact_report)."""
-    app = _artifact_app(np.array([500, 1500, 2500]))
-    art = ContextStripMixin._context_table(app)[1]
-    assert artifact_field(art).text == "Artifact correction: 2 beats removed"
-    assert ContextStripMixin._context_table(app)[1] is art      # cached on the tick
-
-    app.detection.rpeaks_ok = np.array([500, 1000, 1500, 2500])
-    assert artifact_field(ContextStripMixin._context_table(app)[1]).text == \
-        "Artifact correction: 1 beat removed"
-    app.detection.rpeaks_ok = np.array([500, 1000, 1500, 2000, 2500])
-    assert artifact_field(ContextStripMixin._context_table(app)[1]).text == \
-        "Artifact correction: no beat removed"
 
 
-def test_hint_opens_only_when_the_status_bar_cuts_the_text():
-    shown = []
-    tabs = SimpleNamespace(state_text=lambda n: "A: out of date — a reason",
-                           show_hint=shown.append)
-    app = SimpleNamespace(tabs=tabs, _fit_status_text=lambda text: text)
-    ContextStripMixin._show_tab_hint(app, "A")
-    assert shown == []
-    app._fit_status_text = lambda text: text[:5] + "…"
-    ContextStripMixin._show_tab_hint(app, "A")
-    assert shown == ["A"]

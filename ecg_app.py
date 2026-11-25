@@ -1,18 +1,16 @@
 """
-ecg_app.py -- backward-compatible entry point.
+ecg_app.py -- entry point of the application (the Qt interface, PySide6).
 
-The application has been refactored into the `ecg/` package.
-This file exists so existing shortcuts / scripts that call
-    python ecg_app.py
-continue to work unchanged. It is also the entry script of the standalone
-apps built by PyInstaller (packaging/ecg.spec).
+    python ecg_app.py [recording.mat]
+    python ecg_app.py --self-test result.txt [recording.mat]   # packaging check
 
-To run directly from the package:
-    python -m ecg
+Kept so existing shortcuts and the one-click launchers ("Lancer ECG") keep
+working; it is also the entry script of the standalone apps built by
+PyInstaller (packaging/ecg.spec). Same as  python -m ecg.
 """
 import multiprocessing
-import sys
 import os
+import sys
 
 # Ensure the parent directory is on sys.path so `import ecg` works
 # regardless of how this script is invoked.
@@ -28,4 +26,4 @@ if __name__ == "__main__":
     # of a second copy of the application. A no-op under plain Python.
     multiprocessing.freeze_support()
     from ecg.__main__ import main
-    main()
+    sys.exit(main())

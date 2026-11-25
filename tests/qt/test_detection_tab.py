@@ -8,7 +8,7 @@ import pytest
 from ecg.core import analysis
 from ecg.core.detection import apply_threshold
 from ecg.qt.main_window import MainWindow
-from ecg.ui.tab_keys import TAB_ORDER
+from ecg.app.tab_keys import TAB_ORDER
 from tests.regression import golden
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -67,3 +67,80 @@ def test_a_result_for_another_recording_is_discarded(qtbot, window):
     window.jobs.wait(60000)
     qtbot.wait(100)
     assert window.recording.detection.rpeaks_ok is None
+
+
+def test_check_agreement_counts_and_circles_the_unconfirmed_beats(qtbot, window, monkeypatch):
+    from ecg.core import ml_detector
+    from ecg.qt.dialogs import agreement_dialog
+    from ecg.services.agreement_service import method_agreement
+    monkeypatch.setattr(ml_detector.MLPeakModel, "load",
+                        staticmethod(lambda: (_ for _ in ()).throw(ml_detector.NoModelError())))
+    _detect(qtbot, window)
+    s, d = window.recording.signal, window.recording.detection
+    det = window.detection
+    assert det.btn_agreement.isEnabled()
+    det.check_agreement()
+    qtbot.waitUntil(lambda: d.agreement_pct is not None, timeout=60000)
+    from ecg.core.models import MouseECG
+    host = window.figures
+    min_rr = host._safe_float(host.ent_minrr, MouseECG.MIN_RR_MS)
+    expected = method_agreement(s.filtered, s.fs, d.rpeaks_ok, min_rr,
+                                det.cb_method.currentText().lower())
+    assert expected["ok"] and "SG+Derivative (already the active method)" in expected["methods_skipped"]
+    assert np.array_equal(d.agreement_disagree_samples, expected["disagree_samples"])
+    dlg = det.agreement_dialog
+    assert isinstance(dlg, agreement_dialog.AgreementDialog)
+    assert [b.value() for b in dlg.bars] == expected["histogram"][::-1]
+    x, _y = det.plot.unconfirmed.getData()
+    assert np.allclose(x, expected["disagree_samples"] / s.fs)
+    if dlg.times:
+        dlg.jump_to(dlg.times[0])
+        t0, t1 = det.plot.window()
+        assert t0 <= dlg.times[0] <= t1
+    # A new detection drops the check.
+    det.detect()
+    qtbot.waitUntil(lambda: d.agreement_pct is None, timeout=60000)
+    assert len(det.plot.unconfirmed.getData()[0]) == 0
+
+
+def test_rr_hr_quality_strip(qtbot, window):
+    from ecg.core.analysis import compute_beat_correlation
+    _detect(qtbot, window)
+    s, d = window.recording.signal, window.recording.detection
+    det = window.detection
+    assert det.btn_strip.isChecked() and det.plot.strip[0].isVisible() is not False
+    qtbot.waitUntil(lambda: d._beat_corr_for is d.rpeaks_ok, timeout=10000)
+    x, y = det.plot.rr_curve.getData()
+    assert np.allclose(y, np.diff(d.rpeaks_ok) / s.fs * 1000.0)
+    assert np.allclose(x, d.rpeaks_ok[1:] / s.fs)
+    lo, hi = window.figures.analysis_ctrl.hrv_rr_bounds(quiet=True)
+    ref = compute_beat_correlation(s.filtered, d.rpeaks_ok, s.fs, lo, hi)
+    _qx, qy = det.plot.q_curve.getData()
+    assert np.allclose(qy, ref["beat_corr"], equal_nan=True)
+    det.btn_strip.setChecked(False)
+    assert not window.figures.ui.rrhr_strip_visible
+    assert all(not p.isVisible() for p in det.plot.strip)
+
+
+def test_analysis_window(qtbot, window):
+    _detect(qtbot, window)
+    det, rec = window.detection, window.recording
+    a, d, fs = rec.analysis, rec.detection, rec.signal.fs
+    det.ed_win0.setText("20")
+    det.ed_win1.setText("80")
+    det.apply_analysis_window()
+    assert (a.t_start, a.t_end) == (20.0, 80.0)
+    n = int(((d.rpeaks_ok / fs >= 20) & (d.rpeaks_ok / fs <= 80)).sum())
+    assert det.lbl_window.text().startswith(f"✓  {n} peaks  ·  20.0 s → 80.0 s")
+    p = window.analysis_params()
+    assert (p["analysis_t_start"], p["analysis_t_end"]) == (20.0, 80.0)
+    assert len(window.figures._windowed_peaks()) == n
+    det.ed_win0.setText("90")                        # start after end: refused
+    det.apply_analysis_window()
+    assert a.t_start == 20.0 and "less than" in window.statusBar().currentMessage()
+    det.reset_analysis_window()
+    assert (a.t_start, a.t_end) == (0.0, 0.0) and det.ed_win0.text() == ""
+    det.ed_win0.setText("10")
+    det.apply_analysis_window()
+    det.detect()                                     # Detect Peaks: the full signal again
+    qtbot.waitUntil(lambda: a.t_start == 0.0, timeout=60000)

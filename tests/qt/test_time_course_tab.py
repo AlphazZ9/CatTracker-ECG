@@ -85,3 +85,28 @@ def test_autonomic_default_with_spwvd(qtbot, analysed, ref):
     _check(to_dataframe(a.autonomic_result), "autonomic/frame", ref)
     _check(a.autonomic_spwvd, "autonomic/spwvd", ref)
     qtbot.waitUntil(lambda: bool(analysed.figures.slot("autonomic").figure.axes), timeout=10000)
+
+
+def test_out_of_date_banner_and_recompute(qtbot, analysed):
+    w = analysed
+    tc, a = w.time_course, w.recording.analysis
+    w.tabs.setCurrentWidget(tc)
+    tc.setCurrentIndex(0)
+    tc.btn_epochs.click()
+    qtbot.waitUntil(lambda: a.epoch_df is not None, timeout=60000)
+    w.refresh_banners()
+    assert tc.banner.text() == ""
+    first = a.epoch_df
+    det, d = w.detection, w.recording.detection
+    det.btn_edit.setChecked(True)
+    det._clicked(float(d.rpeaks_ok[40] / w.recording.signal.fs), "left")
+    w.refresh_banners()
+    assert tc.banner.text() and tc.banner.isVisible()       # the wording depends on the clock
+    tc.banner.button.click()
+    qtbot.waitUntil(lambda: a.epoch_df is not None and a.epoch_df is not first, timeout=60000)
+    w.refresh_banners()
+    assert tc.banner.text() == ""
+    # the Events and Morphology banners say nothing without a result
+    w.events.refresh_banner()
+    w.morphology.refresh_banner()
+    assert w.morphology.banner.text() == ""

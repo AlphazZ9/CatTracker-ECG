@@ -8,7 +8,7 @@ import pytest
 
 from ecg.core import analysis
 from ecg.qt.main_window import MainWindow
-from ecg.ui.event_locked_view import (ALL_LABELS, compute_event_locked,
+from ecg.app.event_locked_view import (ALL_LABELS, compute_event_locked,
                                       other_annotation_onsets, select_events)
 
 ROOT = Path(__file__).resolve().parents[2]

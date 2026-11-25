@@ -112,6 +112,15 @@ class PeriodsManager(QtWidgets.QDialog):
         for b in (self.btn_add, self.btn_edit, self.btn_delete):
             bar.addWidget(b)
         bar.addStretch(1)
+        self.suggest_dialog = None
+        if kind == "annotation":
+            self.btn_suggest = QtWidgets.QPushButton("Suggest from channels…")
+            self.btn_suggest.setToolTip("Annotations from the file's marker and keyboard "
+                                        "channels and from the stimulus pulses of its other "
+                                        "channels (Spike2 .smr or MATLAB export): you pick "
+                                        "which to add")
+            self.btn_suggest.clicked.connect(self.suggest)
+            bar.addWidget(self.btn_suggest)
         lay.addLayout(bar)
         cols = ["Start (s)", "End (s)", "Duration", "Label" if kind == "annotation" else "Note"]
         self.table = QtWidgets.QTableWidget(0, len(cols))
@@ -182,6 +191,16 @@ class PeriodsManager(QtWidgets.QDialog):
         if dlg.exec() and dlg.result_period is not None:
             self.periods()[idx] = dlg.result_period
             self._changed()
+
+    def suggest(self) -> None:
+        from ecg.qt.dialogs.suggest_dialog import open_suggestions
+
+        def _add(anns: "list[dict]") -> None:
+            periods = self.periods()
+            periods.extend(anns)
+            periods.sort(key=lambda a: float(a["t_start"]))
+            self._changed()
+        self.suggest_dialog = open_suggestions(self, self.win, _add)
 
     def delete(self) -> None:
         sel = self.selected()

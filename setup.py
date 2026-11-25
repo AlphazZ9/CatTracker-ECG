@@ -9,13 +9,12 @@ from setuptools import setup, find_packages
 
 setup(
     name="ecg-analysis",
-    version="6.2.0",
+    version="7.0.0",
     description="Mouse cardiac ECG analysis toolkit",
     packages=find_packages(include=["ecg", "ecg.*"]),
-    package_data={"ecg.ui": ["assets/*"]},   # app icon
+    package_data={"ecg.app": ["assets/*"]},   # app icon
     python_requires=">=3.10",
     install_requires=[
-        "customtkinter",
         "matplotlib",
         "numpy",
         "pandas",

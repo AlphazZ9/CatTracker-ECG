@@ -24,10 +24,10 @@ from ecg.core import analysis
 from ecg.core.detection import correct_rr_artifacts
 from ecg.core.models import MouseECG
 from ecg.io.session import _SessionEncoder, _session_decode_hook
-from ecg.ui import analysis_controller as ac_module
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.state import AnalysisState, DetectionState, SignalState
-from ecg.ui.theme import GREEN, ORANGE
+from ecg.app import analysis_controller as ac_module
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.state import AnalysisState, DetectionState, SignalState
+from ecg.app.theme import GREEN, ORANGE
 
 from tests.helpers import add_qrs_pulse, rpeaks_from_rr
 

@@ -63,7 +63,7 @@ SEGMENT_206 = (
     "HF power (ms²)", "LF (n.u.) (%)", "HF (n.u.) (%)", "LF/HF", "Poincaré SD1 (ms)",
     "Poincaré SD2 (ms)", "SD1/SD2",
 )
-# Event-locked series keys (ecg.ui.event_locked_view) and the tests' rCSI / rCPI.
+# Event-locked series keys (ecg.app.event_locked_view) and the tests' rCSI / rCPI.
 EVENT_KEYS = ("hr", "d", "sd1", "sd2", "csi", "cpi", "lf", "hf", "rCSI", "rCPI")
 
 

@@ -11,6 +11,7 @@ standalone apps are made.
 - [Installation](#installation)
 - [Usage](#usage)
 - [Project layout](#project-layout)
+- [The Qt interface](#the-qt-interface-migration-in-progress)
 - [Notes for contributors](#notes-for-contributors)
 - [One-click launchers: full details and internals](#one-click-launchers-full-details-and-internals)
 - [Standalone apps and publishing a version](#standalone-apps-and-publishing-a-version)
@@ -85,25 +86,24 @@ ecg-analysis            # after `pip install -e .`
 │   │   ├── export.py         # Excel and GraphPad Prism exporters
 │   │   └── db.py             # SQLite recording registry + event-locked
 │   │                         # cohort table
-│   └── ui/                # CustomTkinter desktop application
-│       ├── app.py             # ECGApp main window (full-width layout, no sidebars)
-│       ├── app_*.py, tab_*.py # ECGApp mixins: header, detection bar and one module per tab
-│       ├── context_strip.py, tabbar.py, freshness.py # strip, tab states
-│       ├── report_view.py     # Report tab and text report helpers (pure, tested)
-│       ├── *_controller.py    # one controller per responsibility (SRP):
-│       │                      # analysis, detection, signal, navigation,
-│       │                      # session, export, event-locked
-│       ├── autonomic_view.py  # Time course > Autonomic helpers (pure, tested)
-│       ├── event_locked_view.py # Event-locked panel + ks / kp calibration
-│       │                      # helpers (pure, tested)
-│       ├── theme.py           # colour/font presets, live theme propagation
-│       ├── plots.py           # matplotlib ↔ Tk canvas bridge
-│       ├── dialogs.py         # secondary windows (theme, artifact review,
-│       │                      # ML training, ks / kp calibration...)
-│       ├── popover.py         # floating panels: Recording sheet, Filters, ⋯, Report > More
-│       ├── widgets.py         # reusable widget factories (stat tiles, quality gauge)
-│       ├── wave_editor.py     # wave-template mini editor
-│       └── state.py           # UI-facing state dataclasses
+│   ├── figures/           # figures drawn on a Matplotlib Figure, no toolkit
+│   ├── app/               # the application layer, no toolkit (no Qt, no Tk)
+│   │   ├── state.py, tab_keys.py, freshness.py  # state of the views, what
+│   │   │                      # each result was computed from
+│   │   ├── *_controller.py    # one controller per responsibility:
+│   │   │                      # analysis, detection, signal, navigation,
+│   │   │                      # session, export, event-locked, plot
+│   │   ├── autonomic_view.py, event_locked_view.py, report_view.py,
+│   │   │   *_figure.py, *_helpers.py   # pure helpers of the views (tested)
+│   │   ├── theme.py, plots.py # figure colours / presets, matplotlib defaults
+│   │   ├── dialogs.py         # message boxes / file choosers, relayed to
+│   │   │                      # the interface that installed itself
+│   │   └── assets/            # window / taskbar icon
+│   └── qt/                # the interface (PySide6 + PyQtGraph)
+│       ├── app.py, main_window.py   # start-up, window, jobs, menus
+│       ├── figure_host.py     # the "app" the controllers draw into
+│       ├── tabs/, dialogs/, widgets/  # one module per tab / window
+│       └── workers.py, errors.py, session.py, theme.py
 ├── examples/            # analysing a recording from a script
 ├── ecg_app.py             # thin backward-compatible entry point
 ├── setup.py               # `pip install -e .` packaging
@@ -114,26 +114,42 @@ ecg-analysis            # after `pip install -e .`
 └── README.md / README.fr.md
 ```
 
-`ecg.core` has no dependency on `ecg.ui` or `ecg.io`, and `ecg.services`
-none on `ecg.ui` — the detection and HRV
-algorithms are pure functions that can be tested, scripted, or reused without
-launching the GUI.
+`ecg.core` has no dependency on `ecg.io` or any interface, and `ecg.services`,
+`ecg.figures` and `ecg.app` none on a user-interface toolkit
+(`tests/core/test_core_ui_free.py`): the detection and HRV algorithms are pure
+functions that can be tested, scripted, or reused without launching the GUI.
 
-## The Qt interface (migration in progress)
+## The interface (Qt)
 
-The PySide6 interface is built tab by tab in `ecg/qt/`, on the same
-scientific code; the CustomTkinter one (`python -m ecg`) stays the reference
-until the migration is validated.
+The interface is PySide6, with PyQtGraph for the ECG traces
+(`python -m ecg`, also `python -m ecg.qt`). It replaced the CustomTkinter
+interface (`ecg/ui`), removed in this version once the Qt one had been
+validated against it (docs/validation.md): same scientific code, same
+parameters and defaults, same exports, same session files.
 
 ```bash
-python -m ecg.qt [recording.mat]
+python -m ecg [recording.mat]
 ```
 
-Today: Signal & Detection (open, Detect Peaks, threshold, editing peaks by
-hand with undo / redo, PyQtGraph trace with overview) and Rhythm & HRV
-(Analyze, then frequency and non-linear HRV in background jobs; the result
-figures and tables come from the Tk interface's own figure code through
-`ecg/qt/figure_host.py`, so they are identical). Its tests (`tests/qt/`, pytest-qt) run headless.
+The result figures and tables are drawn by `ecg.app` (the figure code and
+controllers of the former interface, moved without their Tk widgets) into
+Qt canvases through `ecg/qt/figure_host.py`. Its tests (`tests/qt/`,
+pytest-qt) run headless, each in a profile folder of its own.
+
+### Background jobs and errors (Qt)
+
+- **Jobs** (`ecg/qt/workers.py`, `MainWindow.run_job`):
+  - A computation runs in a pool thread on a snapshot of its inputs. Only its `on_done` callback writes the result, on the main thread.
+  - Cancel stops every running job at its next `progress_cb` checkpoint; the algorithms are not modified for this.
+  - Several jobs may run at once: the progress row shows the newest.
+- **Stale results are dropped, never shown:**
+  - for a file closed meanwhile (the generation number);
+  - for peaks that changed while the job ran (`peaks_bound=True`: Analyze, frequency / non-linear HRV, intervals, Compare segments, Time course, artifact review).
+- **Errors** (`ecg/qt/errors.py`):
+  - A failing job, an error while showing a result, and any uncaught exception of the main thread or of a worker thread are logged with their traceback.
+  - They are shown in a non-blocking dialog, one at a time; the window stays open.
+  - Log file: `~/.ecg_sessions/logs/ecg_qt.log` (rotated at 1 MB, 3 kept; Help > Open log folder).
+- **Unsaved changes** (peaks, edits, results, regions) are offered for saving on Open and Quit. Running jobs are cancelled and waited for on exit.
 
 ## Scripting an analysis
 
@@ -161,8 +177,8 @@ own numbers.
   recordings, kept outside the repository, with
   `python tools/golden_master.py check <files.mat> --ref <folder>`. See
   [validation.md](validation.md) (in French) before changing a number.
-- The UI is a single large window (`ecg/ui/app.py`) delegating to per-concern
-  controllers in `ecg/ui/*_controller.py` — see each controller's docstring
+- The window (`ecg/qt/main_window.py`) and its tabs delegate the work to the
+  controllers of `ecg/app/*_controller.py` — see each controller's docstring
   for its area of responsibility.
 - Interpret measurements using reference data appropriate to the animal
   strain and experimental protocol; the application does not currently grade
@@ -181,8 +197,7 @@ then extract the whole ZIP), and double-click the launcher in that folder:
 
 - **First launch: an Internet connection is required.** The launcher
   installs [uv](https://docs.astral.sh/uv/) if it is missing, a private
-  Python 3.12 (never your system Python, nor Apple's Python with its old
-  Tk 8.5) and the libraries from `requirements.txt` — a few minutes and
+  Python 3.12 (never your system Python, nor Apple's) and the libraries from `requirements.txt` — a few minutes and
   roughly 400 MB. A window shows the progress (messages in French).
 - **Later launches** start the app directly, in a few seconds, and work
   offline. Libraries are reinstalled automatically only when

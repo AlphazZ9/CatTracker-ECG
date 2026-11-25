@@ -1,9 +1,7 @@
 # Versions the app is developed and tested against (full test suite).
 # Used by the one-click launchers and the GitHub app builds, so colleagues
 # get exactly this set instead of whatever is newest on PyPI.
-# Update after testing:  pip freeze | grep -iE "^(customtkinter|matplotlib|...)=="
-customtkinter==5.2.2
-darkdetect==0.8.0
+# Update after testing:  pip freeze | grep -iE "^(matplotlib|...)=="
 matplotlib==3.10.8
 numpy==2.4.4
 pandas==2.3.3

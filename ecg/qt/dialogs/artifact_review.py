@@ -130,7 +130,7 @@ class ArtifactReviewDialog(QtWidgets.QDialog):
         if not 0 <= idx < len(self.candidates):
             return
         c, fs, sig = self.candidates[idx], self.fs, self.sig
-        from ecg.ui.theme import ARTIFACT_TYPE_COLOR, ORANGE
+        from ecg.app.theme import ARTIFACT_TYPE_COLOR, ORANGE
         color = ARTIFACT_TYPE_COLOR.get(c["type"], ORANGE)
         samp = int(c["sample"])
         lo = max(0, samp - int(CONTEXT_S * fs))
@@ -187,7 +187,7 @@ def review_artifacts(window: "MainWindow") -> None:
 
     window.run_job("Artifact review", detect_rr_artifacts, rp, fs, rr_min_ms=rr_min,
                    rr_max_ms=rr_max, window_beats=WINDOW_BEATS, dev_threshold=DEV_THRESHOLD,
-                   signal=sig, progress=False, on_done=done)
+                   signal=sig, progress=False, peaks_bound=True, on_done=done)
 
 
 def apply_review(window: "MainWindow", rp: np.ndarray, fs: float, result: "list[dict]",

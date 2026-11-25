@@ -39,4 +39,13 @@ def test_measure_intervals_gives_the_reference_intervals(qtbot):
     assert diffs == []
     for name in ("beat", "intervals"):
         assert w.figures.slot(name).figure.axes, name
+    # the steps and the interval table (the Tk tab's)
+    from ecg.app.morphology_helpers import interval_lines, measured_headline
+    m = w.morphology
+    m.refresh_banner()
+    assert m.lbl_measured.text() == measured_headline(ivl)[0]
+    lines = interval_lines(ivl)
+    assert m.tbl_ivl.rowCount() == len(lines)
+    assert [m.tbl_ivl.item(i, 2).text() for i in range(len(lines))] == [ln.median for ln in lines]
+    assert "Measure every beat" in m.step_labels[2].text()
     w.jobs.wait(5000)

@@ -310,7 +310,7 @@ def test_all_pairs(tmp_path):
 
 def test_poincare_group_figure_is_drawn(tmp_path):
     from matplotlib.figure import Figure
-    from ecg.ui.group_tab_figure import draw_group_tab_figure
+    from ecg.app.group_tab_figure import draw_group_tab_figure
     sh, an = _segments_table(tmp_path / "g.xlsx")
     res = gc.analyse_segments(sh, an, gc.BY_NONE, "Pre 1", "Post 1")
     fig = Figure()

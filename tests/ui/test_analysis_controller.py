@@ -12,8 +12,8 @@ import pytest
 
 from ecg.core.analysis import compute_qtc
 from ecg.core.models import QTC_FORMULA_LABELS
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.state import AnalysisState
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.state import AnalysisState
 
 
 class _Combo:

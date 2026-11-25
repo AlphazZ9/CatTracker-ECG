@@ -77,10 +77,9 @@ expérimentales de votre étude.
 Cinq onglets d'analyse et un rapport, organisés par question : **Signal & Detection**,
 **Rhythm & HRV**, **Time course** (Epochs, Sliding, Autonomic, Event-locked),
 **Morphology & Intervals** (étapes : battement moyen, repères, intervalles), **Events**
-et **Report** (provenance, état des modules, Include, exports et rapport texte). Un
-bandeau de contexte au-dessus de chaque onglet indique sur quoi reposent les
-valeurs ; chaque onglet porte un état (up to date, out of date, not computed) ;
-les écrans, le rapport texte, les valeurs clés du PDF et les tableaux **Metrics** d'Excel
+et **Report** (provenance, état des modules, Include, exports et rapport texte).
+Chaque onglet porte un état (up to date, out of date, not computed), et un
+résultat périmé le dit dans un bandeau au-dessus de lui ; les écrans, le rapport texte, les valeurs clés du PDF et les tableaux **Metrics** d'Excel
 et de Prism lisent un seul tableau : valeur, unité, n de base et état (les autres feuilles
 et tables contiennent les séries sous-jacentes). Une session enregistrée sur un ancien
 onglet se rouvre à sa nouvelle place.
@@ -585,15 +584,18 @@ est devenu Sliding, *Beat Template* et *Intervals* sont Morphology & Intervals,
 
 ### Interface
 
-- Disposition pleine largeur sans barres latérales : un en-tête (pastille du
-  fichier qui ouvre la fiche Recording, Open avec les fichiers récents, Save,
-  Detect Peaks, Analyze, Export, annuler / rétablir, menu ⋯), un bandeau de
-  contexte où la fenêtre d'analyse se modifie, puis les onglets ; les réglages
-  de détection sont dans une barre de Signal & Detection, les filtres dans un
-  panneau flottant, les exports optionnels sous Report > More. Utilisable dès
-  1280 px de large (1650 auparavant).
+- Interface Qt (PySide6, version 7). L'interface CustomTkinter a été retirée
+  après vérification que ses exports, ses sessions et ses calculs sont
+  identiques. La fenêtre comprend un en-tête (Open, Recording…, Settings…,
+  ML detector…, Save Session, Analyze, progression et Cancel), les menus
+  File / View / Help et les onglets en dessous. Les tracés ECG sont des
+  graphiques PyQtGraph ; toutes les autres figures sont les mêmes figures
+  matplotlib qu'avant. Les calculs tournent en arrière-plan et peuvent être
+  annulés. Un résultat qui arrive alors que le fichier ou les pics ont changé
+  entre-temps est écarté.
 - Thèmes clair/sombre, propagés en direct dans toute l'interface, y compris
-  chaque graphique matplotlib.
+  chaque graphique matplotlib ; le thème et la taille du texte sont gardés
+  d'un lancement à l'autre.
 
 ## Indices autonomiques (CSI / CPI) — Candia-Rivera et al. 2025
 

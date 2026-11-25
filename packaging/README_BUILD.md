@@ -21,18 +21,18 @@ Sur Mac : menu Pomme > « À propos de ce Mac ». « Puce Apple M... » = arm64,
 Depuis le dossier du projet, une fois le travail committé et poussé :
 
 ```bash
-git tag v6.2.0          # numéro de version au format vX.Y.Z
-git push origin v6.2.0
+git tag v7.0.0          # numéro de version au format vX.Y.Z
+git push origin v7.0.0
 ```
 
 Le workflow « Build apps » démarre tout seul (onglet **Actions** du dépôt
-GitHub). Comptez 10 à 20 minutes. À la fin, une **Release** `v6.2.0` est
+GitHub). Comptez 10 à 20 minutes. À la fin, une **Release** `v7.0.0` est
 créée dans l'onglet **Releases**, avec les trois zips attachés et des notes
 de version générées automatiquement (modifiables ensuite sur GitHub).
 
 Si une des trois plateformes échoue, la Release n'est pas créée : corriger,
-puis supprimer et recréer le tag (`git tag -d v6.2.0`,
-`git push origin :refs/tags/v6.2.0`, puis recommencer), ou choisir un
+puis supprimer et recréer le tag (`git tag -d v7.0.0`,
+`git push origin :refs/tags/v7.0.0`, puis recommencer), ou choisir un
 nouveau numéro.
 
 ### Méthode 2 : à la main (sans Release, pour tester)
@@ -99,7 +99,7 @@ Prendre le zip correspondant à son système dans la rubrique **Assets**.
 - macOS : du même ordre (non mesuré ici).
 
 La taille vient surtout de NumPy, SciPy, scikit-learn, Matplotlib, pandas et
-Tcl/Tk, embarqués dans l'application.
+Qt (PySide6), embarqués dans l'application.
 
 ## Où sont les données de l'utilisateur
 
@@ -114,16 +114,36 @@ zip) ne touche pas à ces fichiers.
   l'application s'ouvre, un seul processus au repos, et les processus de
   calcul parallèle (délinéation des longs enregistrements) démarrent
   correctement depuis l'exe, sans relancer l'application en boucle.
-- **macOS (arm64 et Intel) : non testé.** Aucun Mac n'était disponible : le
-  workflow vérifie seulement que l'app est construite et que l'exécutable
-  existe ; il ne la lance pas. À vérifier sur un vrai Mac à la première
-  version : ouverture, chargement d'un fichier, export Excel, et une longue
-  analyse (calcul parallèle).
+- **macOS (arm64 et Intel)** : chaque build est lancé en mode test sur les
+  deux Mac du workflow (voir ci-dessous). Reste à vérifier sur un vrai Mac à
+  la première version : ouverture par le Finder, export Excel.
 - Le Mac Intel est construit sur l'image GitHub `macos-15-intel` (l'image
   `macos-13` a été retirée par GitHub). L'app demande **macOS 14 (Sonoma)
   ou plus récent** (`LSMinimumSystemVersion` du spec) : sur ces images,
   numpy/scipy sont installés en version « Accelerate », qui exige macOS 14.
   Sur un Mac plus ancien, utilisez le lanceur `Lancer ECG.command`.
+
+## Interface (Qt)
+
+L'application est l'interface PySide6 (Qt), construite à partir de
+`packaging/ecg.spec` (point d'entrée `ecg_app.py`). L'ancienne interface
+CustomTkinter a été retirée (version 7) après sa validation contre la Qt
+(`docs/validation.md`) : l'application n'embarque plus ni `tkinter` ni
+`customtkinter`.
+
+**Vérification de chaque build.** L'application construite est lancée en
+mode test sur l'enregistrement de test :
+```
+"Tom ECG Analysis" --self-test resultat.txt tests/fixtures/synthetic_mouse_ecg.mat
+```
+Ce mode ouvre la fenêtre et affiche les 8 onglets, puis lance Detect Peaks,
+Analyze et Measure intervals. Ce dernier passe par les processus de calcul
+parallèle, qui doivent redémarrer correctement depuis l'exécutable. Il écrit
+« ok … peaks … intervals … » ou l'erreur. Le build échoue sinon : l'app est
+donc **lancée** sur Windows et sur les deux Mac.
+
+**Lanceurs sans installation** : `Lancer ECG.bat` (Windows) et
+`Lancer ECG.command` (macOS). Depuis un terminal : `python -m ecg`.
 
 ## Construire en local (développeurs)
 
@@ -142,4 +162,4 @@ Icône : le chat rouge « narquois ». Les sources sont
 modification, régénérer tous les fichiers avec `python tools/build_icons.py`
 (nécessite `pip install resvg-py pillow`) : `packaging/icon.ico`,
 `packaging/icon.icns` (pris automatiquement par le spec) et
-`ecg/ui/assets/` (icône de la fenêtre et de la barre des tâches).
+`ecg/app/assets/` (icône de la fenêtre et de la barre des tâches).

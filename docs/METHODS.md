@@ -68,9 +68,9 @@ strain and experimental conditions.
 Five analysis tabs and a report, organised by question: **Signal & Detection**,
 **Rhythm & HRV**, **Time course** (Epochs, Sliding, Autonomic, Event-locked),
 **Morphology & Intervals** (steps: mean beat, landmarks, intervals), **Events** and
-**Report** (provenance, module states, Include, exports and text report). One
-context strip above every tab says what the numbers rest on; each tab head carries
-one state (up to date, out of date, not computed); the screens, the text report, the
+**Report** (provenance, module states, Include, exports and text report). Each
+tab head carries one state (up to date, out of date, not computed), and a stale
+result says so in a banner above it; the screens, the text report, the
 PDF's key metrics and the **Metrics** tables of Excel and Prism read one table of value,
 unit, basis n and state (the other sheets and tables hold the series behind them). A
 session saved on a former tab reopens on its new place.
@@ -520,14 +520,16 @@ and *Intervals* are Morphology & Intervals, *Abnormal Events* is Events.
 
 ### Interface
 
-- Full-width layout without sidebars: a header (file chip opening the
-  Recording sheet, Open with recent files, Save, Detect Peaks, Analyze,
-  Export, undo / redo, ⋯ menu), a context strip where the analysis window is
-  edited, and the tabs below; detection settings sit in a bar on Signal &
-  Detection, filters in a popover, optional exports under Report > More. Works
-  from 1280 px wide (it needed 1650 before).
+- Qt interface (PySide6, version 7; the CustomTkinter one was removed after
+  its exports, sessions and computations were checked to be identical): a
+  header (Open, Recording…, Settings…, ML detector…, Save Session, Analyze,
+  progress and Cancel), the File / View / Help menus, and the tabs below;
+  the ECG traces are PyQtGraph plots, every other figure is the same
+  matplotlib figure as before. Computations run in the background and can
+  be cancelled; a result that lands for a file or peaks that changed
+  meanwhile is dropped.
 - Light/dark theming, propagated live across the whole UI including every
-  matplotlib plot.
+  matplotlib plot; it and the text size are kept for the next runs.
 
 ## Autonomic indices (CSI / CPI) — Candia-Rivera et al. 2025
 

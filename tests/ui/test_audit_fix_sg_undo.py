@@ -13,12 +13,11 @@ from unittest.mock import MagicMock
 import numpy as np
 
 from ecg.core.models import FilterParams
-from ecg.ui import session_controller as sc_module
-from ecg.ui.app_helpers import HelpersMixin
-from ecg.ui.detection_controller import DetectionController
-from ecg.ui.session_controller import SessionController
-from ecg.ui.signal_controller import SignalController
-from ecg.ui.state import (AnalysisState, DetectionState, SessionState,
+from ecg.app import session_controller as sc_module
+from ecg.app.detection_controller import DetectionController
+from ecg.app.session_controller import SessionController
+from ecg.app.signal_controller import SignalController
+from ecg.app.state import (AnalysisState, DetectionState, SessionState,
                           SignalState, UIState)
 
 FS = 2000
@@ -32,40 +31,14 @@ class _Entry:
         return self.text
 
 
-def _snapshot(monkeypatch, sg_text):
-    monkeypatch.setattr(sc_module.FilterParams, "from_widgets",
-                        classmethod(lambda cls, app: FilterParams(
-                            detection_method="SG + Derivative", invert_signal=True,
-                            no_filter=True)))
-    app = SimpleNamespace(analysis=AnalysisState())
-    app._safe_float = lambda w, d=0.0: HelpersMixin._safe_float(app, w, d)
-    if sg_text is not None:
-        app.ent_sg_window_ms = _Entry(sg_text)
-    return SessionController(app).snapshot_params()
 
 
 # ── 20. SG window ────────────────────────────────────────────────────────
 
-def test_snapshot_holds_the_sg_window(monkeypatch):
-    assert _snapshot(monkeypatch, "6")["sg_window_ms"] == 6.0
 
 
-def test_snapshot_sg_window_falls_back_to_default(monkeypatch):
-    assert _snapshot(monkeypatch, "abc")["sg_window_ms"] == 20.0
-    assert _snapshot(monkeypatch, None)["sg_window_ms"] == 20.0
 
 
-def test_sg_detector_receives_the_typed_window(monkeypatch):
-    seen: dict = {}
-
-    def _fake_sg(sig, fs, sg_window_ms, **kw):
-        seen["sg_window_ms"] = sg_window_ms
-        return np.array([10, 20], dtype=int), np.ones(2), 0.5
-    from ecg.core import pipeline
-    monkeypatch.setattr(pipeline, "detect_peaks_sg_derivative", _fake_sg)
-    params = _snapshot(monkeypatch, "6")
-    SignalController._preview_bundle(np.sin(np.arange(4000) / 10.0), FS, params)
-    assert seen["sg_window_ms"] == 6.0
 
 
 # ── 21. undo/redo after re-detect ────────────────────────────────────────

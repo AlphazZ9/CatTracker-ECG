@@ -4,66 +4,26 @@ legends follow the theme (exports on white), the animal tags at the line
 ends do not overlap, and a theme toggle keeps the analysis window entries."""
 from __future__ import annotations
 
-import tkinter as tk
 
 import numpy as np
 import pandas as pd
 import pytest
 
-import customtkinter as ctk  # type: ignore[import-untyped]
 from matplotlib.colors import to_hex
 from matplotlib.figure import Figure
 
 from ecg.io import group_compare as gc
 from ecg.io import group_data as gd
-from ecg.ui import theme
-from ecg.ui.compare_segments import own_line_stripes
-from ecg.ui.group_tab_figure import draw_group_tab_figure, spread_labels
-from ecg.ui.session_controller import restore_entry
+from ecg.app import theme
+from ecg.app.group_tab_figure import draw_group_tab_figure, spread_labels
+from ecg.app.session_controller import restore_entry
 from tests.io.test_group_compare import _segments_with_counts, _table
-from tests.ui.test_group_tab import _page, _walk, root  # noqa: F401  (fixture)
 
 
-def _text(frame) -> tk.Text:
-    return next(w for w in _walk(frame) if isinstance(w, tk.Text))
 
 
-def test_the_results_box_shows_every_row_of_a_long_table(root, tmp_path):
-    # 40 whole-recording metrics, 4 animals in two groups: 40+ lines.
-    p = str(tmp_path / "g.xlsx")
-    rng = np.random.default_rng(1)
-    for i in range(4):
-        whole = pd.DataFrame([{f"SDNN{k} (ms)": float(rng.normal(5, 1)) for k in range(40)}
-                              | {"Beats": 1000.0 + i}])
-        gd.add_recording(p, f"M{i}", "", f"M{i}.mat", {gd.SHEET_WHOLE: whole})
-    an = gd.animals_frame(gd.read_sheets(p))
-    an["group"] = ["A", "B", "A", "B"]
-    gd.save_animals(p, an)
-    _app, frame = _page(root, {"path": p, "analysis": gc.AN_WHOLE, "by": gc.BY_GROUP,
-                               "all": True})
-    txt = _text(frame)
-    content = txt.get("1.0", "end-1c")
-    n_lines = int(txt.index("end-1c").split(".")[0])
-    assert "DATA ANALYSED" in content and "SDNN39" in content and n_lines > 40, content
-    # No cap: the box is as tall as the table (the page scrolls).
-    assert int(txt.cget("height")) >= n_lines
-    assert not root.errors
 
 
-def test_compare_table_header_rows_have_no_stripe(root):
-    t = tk.Text(root)
-    t.tag_configure("stripe", background="#eee")
-    # As the Compare segments table: each row starts with its newline.
-    t.insert("end", "Metric", "head")
-    t.insert("end", "\nHEART RATE", "family")
-    t.insert("end", "\nMean HR\t500", "stripe")
-    t.insert("end", "\nSDNN\t3")
-    t.insert("end", "\nHRV NON-LINEAR", "family")
-    t.insert("end", "\nSD1\t2", "stripe")
-    own_line_stripes(t)
-    for ln, striped in ((1, False), (2, False), (3, True), (4, False), (5, False)):
-        assert ("stripe" in t.tag_names(f"{ln}.end")) is striped, ln
-    t.destroy()
 
 
 def _legend_colors(fig):
@@ -132,20 +92,10 @@ def test_paired_figure_tags_do_not_overlap(tmp_path):
             assert not boxes[i].overlaps(boxes[j]), (i, j)
 
 
-def test_a_theme_rebuild_puts_the_window_placeholders_back(root):
-    e0 = ctk.CTkEntry(root, placeholder_text="0")
-    e1 = ctk.CTkEntry(root, placeholder_text="4206.9")
-    e2 = ctk.CTkEntry(root, placeholder_text="end")
-    restore_entry(e0, "")
-    restore_entry(e1, "")
-    restore_entry(e2, "120")
-    assert e0._entry.get() == "0" and e0.get() == ""
-    assert e1._entry.get() == "4206.9" and e1.get() == ""
-    assert e2.get() == "120"
 
 
 def test_export_names_have_no_slash():
-    from ecg.ui.tab_group import _file_tag
+    from ecg.app.group_helpers import _file_tag
     assert _file_tag("Pre/Post segments") == "pre_post"
     assert _file_tag("Time course") == "time"
     assert "/" not in _file_tag("Event-locked")
@@ -156,7 +106,7 @@ def test_group_poincare_name_tags_do_not_overlap():
     matplotlib.use("Agg")
     import pandas as pd
     from matplotlib.figure import Figure
-    from ecg.ui.group_figure import draw_group_figure, _RR, _SD1, _SD2
+    from ecg.app.group_figure import draw_group_figure, _RR, _SD1, _SD2
     rows = []
     for i, rr in enumerate((120.0, 120.2, 120.4, 135.0)):
         r = {"subject": f"P{i}"}
