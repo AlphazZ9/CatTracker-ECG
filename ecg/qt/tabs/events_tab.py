@@ -172,7 +172,7 @@ class EventsTab(QtWidgets.QWidget):
     def refresh_banner(self) -> None:
         """TabEventsMixin._refresh_events_readout: the events shown no longer
         match the peaks."""
-        from ecg.ui.freshness import stale_banner_text
+        from ecg.app.freshness import stale_banner_text
         host = self.win.figures
         self.banner.set_text(stale_banner_text("Events", host.freshness.status("events"), None,
                                                host.ui.peaks_edited_at))

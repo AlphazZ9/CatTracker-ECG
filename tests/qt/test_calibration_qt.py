@@ -7,7 +7,7 @@ from PySide6 import QtWidgets
 
 from ecg.qt.dialogs import calibration_dialog as cd
 from ecg.qt.main_window import MainWindow
-from ecg.ui import event_locked_view as ev
+from ecg.app import event_locked_view as ev
 from tests.ui.test_event_locked_view import _cohort, _row
 
 

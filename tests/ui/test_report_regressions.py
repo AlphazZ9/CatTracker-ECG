@@ -15,12 +15,10 @@ import pytest
 from matplotlib.figure import Figure
 
 from ecg.core.metric_table import REPORT_AUTONOMIC, REPORT_INTERVALS, REPORT_RHYTHM
-from ecg.ui import dialogs, export_controller as ec, theme
-from ecg.ui.app import ECGApp
-from ecg.ui.export_controller import ExportController
-from ecg.ui.freshness import FreshnessService
-from ecg.ui.signal_controller import SignalController
-from ecg.ui.state import AnalysisState, UIState
+from ecg.app.export_controller import ExportController
+from ecg.app.freshness import FreshnessService
+from ecg.app.signal_controller import SignalController
+from ecg.app.state import AnalysisState, UIState
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -71,37 +69,12 @@ _OF_LINE = {REPORT_RHYTHM: {"01_rr_hr", "02_rr_hist", "03_psd", "05_poincare"},
             REPORT_AUTONOMIC: {"08_autonomic_csi_cpi", "09_event_locked"}}
 
 
-def _zip_figures(monkeypatch, tmp_path, included, drawn=True):
-    """What export_zip really writes for *included*."""
-    slots = {key: SimpleNamespace(fig=Figure(figsize=(1, 1), dpi=20),
-                                  _draw_fn=print if drawn else None)
-             for key, _, _ in ec._ZIP_FIGURES}
-    app = SimpleNamespace(analysis=SimpleNamespace(results={"hr": {}}), _slots=slots,
-                          ent_subject=SimpleNamespace(get=lambda: "m1"),
-                          _set_status=MagicMock())
-    ctrl = ExportController(app)
-    out = tmp_path / "out.zip"
-    monkeypatch.setattr(ec.filedialog, "asksaveasfilename", lambda **k: str(out))
-    monkeypatch.setattr(ctrl, "write_excel", lambda dest: dest.write(b"x"))
-    monkeypatch.setattr(ctrl, "export_data",
-                        lambda: SimpleNamespace(included=included, left_out=""))
-    ctrl.export_zip()
-    with zipfile.ZipFile(out) as zf:
-        return {Path(n).stem for n in zf.namelist() if n.startswith("figures/")}
 
 
-def test_zip_holds_every_figure_with_everything_included(monkeypatch, tmp_path):
-    assert _zip_figures(monkeypatch, tmp_path, {}) == _ALL
 
 
-@pytest.mark.parametrize("line", sorted(_OF_LINE))
-def test_zip_leaves_out_the_figures_of_an_unticked_line(monkeypatch, tmp_path, line):
-    assert _zip_figures(monkeypatch, tmp_path, {line: False}) == _ALL - _OF_LINE[line]
 
 
-def test_zip_skips_the_autonomic_placeholders(monkeypatch, tmp_path):
-    assert (_zip_figures(monkeypatch, tmp_path, {}, drawn=False)
-            == _ALL - _OF_LINE[REPORT_AUTONOMIC])
 
 
 # ── old tab names ────────────────────────────────────────────────────────
@@ -139,31 +112,7 @@ def test_no_old_tab_name_in_the_guide():
 
 # ── theme change ─────────────────────────────────────────────────────────
 
-@pytest.fixture
-def theme_calls(monkeypatch):
-    calls = []
-    # Both callers apply the config; neither may reach the profile or the real CTk.
-    monkeypatch.setattr(theme.THEME, "apply_preset", lambda name: None)
-    monkeypatch.setattr(theme.THEME, "save", lambda: None)
-    monkeypatch.setattr(theme.THEME, "font_scale", theme.THEME.font_scale)
-    monkeypatch.setattr(theme, "apply_theme_config", lambda tc: calls.append("appearance"))
-    monkeypatch.setattr(dialogs, "apply_theme_config", lambda tc: calls.append("appearance"))
-    return calls
 
 
-def test_live_toggle_parks_the_focus_before_the_appearance_changes(theme_calls):
-    app = MagicMock()
-    app._park_focus.side_effect = lambda: theme_calls.append("park")
-    ECGApp._toggle_dark_live(app)
-    assert theme_calls == ["park", "appearance"]
 
 
-def test_theme_dialog_parks_the_focus_before_the_appearance_changes(theme_calls):
-    cls = next(c for c in vars(dialogs).values()
-               if isinstance(c, type) and c.__module__ == dialogs.__name__
-               and "_save_default" in vars(c))
-    dlg = MagicMock()
-    dlg._app._park_focus.side_effect = lambda: theme_calls.append("park")
-    dlg._working = SimpleNamespace(preset_name="Light", font_scale=1.0)
-    cls._apply(dlg)
-    assert theme_calls == ["park", "appearance"]

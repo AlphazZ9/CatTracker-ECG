@@ -1,5 +1,5 @@
 """
-Time course > Event-locked helpers (ecg.ui.event_locked_view) -- no Tk
+Time course > Event-locked helpers (ecg.app.event_locked_view) -- no Tk
 window: panel parameters, events from the annotations, the per-event
 window means / traces of an Autonomic result (CSI family validity, HR and
 LF / HF judged on their own), the table / text / status, the cohort
@@ -19,7 +19,7 @@ from ecg.core.autonomic import compute_autonomic_indices, with_coefficients
 from ecg.core.event_locked import calibrate_gain, knee_point, paired_tests
 from ecg.io import db
 from ecg.io.session import _SessionEncoder, _session_decode_hook
-from ecg.ui import event_locked_view as ev
+from ecg.app import event_locked_view as ev
 
 from tests.helpers import rpeaks_from_rr
 

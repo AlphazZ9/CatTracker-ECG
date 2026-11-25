@@ -11,10 +11,10 @@ from types import SimpleNamespace
 
 import ecg
 from ecg.core.models import FilterParams
-from ecg.ui.context_strip import pending_window_field
-from ecg.ui.session_controller import SessionController
+from ecg.app.session_controller import SessionController
+from ecg.app.context_fields import pending_window_field
 
-UI_DIR = Path(ecg.__file__).parent / "ui"
+UI_DIR = Path(ecg.__file__).parent / "app"   # the controllers moved there
 
 
 class _Entry:

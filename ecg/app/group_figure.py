@@ -1,0 +1,174 @@
+# -*- coding: utf-8 -*-
+"""
+ecg.app.group_figure
+-------------------
+The group figure of a Compare segments group table, for two segments A / B:
+
+* two Poincaré panels on the same square axes, one ellipse per animal (centre
+  at its mean RR on the identity line, half-axes SD2 along it and SD1 across
+  it, the app's ellipse) and the group mean ellipse (mean of the centres, of
+  SD1 and of SD2) drawn thick -- the group counterpart of one animal's
+  Poincaré clouds, without pooling the beats of animals of different size;
+* before-after panels (one line per animal, the median thick) of the
+  metrics the paired tests are run on.
+
+Only the group table is needed: it holds each segment's mean RR, SD1 and SD2.
+
+All pairs (draw_all_pairs_figure): one before-after panel per pair of an
+all-pairs run (Mean HR by default), with the pair's Wilcoxon p.
+"""
+from __future__ import annotations
+
+from typing import Sequence
+
+import numpy as np
+import pandas as pd
+from matplotlib.patches import Ellipse
+
+from ecg.app.group_tab_figure import label_line_ends, spread_labels
+from ecg.app.plots import style_axes
+from ecg.app.theme import PLOT
+
+PAIRED_PANELS = (("Mean HR (60000/mean NN) (bpm)", "HR (bpm)"),
+                 ("Poincaré SD1 (ms)", "SD1 (ms)"), ("Poincaré SD2 (ms)", "SD2 (ms)"))
+_RR, _SD1, _SD2 = "Mean RR (ms)", "Poincaré SD1 (ms)", "Poincaré SD2 (ms)"
+
+
+def poincare_rows(df: "pd.DataFrame", a: str, b: str) -> "pd.DataFrame":
+    """The animals with a mean RR, SD1 and SD2 for both segments."""
+    need = [f"{m} {t}" for m in (_RR, _SD1, _SD2) for t in (a, b)]
+    if any(c not in df.columns for c in need):
+        return df.iloc[0:0]
+    num = df[need].apply(pd.to_numeric, errors="coerce")
+    return df.loc[num.notna().all(axis=1)]
+
+
+def draw_group_figure(fig, df: "pd.DataFrame", a: str, b: str,
+                      names: "Sequence[str]" = (), colors: "Sequence[str]" = ("#2563eb", "#ea580c"),
+                      title: str = "") -> bool:
+    """The group figure on *fig*; *names* are the panel titles of A and B
+    (default the segment tags). False when no animal has both segments."""
+    show = {a: names[0] if len(names) > 0 else a, b: names[1] if len(names) > 1 else b}
+    g = poincare_rows(df, a, b)
+    muted = PLOT.get("muted", "#888")
+    if g.empty:
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, f"No animal with a mean RR, SD1 and SD2 for both '{a}' and '{b}'",
+                ha="center", va="center", transform=ax.transAxes, color=muted)
+        ax.set_axis_off()
+        return False
+    ids = [str(s) for s in g["subject"]] if "subject" in g.columns else [""] * len(g)
+    rr = {t: pd.to_numeric(g[f"{_RR} {t}"]).to_numpy(float) for t in (a, b)}
+    s1 = {t: pd.to_numeric(g[f"{_SD1} {t}"]).to_numpy(float) for t in (a, b)}
+    s2 = {t: pd.to_numeric(g[f"{_SD2} {t}"]).to_numpy(float) for t in (a, b)}
+    all_rr = np.r_[rr[a], rr[b]]
+    pad = 1.5 * float(np.r_[s2[a], s2[b]].max()) + 0.05 * max(float(np.ptp(all_rr)), 1.0)
+    lim = (float(all_rr.min()) - pad, float(all_rr.max()) + pad)
+
+    panels = [p for p in PAIRED_PANELS if f"{p[0]} {a}" in g.columns and f"{p[0]} {b}" in g.columns]
+    gs = fig.add_gridspec(1, 2 + len(panels), width_ratios=[1, 1] + [0.5] * len(panels))
+    for k, (tag, col) in enumerate(zip((a, b), colors)):
+        ax = fig.add_subplot(gs[0, k])
+        style_axes(ax)
+        ax.plot(lim, lim, "--", color=muted, lw=0.8, zorder=1)
+        for x, e1, e2 in zip(rr[tag], s1[tag], s2[tag]):
+            ax.add_patch(Ellipse((x, x), 2 * e2, 2 * e1, angle=45, fill=False, ec=col,
+                                 lw=0.9, alpha=0.5, zorder=2))
+            ax.plot(x, x, "o", ms=3, color=col, alpha=0.7, zorder=3)
+        # Name tags below-right of each centre, pushed apart where two
+        # animals have close mean RR (they printed on top of each other).
+        gap = 0.045 * (lim[1] - lim[0])
+        for x, yt, name in zip(rr[tag], spread_labels(rr[tag] - gap * 0.6, gap), ids):
+            ax.text(x + 0.012 * (lim[1] - lim[0]), yt, name, fontsize=7, va="center",
+                    color=PLOT.get("text", "#222"), alpha=0.75, zorder=6)
+        m = float(rr[tag].mean())
+        ax.add_patch(Ellipse((m, m), 2 * float(s2[tag].mean()), 2 * float(s1[tag].mean()),
+                             angle=45, fill=False, ec=col, lw=2.6, zorder=4))
+        ax.plot(m, m, "o", ms=7, color="white", mec=col, mew=2, zorder=5)
+        ax.set_xlim(*lim)
+        ax.set_ylim(*lim)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("RR$_n$ (ms)", fontsize=9)
+        ax.set_ylabel("RR$_{n+1}$ (ms)", fontsize=9)
+        ax.set_title(f"{show[tag]}\nmean SD1 {s1[tag].mean():.2f} · SD2 {s2[tag].mean():.2f} ms"
+                     f" · n = {len(g)}", fontsize=9, color=col)
+    for j, (col_name, label) in enumerate(panels):
+        ax = fig.add_subplot(gs[0, 2 + j])
+        style_axes(ax)
+        va = pd.to_numeric(g[f"{col_name} {a}"], errors="coerce").to_numpy(float)
+        vb = pd.to_numeric(g[f"{col_name} {b}"], errors="coerce").to_numpy(float)
+        ok = np.isfinite(va) & np.isfinite(vb)
+        for p0, p1 in zip(va[ok], vb[ok]):
+            ax.plot([0, 1], [p0, p1], "-o", color=muted, ms=3.5, lw=0.9, alpha=0.8)
+        if ok.any():
+            ax.plot([0, 1], [np.median(va[ok]), np.median(vb[ok])], "-", color=PLOT.get("text", "#222"),
+                    lw=2.5)
+        ax.set_xticks([0, 1], [show[a], show[b]], fontsize=8)
+        ax.set_xlim(-0.3, 1.3)
+        ax.set_title(label, fontsize=9)
+    fig.suptitle((title + "  ·  " if title else "")
+                 + "thin: each animal (centre = mean RR, half-axes SD2 / SD1) · thick: group mean; "
+                   "right: one line per animal, median thick", fontsize=8, color=muted)
+    return True
+
+
+MAIN_METRIC = "Mean HR (60000/mean NN) (bpm)"
+
+
+def _p_text(p: float) -> str:
+    if p is None or not np.isfinite(p):
+        return "—"
+    return f"{p:.3f}" if p >= 0.001 else f"{p:.1e}"
+
+
+def draw_all_pairs_figure(fig, res, metric: str = MAIN_METRIC, title: str = "",
+                          color: str = "#2563eb") -> bool:
+    """One panel per pair of an all-pairs run (ecg.io.group_stats.
+    AllPairsResult): one before → after line per animal for *metric* (Mean
+    HR by default), the median thick, the pair's Wilcoxon p (and its Holm p)
+    in the title; the panels share the y axis. False when no pair holds the
+    metric."""
+    muted = PLOT.get("muted", "#888")
+    pairs = [pr for pr in res.pairs if f"{metric} {pr.a}" in pr.used.columns
+             and f"{metric} {pr.b}" in pr.used.columns and len(pr.used)]
+    if not pairs:
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, f"No pair with '{metric}' for its two segments",
+                ha="center", va="center", transform=ax.transAxes, color=muted)
+        ax.set_axis_off()
+        return False
+    axes = fig.subplots(1, len(pairs), sharey=True, squeeze=False)[0]
+    holm_col = "Wilcoxon p (Holm, all pairs)" if res.holm_across else "Wilcoxon p (Holm)"
+    tags: "list[tuple]" = []
+    for ax, pr in zip(axes, pairs):
+        style_axes(ax)
+        g = pr.used
+        va = pd.to_numeric(g[f"{metric} {pr.a}"], errors="coerce").to_numpy(float)
+        vb = pd.to_numeric(g[f"{metric} {pr.b}"], errors="coerce").to_numpy(float)
+        ok = np.isfinite(va) & np.isfinite(vb)
+        ids = [str(s) for s in g["subject"]] if "subject" in g.columns else [""] * len(g)
+        for p0, p1 in zip(va[ok], vb[ok]):
+            ax.plot([0, 1], [p0, p1], "-o", color=muted, ms=3.5, lw=0.9, alpha=0.8)
+        tags.append((ax, list(zip(np.asarray(ids, dtype=object)[ok], vb[ok]))))
+        if ok.any():
+            ax.plot([0, 1], [np.median(va[ok]), np.median(vb[ok])], "-", color=color, lw=2.6)
+        ax.set_xticks([0, 1], [pr.name_a, pr.name_b], fontsize=8)
+        ax.set_xlim(-0.3, 1.35)
+        p = ph = float("nan")
+        if len(pr.stats) and metric in set(pr.stats["Metric"]):
+            r = pr.stats.set_index("Metric").loc[metric]
+            p = float(r["Wilcoxon p"])
+            ph = float(r.get(holm_col, float("nan")))
+        ax.set_title(f"{pr.title}\nn = {int(ok.sum())} · p = {_p_text(p)}"
+                     f" (Holm{' all' if res.holm_across else ''} {_p_text(ph)})", fontsize=9)
+    axes[0].set_ylabel(metric, fontsize=9)
+    # The name tags once the shared y range is set, apart where they would overlap.
+    for ax, items in tags:
+        label_line_ends(ax, [(str(n), float(y)) for n, y in items], 1.0, fontsize=6.5,
+                        color=muted, dx=0.03)
+    for ax in axes[len(pairs):]:
+        ax.set_axis_off()
+    fig.suptitle((title + "  ·  " if title else "")
+                 + "one line per animal, median thick · two-sided Wilcoxon signed-rank across "
+                   "animals", fontsize=8, color=muted)
+    return True

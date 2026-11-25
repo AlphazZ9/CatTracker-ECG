@@ -17,13 +17,13 @@ import pytest
 from ecg.core.autonomic import COV_METHODS
 from ecg.io import db
 from ecg.io.session import _SessionEncoder, _session_decode_hook
-from ecg.ui import event_locked_controller as elc_module
+from ecg.app import event_locked_controller as elc_module
 from ecg.services import session_service  # where restore reloads the signal
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.event_locked_controller import EventLockedController
-from ecg.ui.session_controller import SessionController
-from ecg.ui.state import AnalysisState, DetectionState, SessionState, SignalState, UIState
-from ecg.ui.theme import GREEN, MUTED, ORANGE, RED
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.event_locked_controller import EventLockedController
+from ecg.app.session_controller import SessionController
+from ecg.app.state import AnalysisState, DetectionState, SessionState, SignalState, UIState
+from ecg.app.theme import GREEN, MUTED, ORANGE, RED
 
 from tests.helpers import rpeaks_from_rr
 
@@ -437,7 +437,7 @@ def test_status_colours_follow_a_theme_switch(monkeypatch):
     # The controller reads the theme module at call time, so a light / dark
     # switch (theme.apply_theme_config rebinding GREEN, ORANGE ...) applies
     # without a re-sync of this module.
-    from ecg.ui import theme
+    from ecg.app import theme
     app, statuses = _computed()
     monkeypatch.setattr(theme, "GREEN", "#010203")
     monkeypatch.setattr(theme, "ORANGE", "#040506")

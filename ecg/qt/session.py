@@ -32,8 +32,8 @@ from ecg.core.models import normalize_qtc_formula
 from ecg.io.session import load_session
 from ecg.qt.figure_host import Value
 from ecg.services.session_service import restore_bundle
-from ecg.ui.state import SessionState
-from ecg.ui.tab_keys import TAB_ORDER
+from ecg.app.state import SessionState
+from ecg.app.tab_keys import TAB_ORDER
 
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
@@ -43,7 +43,7 @@ log = logging.getLogger("ecg")
 
 class QtSession:
     def __init__(self, window: "MainWindow") -> None:
-        from ecg.ui.session_controller import SessionController
+        from ecg.app.session_controller import SessionController
         self.win = window
         host = window.figures
         host.session = SessionState()
@@ -146,8 +146,8 @@ class QtSession:
 
     def apply(self, bundle: dict, saved_at: str) -> None:
         """SessionController.on_restore_session_done on the Qt state and inputs."""
-        from ecg.ui.session_controller import _TAB_KEY_MAP
-        from ecg.ui.tab_keys import time_course_mode
+        from ecg.app.session_controller import _TAB_KEY_MAP
+        from ecg.app.tab_keys import time_course_mode
         win, host = self.win, self.win.figures
         rec = win.recording
         s, d, a = rec.signal, rec.detection, rec.analysis

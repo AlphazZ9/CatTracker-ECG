@@ -413,7 +413,7 @@ class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
         self.lbl_flags.setText("\n".join(
             f"{name}: " + (("⚠  " + "  ·  ".join(fl)) if fl else "✓  quality ok")
             for name, fl in zip(names, self.flags)))
-        from ecg.ui.compare_segments import segment_color
+        from ecg.app.compare_helpers import segment_color
         heads, cols = ["Metric", "Unit"], []
         n = len(segs)
         for k in range(n):
@@ -457,8 +457,8 @@ class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
     def redraw_plot(self) -> None:
         if not self.segs:
             return
-        from ecg.ui.compare_segments import draw_rr_tachograms, segment_color
-        from ecg.ui.poincare_figure import draw_poincare_set
+        from ecg.app.compare_helpers import draw_rr_tachograms, segment_color
+        from ecg.app.poincare_figure import draw_poincare_set
         segs = self.segs
         colors = [segment_color(k) for k in range(len(segs))]
         if self.cb_view.currentIndex() == 1:

@@ -9,8 +9,8 @@ Sources (edit these, never the generated files):
     packaging/icon/icon.svg        the full drawing (thin strokes), 64 px and up
     packaging/icon/icon-small.svg  the same cat with thick strokes, 16-48 px
 Outputs:
-    ecg/ui/assets/icon_{16,32,48,256}.png   window / taskbar icon at run time
-    ecg/ui/assets/icon.ico                  Windows title bars at run time
+    ecg/app/assets/icon_{16,32,48,256}.png   window / taskbar icon at run time
+    ecg/app/assets/icon.ico                  Windows title bars at run time
     packaging/icon.ico                       Windows app (PyInstaller)
     packaging/icon.icns                      macOS app (PyInstaller)
     packaging/icon/icon_1024.png             preview / README
@@ -36,7 +36,7 @@ def render(size: int) -> Image.Image:
 
 
 def main() -> None:
-    assets = ROOT / "ecg" / "ui" / "assets"
+    assets = ROOT / "ecg" / "app" / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     for s in (16, 32, 48, 256):
         render(s).save(assets / f"icon_{s}.png", optimize=True)

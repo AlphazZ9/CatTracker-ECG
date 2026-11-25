@@ -3,7 +3,7 @@
 ecg.qt.widgets.stale_banner
 ---------------------------
 The out-of-date banner of a view (the Tk ones of Time course, Events and
-Morphology): what ecg.ui.freshness.stale_banner_text says, with an
+Morphology): what ecg.app.freshness.stale_banner_text says, with an
 optional Recompute button; hidden when there is nothing to say.
 """
 from __future__ import annotations

@@ -17,15 +17,15 @@ from ecg.core.metric_table import (
     REPORT_RHYTHM, REPORT_TIME_COURSE, build_metric_table, filter_results, filter_table,
     format_metric, metric_text, report_key_results, report_module_of, rhythm_cards,
 )
-from ecg.ui.export_controller import ExportController
-from ecg.ui.freshness import NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE, combine_states
-from ecg.ui.report_view import (
+from ecg.app.export_controller import ExportController
+from ecg.app.freshness import NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE, combine_states
+from ecg.app.report_view import (
     autonomic_method_text, events_baseline_text, hrv_bands_text, include_choices, left_out_labels,
     provenance_rows, report_lines, report_states, report_text,
 )
-from ecg.ui.session_controller import _TAB_KEY_MAP
-from ecg.ui.state import AnalysisState, DetectionState, SignalState, UIState
-from ecg.ui.tab_keys import TAB_MODULES, TAB_ORDER, TAB_REPORT
+from ecg.app.session_controller import _TAB_KEY_MAP
+from ecg.app.state import AnalysisState, DetectionState, SignalState, UIState
+from ecg.app.tab_keys import TAB_MODULES, TAB_ORDER, TAB_REPORT
 
 
 def _results(n: int = 400) -> dict:
@@ -298,7 +298,7 @@ def test_prism_gets_what_include_lets_out(monkeypatch, tmp_path):
     captured = {}
     monkeypatch.setattr(export_module.PrismExporter, "build_and_write",
                         classmethod(lambda cls, **kw: captured.update(kw) or 1))
-    import ecg.ui.export_controller as ctrl
+    import ecg.app.export_controller as ctrl
     monkeypatch.setattr(ctrl.filedialog, "asksaveasfilename", lambda **k: str(tmp_path / "x.pzfx"))
     app = _app(_all_states(rolling=OUT_OF_DATE), include={REPORT_INTERVALS: [False, UP_TO_DATE]})
     app._set_status = lambda *a, **k: None

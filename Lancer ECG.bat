@@ -34,7 +34,7 @@ set "LOG=%TOM_ECG_HOME%\dernier_lancement.log"
 rem Python 3.12 prive, range lui aussi dans le dossier TomECG.
 if not defined UV_PYTHON_INSTALL_DIR set "UV_PYTHON_INSTALL_DIR=%TOM_ECG_HOME%\python"
 rem Incrementer LAYOUT force une reinstallation chez tout le monde.
-set "LAYOUT=py312-v3"
+set "LAYOUT=py312-v4"
 rem uv prive dans TomECG : version connue, PATH de l'utilisateur non modifie
 rem (un vieux uv deja installe ne connait pas toutes les options ci-dessous).
 if not defined UV_INSTALL_DIR set "UV_INSTALL_DIR=%TOM_ECG_HOME%\uv"
@@ -107,7 +107,7 @@ if errorlevel 1 goto :err_deps
 echo.
 
 echo  [4/4] Verification de l'application...
-"%PY%" -c "import tkinter, customtkinter, neurokit2, ecg.ui.app"
+"%PY%" -c "import PySide6, pyqtgraph, neurokit2, ecg.qt.main_window"
 if errorlevel 1 goto :err_check
 call :find_base
 if not defined BASEW goto :err_check

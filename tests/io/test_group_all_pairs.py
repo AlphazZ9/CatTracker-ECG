@@ -188,7 +188,7 @@ def test_sheet_names_are_valid_and_unique():
 
 
 def test_all_pairs_figure_one_panel_per_pair():
-    from ecg.ui.group_figure import draw_all_pairs_figure
+    from ecg.app.group_figure import draw_all_pairs_figure
     res = gs.all_pairs_stats(_table())
     fig = Figure(figsize=(10, 4))
     assert draw_all_pairs_figure(fig, res)

@@ -16,8 +16,8 @@ import pytest
 
 from ecg.core import analysis
 from ecg.core.models import MouseECG
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.state import AnalysisState, DetectionState, SignalState, UIState
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.state import AnalysisState, DetectionState, SignalState, UIState
 
 from tests.helpers import rpeaks_from_rr
 

@@ -190,7 +190,7 @@ calculs reste le même ; seul le moment où il tourne change.
 | Session Tk restaurée dans Tk et dans Qt | 234 510 cellules + rapport + CSV + état | identique ; état restauré = état enregistré |
 | Session Qt restaurée dans Tk et dans Qt | idem | identique ; état restauré = état enregistré |
 
-Test automatique : `tests/validation/test_tk_vs_qt.py`. Il est lent (environ 2 minutes) et demande un affichage pour Tk (`xvfb-run` sous Linux).
+Test automatique (jusqu'à la version 6.2.0) : `tests/validation/test_tk_vs_qt.py`, retiré avec l'interface Tk (voir plus bas).
 
 ### Écarts trouvés par cette comparaison, puis corrigés dans l'interface Qt
 1. **Suivi de fraîcheur absent.** Il manquait les états « up to date / out of date » du rapport et le `freshness_basis` / `computed_at` des sessions. L'interface Qt utilise maintenant le `FreshnessService` de Tk, avec les mêmes horodatages.
@@ -198,8 +198,12 @@ Test automatique : `tests/validation/test_tk_vs_qt.py`. Il est lent (environ 2 m
 3. **Métriques LW absentes de Sliding** (CCD, SD1 (LW), SD2 (LW)).
 4. **Mode du Time course non suivi** (`time_course_mode` des sessions).
 
-### Sur tes propres enregistrements (à faire avant de retirer Tk)
+### Sur tes propres enregistrements
+`tools/compare_interfaces.py` n'existe que tant que l'interface Tk existe : il
+faut le lancer depuis la branche `phase-5/distribution` (ou toute version
+6.x), pas depuis la version 7.
 ```bash
+git switch phase-5/distribution
 python tools/compare_interfaces.py chemin/vers/fichier1.mat chemin/vers/fichier2.mat
 ```
 Le code de sortie vaut 0 si tout est identique ; sinon les différences sont listées. Sous Linux sans écran, le lancement passe automatiquement par `xvfb-run`.
@@ -207,3 +211,59 @@ Le code de sortie vaut 0 si tout est identique ; sinon les différences sont lis
 ### Pas encore couvert par la comparaison
 - Compare segments, Group et Event-locked : ils sont vérifiés contre les fonctions du cœur appelées avec les paramètres de Tk (`tests/qt`), mais pas encore dans ce scénario de bout en bout.
 - Les exports PDF et ZIP de figures contiennent des dates et du rendu : ils ne sont pas comparés octet par octet.
+
+## Phase 6 — retrait de l'interface Tk (version 7.0.0)
+
+L'interface CustomTkinter (`ecg/ui`) est retirée ; `python -m ecg` ouvre
+l'interface Qt.
+
+**Ce qui est garanti, et comment :**
+- Le code des contrôleurs et des figures que l'interface Qt utilisait (analyse,
+  figures, exports, sessions, fraîcheur, Event-locked…) est **déplacé tel quel**
+  dans `ecg/app`. Seuls changent :
+  - ses imports Tk ;
+  - les boîtes de dialogue, qui passent par `ecg/app/dialogs.py` ;
+  - deux parties purement Tk, les cartes d'événements et la hauteur du tableau
+    Rhythm, remplacées par les rappels que l'interface Qt utilisait déjà.
+- Les fonctions sans interface des modules Tk supprimés sont **copiées octet
+  pour octet** par un script dans `ecg/app/*_helpers.py`, `context_fields.py`,
+  `text_tables.py`, `jobs.py` et `wave_landmarks.py`. Exemples : configurations
+  de Compare segments, lignes du tableau de groupe, tableau des intervalles.
+- Le jeu de référence (`tests/regression`) passe toujours, avec la même
+  tolérance : il pilote désormais les contrôleurs de `ecg/app`.
+- `tests/core/test_core_ui_free.py` vérifie qu'aucun module de `ecg/core`,
+  `ecg/services`, `ecg/figures` et `ecg/app` n'importe Qt ou Tk, et que plus
+  rien n'importe `ecg.ui`.
+
+**Fonctions qui n'existaient que dans Tk, portées dans Qt avant le retrait :**
+- Check agreement (le calcul déplacé dans `ecg/services/agreement_service.py`) ;
+- la calibration ks / kp ;
+- la suggestion d'annotations à partir des canaux du fichier ;
+- la fiche d'enregistrement (sujet, sexe, projet, notes) ;
+- les fichiers récents et Cohort Trends ;
+- dans Compare segments : les configurations relatives au stimulus, Prism
+  (nouveau fichier ou modèle rempli), les figures, Add to group table, le
+  Poincaré de groupe et le réglage gardé dans les sessions ;
+- Group > From saved sessions et ses exports Prism ;
+- Recompute Frequency / Non-linear et le plafond d'entropie ;
+- les marqueurs de pics et Review ;
+- Clear Edits, Go, la fenêtre d'analyse et la bande RR / HR / Quality ;
+- dans Events : Previous / Next et Edit peaks here ;
+- les bandeaux « out of date » avec Recompute, et l'état de chaque onglet ;
+- dans Morphology : les trois étapes et le tableau des intervalles ;
+- le clair / sombre et la taille du texte, gardés d'un lancement à l'autre ;
+- les raccourcis clavier ;
+- Reset to mouse ECG defaults et Clear session cache.
+
+**Tests retirés :** ceux de `tests/ui` qui pilotaient des widgets ou des mixins
+Tk (fenêtres, onglets, barre d'onglets…). Les tests de logique de ces fichiers
+sont gardés, avec leurs imports redirigés vers `ecg/app`. Les mêmes fonctions
+sont testées dans l'interface Qt (`tests/qt`).
+
+**Corrigé au passage dans l'interface Qt :**
+- Les temps des segments étaient affichés avec 6 chiffres significatifs :
+  12345,678 devenait 12345,7. Ils gardent maintenant la milliseconde, comme
+  dans Tk.
+- La fenêtre Qt n'avait pas d'icône.
+- Copy for Excel (Events) ne trouvait pas le texte à copier.
+

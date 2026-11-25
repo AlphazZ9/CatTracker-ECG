@@ -49,33 +49,27 @@ The app has six analysis tabs and a report, organised by question:
 | **Group** | Do the animals of the experiment differ, by group or sex? | Group table, animals, figure, statistics, Prism |
 | **Report** | What goes out? | Provenance, module states, Include, exports |
 
-Above every tab, the **context strip** says what the numbers rest on (window,
-peaks, RR bounds, exclusions, artifact correction, QTc formula). Each tab head
-carries one state: ● up to date, ◆ out of date, ○ not computed; hover it for the
-reason.
+Each tab head carries a coloured dot: green up to date, orange out of date,
+grey not computed; hover it for the reason. A result that is out of date says
+so in a banner above it (Time course, Morphology & Intervals, Events), with
+**⟳ Recompute** where it applies.
 
-The analysis window is edited in place in the context strip (**Window**
-[from] – [to] s, **Apply**, **Full**), on every tab. Opening a file or clicking
-**Detect Peaks** sets the window back to the whole signal, and the entries are
-emptied to say so (empty = signal start / end; the To entry shows the signal
-end greyed). Values typed but not yet applied are flagged in the strip
-("Window typed, not applied: Enter or Apply"); once applied, until **Analyze all**
-runs, the strip says which window the results on screen were computed on.
+The **analysis window** is set on the Signal & Detection tab (**Analysis
+window (s)** [start] [end], **Apply**, **Full**): the part of the recording
+Analyze uses, with the number of peaks inside it. Opening a file or clicking
+**Detect Peaks** sets it back to the whole signal (empty = signal start /
+end).
 
 The window opens on the **Signal & Detection** tab with no file loaded. The
-header along the top (the file chip, **Open** with its **▾** recent files,
-**Save Session**, **Detect Peaks**, **Analyze all**, **Export…**, undo / redo
-and the **⋯** menu with Parameters, Theme, light / dark mode, keyboard
-shortcuts (F1), reset to mouse defaults and clear session cache) stays visible
-no matter which tab you're on — everything downstream of loading a file
-starts from there.
-
-There is no sidebar: every tab gets the full width. Click the **file chip**
-(file · channel · rate · subject) to open the **Recording sheet**: channel
-(with the list of the file's channels), sampling rate and where it came
-from, Subject ID, Project, crop start / end, notes and the session status.
-Esc or a click outside closes it, like every menu and popover. The **▾**
-beside **Open** lists the recent files, then "All recent recordings…".
+header along the top stays visible whatever the tab: the file name (with its
+channel, rate, subject and project), **Open…**, **Recording…** (Subject ID,
+sex, project, notes, the file's channels), **Settings…** (channel, rate,
+crop, filters, RR bounds, artifact correction, reset to mouse defaults),
+**ML detector…**, **Save Session**, **Analyze**, the progress bar with
+**Cancel**, and light / dark mode. The menus hold the rest:
+- **File**: Open Recent, Recent recordings (with Cohort Trends), Clear session cache;
+- **View**: light / dark mode, text size, both kept for the next runs;
+- **Help**: keyboard shortcuts (F1), the log folder.
 
 ---
 
@@ -83,11 +77,9 @@ beside **Open** lists the recent files, then "All recent recordings…".
 
 Click **Open** and pick a MATLAB `.mat` file — legacy v5/v6 or v7.3/HDF5
 (Spike2 exports), both are handled automatically, including channel and
-sampling-rate detection. The **Recording sheet** (click the file chip in
-the header) shows the detected channel name and sampling rate (editable if
-auto-detection guesses wrong; it opens by itself when the rate is not found
-in the file), and the **Filters** chip of the Signal & Detection bar
-controls whether detection
+sampling-rate detection. **Settings…** (header) holds the channel and the
+sampling rate (editable if auto-detection guesses wrong), and the
+**Filtering** box of the Signal & Detection bar controls whether detection
 runs on the raw signal or a bandpass/notch/cleaned version — see
 [Reading the Detection view](#reading-the-detection-view) for what that
 choice does to the display.
@@ -96,7 +88,7 @@ Opening a file immediately shows the raw trace with no processing. Nothing
 is filtered, detected, or analyzed until you click **Detect Peaks**.
 
 **Subject and sex from the file name.** Opening a file fills **Subject ID**
-and **Sex** (M / F, beside it in the Recording sheet) from its name:
+and **Sex** (M / F) of the Recording sheet (**Recording…**) from its name:
 "Stim BNST - 1146 F.smr" gives 1146 and F, "Baseline_STIM_BNST_206.mat" gives
 206 and no sex. The sex is a standalone M or F (separated by a space, _ or -,
 or glued to the number: "1146F", "F1146", "M_206"; never a letter of a word
@@ -229,7 +221,7 @@ it).
 The detail plot always shows two traces, layered on top of each other:
 
 - The **primary trace** (solid) — whichever of raw/filtered you have
-  selected via the Filters popover's "Show raw signal" toggle.
+  selected via "Show raw signal".
 - A **ghost trace** (faint, 20% opacity) — the other one, so the effect
   of filtering is always visible even when you're focused on the raw
   view.
@@ -770,7 +762,7 @@ Choose **Event-locked** in the selector of Time course.
    samples), **p(z)** the normal p of the z shown (MATLAB `signrank`'s
    approximate p); near 0.05 they can disagree.
 6. **💾 Save to cohort registry.** Fill in **Subject ID** and **Project** in
-   the Recording sheet (click the file chip) first: they are stored with
+   the Recording sheet (**Recording…** in the header) first: they are stored with
    every event, together with the method, window, ks, kp and pre / post
    windows. **Set the Subject ID for each animal**: the Recording sheet keeps
    its value from one file to the next (a saved session brings its own
@@ -1250,7 +1242,7 @@ them.
 
 <img src="screenshots/12_report.png" width="800" alt="Report tab">
 
-What goes out, in one place. **Export…** in the header leads here. This screen, the
+What goes out, in one place. This screen, the
 text report, the PDF's key metrics and the **Metrics** tables of Excel and Prism read
 one table of value, unit, basis n and state (the PDF gives the module states in its
 header, the text report on the title of each block; in Prism a cell holds a number, so
@@ -1387,9 +1379,10 @@ length).
 
 <img src="screenshots/13_parameters_dialog.png" width="420" alt="Parameters dialog, top section">
 
-Open **⚙ Parameters** (**⋯** menu of the header, right side) for every setting that
-affects analysis: channel/subject metadata, sampling rate override,
-filter cutoffs, and detection thresholds. Metrics use mouse-calibrated
+Open **Settings…** (header) for every setting that affects the analysis:
+channel, sampling rate override, crop, filter cutoffs, RR bounds, artifact
+correction and the SG + Derivative options; the subject's details are in
+**Recording…**. Metrics use mouse-calibrated
 algorithms, but protocol-specific reference ranges are not currently
 selectable in the application. Interpret results using validated reference
 data for your strain and experimental conditions.
@@ -1405,9 +1398,8 @@ data for your strain and experimental conditions.
   provenance, and every export: **Export Excel**,
   **GraphPad Prism** `.pzfx`, **PDF report** (signal strip, key metrics,
   Poincaré diagram, abnormal-events summary), **Copy text** / **Save .txt**,
-  and under **More ▾** the RR intervals CSV, the figures, the ZIP and the
-  per-episode annotated Events PDF. The header's **Export…** opens the
-  Report tab. Time course > Autonomic
+  the RR intervals CSV, the figures (ZIP) and the per-episode annotated
+  Events PDF. Time course > Autonomic
   results add their own Excel sheets and Prism tables (see
   [Exports](#exports) in the Autonomic section).
 - **💾 Save to cohort registry** (Time course > Event-locked) keeps
@@ -1417,10 +1409,10 @@ data for your strain and experimental conditions.
   recording to training examples** (Signal quality panel, ML DETECTOR
   section) caches this recording's corrected peaks without needing a full
   session save (see [ML R-peak detector](#ml-r-peak-detector)).
-- A saved session also restores the Recording sheet (channel, rate, crop,
-  Subject ID), the detection bar (method, threshold, Min / Max RR), the
-  Filters popover (including SG options and the raw / filtered view), the
-  auto-correction switch and the analysis window.
+- A saved session also restores the Recording sheet (Subject ID, sex,
+  project, notes), the detection bar (method, threshold), the Settings
+  (filters, RR bounds, SG options), the auto-correction switch, the analysis
+  window and the Compare segments setup.
 
 ---
 

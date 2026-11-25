@@ -3,7 +3,7 @@
 ecg.qt.figure_host
 ------------------
 Lets the Qt interface draw with the Tk interface's own figure code
-(ecg.ui.plot_controller.PlotController), so a figure is the same in both
+(ecg.app.plot_controller.PlotController), so a figure is the same in both
 interfaces and in the exports, without a second copy of 2,700 lines of
 drawing code.
 
@@ -31,7 +31,7 @@ log = logging.getLogger("ecg")
 
 
 class FigureSlot(MplCanvas):
-    """A CanvasSlot (ecg.ui.plots) as PlotController uses it."""
+    """A CanvasSlot (ecg.app.plots) as PlotController uses it."""
 
     def update(self, draw_fn: Callable) -> None:          # noqa: A003 (CanvasSlot API)
         self.update_figure(draw_fn)
@@ -279,69 +279,43 @@ class QtMessageBox:
 
 
 def _use_qt_message_boxes() -> None:
-    """The Tk controller modules the Qt interface reuses show Qt boxes."""
-    import ecg.ui.analysis_controller as ac
-    import ecg.ui.export_controller as ec
-    import ecg.ui.plot_controller as pc
-    for mod in (ac, pc, ec):
-        if hasattr(mod, "messagebox"):
-            mod.messagebox = QtMessageBox
-        if hasattr(mod, "filedialog"):
-            mod.filedialog = QtFileDialog
+    """The controllers' message boxes and file choosers (ecg.app.dialogs)
+    are Qt ones."""
+    from ecg.app import dialogs
+    dialogs.install(QtMessageBox, QtFileDialog)
 
 
 class FigureHost:
     """What PlotController / AnalysisController read on their "app"."""
 
     def __init__(self, window: Any) -> None:
-        from ecg.ui.app_helpers import HelpersMixin
-        from ecg.ui.state import UIState
+        from ecg.app.state import UIState
+        from ecg.app.text_tables import TextTables
         self._window = window
         self.ui = UIState()
         self._slots: "dict[str, FigureSlot]" = _Slots()
         self._kpi: dict = {}
         self._generation = 0
         self._async_busy = False
-        self._df_to_tsv = HelpersMixin._df_to_tsv
-        self._df_to_text = HelpersMixin._df_to_text
-        self._NL_DISPLAY = HelpersMixin._NL_DISPLAY
+        self._df_to_tsv = TextTables._df_to_tsv
+        self._df_to_text = TextTables._df_to_text
+        self._NL_DISPLAY = TextTables._NL_DISPLAY
         self._safe_float = lambda w, d: _safe_float(w, d)
-        from ecg.ui.analysis_controller import AnalysisController
-        from ecg.ui.plot_controller import PlotController
+        from ecg.app.analysis_controller import AnalysisController
+        from ecg.app.plot_controller import PlotController
         _use_qt_message_boxes()
         self._main_caller = _MainThreadCaller()
 
-        class _QtPlotController(PlotController):
-            """The Rhythm & HRV metric table is a Qt table: the shared table
-            (ecg.core.metric_table) is handed to the host's callback instead of
-            being written into a Tk text box."""
-
-            def refresh_rhythm_table(self) -> None:
-                t = getattr(self, "_rhythm_table", None)
-                cb = self.app.__dict__.get("on_rhythm_table")
-                if t is not None and cb is not None:
-                    cb(t)
-
-            def fit_rhythm_table(self) -> None:
-                pass
-
-        class _QtAnalysisController(AnalysisController):
-            """The Events list is a Qt table: the events go to the host's
-            callback instead of becoming CustomTkinter cards."""
-
-            def build_event_cards(self) -> None:
-                cb = self.app.__dict__.get("on_events_list")
-                if cb is not None:
-                    cb(list(self.app.analysis.arrhythmia_events or []))
-
-        from ecg.ui.navigation_controller import NavigationController
-        self.analysis_ctrl = _QtAnalysisController(self)
-        self.plot_ctrl = _QtPlotController(self)
+        # The metric table and the events list go to the tabs' callbacks
+        # (on_rhythm_table / on_events_list), set below.
+        self.analysis_ctrl = AnalysisController(self)
+        self.plot_ctrl = PlotController(self)
+        from ecg.app.navigation_controller import NavigationController
         self.nav_ctrl = NavigationController(self)
-        from ecg.ui.export_controller import ExportController
+        from ecg.app.export_controller import ExportController
         self.export_ctrl = ExportController(self)
         # What each module was computed on (up to date / out of date), as Tk.
-        from ecg.ui.freshness import FreshnessService
+        from ecg.app.freshness import FreshnessService
         self.freshness = FreshnessService(self)
                                      # (Qt drops them on every peak change)
         self._arr_card_widgets: list = []
@@ -460,7 +434,7 @@ def _safe_float(widget: Any, default: float) -> float:
 def sync_figure_theme(is_dark: bool) -> None:
     """Give the shared figure code the Qt theme (Light / Dark preset of the
     Tk ThemeConfig: the same colours)."""
-    from ecg.ui import theme as tk_theme
+    from ecg.app import theme as tk_theme
     # THEME itself (in memory only, never saved from here): some figures read
     # THEME.is_dark (e.g. the PSD band transparency).
     tk_theme.THEME.apply_preset("Dark" if is_dark else "Light")

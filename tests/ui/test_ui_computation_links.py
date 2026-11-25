@@ -25,12 +25,12 @@ from openpyxl import load_workbook
 from ecg.core import analysis
 from ecg.core.analysis import analyse_core, analyse_intervals
 from ecg.core.wave_template import WaveTemplate
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.export_controller import ExportController
-from ecg.ui.plot_controller import PlotController
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.export_controller import ExportController
+from ecg.app.plot_controller import PlotController
 from ecg.core.metric_table import results_asymmetry
-from ecg.ui.report_view import report_text
-from ecg.ui.state import AnalysisState, DetectionState, SignalState
+from ecg.app.report_view import report_text
+from ecg.app.state import AnalysisState, DetectionState, SignalState
 
 from tests.helpers import make_synth_ecg
 
@@ -47,10 +47,7 @@ def _no_template_writes(monkeypatch):
 @pytest.fixture(autouse=True)
 def _no_tk_widgets(monkeypatch):
     """The "No abnormal events" placeholder is a CTkLabel: no Tk here."""
-    from ecg.ui import analysis_controller as ac
-    monkeypatch.setattr(ac.ctk, "CTkLabel",
-                        lambda *a, **kw: SimpleNamespace(grid=lambda **k: None,
-                                                         destroy=lambda: None))
+    from ecg.app import analysis_controller as ac
 
 
 class _Label:

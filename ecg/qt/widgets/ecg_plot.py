@@ -28,7 +28,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ecg.qt import theme
 
 DEFAULT_WINDOW_S = 10.0
-MIN_WINDOW_S = 0.1          # as the Tk views (ecg.ui.state.MIN_VIEW_WINDOW_S)
+MIN_WINDOW_S = 0.1          # as the Tk views (ecg.app.state.MIN_VIEW_WINDOW_S)
 
 
 def _alpha(color: str, alpha: int) -> QtGui.QColor:

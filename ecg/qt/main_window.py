@@ -35,7 +35,7 @@ from ecg.qt.tabs.compare_tab import CompareTab
 from ecg.qt.tabs.group_tab import GroupTab
 from ecg.qt.workers import Job, JobRunner
 from ecg.services.analysis_service import run_core_analysis
-from ecg.ui.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_GROUP, TAB_EVENTS, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER,
+from ecg.app.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_GROUP, TAB_EVENTS, TAB_HRV, TAB_MORPHOLOGY, TAB_ORDER,
                              TAB_REPORT,
                              TAB_TIME_COURSE, TIME_COURSE_MODES)
 
@@ -75,7 +75,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(f"ECG Analysis {ecg.__version__} (Qt preview)")
+        self.setWindowTitle(f"ECG Analysis {ecg.__version__}")
         self.resize(1400, 860)
         self.setMinimumSize(1100, 640)
         self.recording = Recording()
@@ -111,7 +111,7 @@ class MainWindow(QtWidgets.QMainWindow):
             elif name == TAB_REPORT:
                 w = ReportTab(self)
             else:
-                w = self._placeholder(name)
+                raise ValueError(f"no tab named {name!r}")
             self.tab_widgets[name] = w
             self.tabs.addTab(w, name.replace("&", "&&"))   # "&" alone marks a shortcut
         lay.addWidget(self.tabs, 1)
@@ -283,17 +283,6 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addWidget(self.btn_theme)
         return bar
 
-    @staticmethod
-    def _placeholder(name: str) -> QtWidgets.QWidget:
-        w = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(w)
-        lbl = QtWidgets.QLabel(f"{name}: moves to the Qt interface in a later step of the "
-                               "migration. Use the current interface (python -m ecg) meanwhile.")
-        lbl.setProperty("muted", True)
-        lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(lbl)
-        return w
-
     # ── recording ───────────────────────────────────────────
     def open_dialog(self) -> None:
         if not self.confirm_discard("Open another recording"):
@@ -443,7 +432,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # AnalysisController.on_analysis_done: the basis of the core results,
         # from the bundle (the correction can change the peaks).
         import datetime as dt
-        from ecg.ui.freshness import recorded_rr_bounds
+        from ecg.app.freshness import recorded_rr_bounds
         fresh = self.figures.freshness
         fresh.stamp("core", fresh.capture(window=a.analysed_window,
                                           rr_bounds=recorded_rr_bounds(a.results)))
@@ -516,9 +505,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def refresh_tab_states(self) -> None:
         """ECGApp._refresh_tab_states: each tab's state (up to date, out of
         date, not computed) as a coloured dot on its head, why in its tooltip."""
-        from ecg.ui.context_strip import tab_states
-        from ecg.ui.freshness import NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE
-        from ecg.ui.tab_keys import TAB_MODULES
+        from ecg.app.context_fields import tab_states
+        from ecg.app.freshness import NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE
+        from ecg.app.tab_keys import TAB_MODULES
         fresh = self.figures.freshness
         statuses = {m: fresh.status(m) for m in fresh.states()}
         rp = self.recording.detection.rpeaks_ok

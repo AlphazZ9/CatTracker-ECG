@@ -22,7 +22,7 @@ from ecg.core.autonomic import COV_METHODS
 from ecg.core.models import MouseECG
 from ecg.qt.figure_host import Field, StatusLabel, TextBox
 from ecg.qt.theme import current as theme_current
-from ecg.ui.autonomic_view import normalise_autonomic_params
+from ecg.app.autonomic_view import normalise_autonomic_params
 
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
@@ -77,7 +77,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
 
     def refresh_banner(self) -> None:
         """What is out of date on the page shown: the first module of it."""
-        from ecg.ui.freshness import stale_banner_text
+        from ecg.app.freshness import stale_banner_text
         host = self.win.figures
         a = host.analysis
         results = {"epochs": a.epoch_df, "rolling": a.rolling_hrv_df,
@@ -99,7 +99,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
 
     def recompute_mode(self) -> None:
         """TimeCourseMixin._recompute_time_mode, on the page shown."""
-        from ecg.ui.freshness import UP_TO_DATE
+        from ecg.app.freshness import UP_TO_DATE
         host = self.win.figures
         ctl, ev = host.analysis_ctrl, host.event_ctrl
         page = self.currentIndex()
@@ -261,12 +261,9 @@ class TimeCourseTab(QtWidgets.QTabWidget):
     def _event_locked_page(self, host) -> QtWidgets.QWidget:
         """Time course > Event-locked: EventLockedController (the Tk one) on
         the host, reading these inputs under the Tk names."""
-        from ecg.ui.event_locked_controller import EventLockedController
-        from ecg.ui.event_locked_view import EVENT_TABLE_COLUMNS, EVENT_TABLE_NOTE, \
+        from ecg.app.event_locked_controller import EventLockedController
+        from ecg.app.event_locked_view import EVENT_TABLE_COLUMNS, EVENT_TABLE_NOTE, \
             EVENT_TABLE_TITLE
-        import ecg.ui.event_locked_controller as elc
-        from ecg.qt.figure_host import QtFileDialog
-        elc.filedialog = QtFileDialog                    # Export CSV… under Qt
         page = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(page)
         row = QtWidgets.QHBoxLayout()

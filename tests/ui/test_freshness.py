@@ -13,13 +13,13 @@ import pytest
 
 from ecg.core import analysis
 from ecg.core.wave_template import WaveTemplate
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.detection_controller import DetectionController
-from ecg.ui.event_locked_controller import EventLockedController
-from ecg.ui.freshness import (
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.detection_controller import DetectionController
+from ecg.app.event_locked_controller import EventLockedController
+from ecg.app.freshness import (
     FreshnessService, MODULES, NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE, combine_states,
 )
-from ecg.ui.state import AnalysisState, DetectionState, SignalState
+from ecg.app.state import AnalysisState, DetectionState, SignalState
 
 from tests.helpers import make_synth_ecg
 
@@ -40,13 +40,10 @@ def _no_template_writes(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_tk(monkeypatch):
-    from ecg.ui import analysis_controller as ac
+    from ecg.app import analysis_controller as ac
     box = SimpleNamespace(showwarning=lambda *a, **k: None, showerror=lambda *a, **k: None,
                           showinfo=lambda *a, **k: None)
     monkeypatch.setattr(ac, "messagebox", box)
-    monkeypatch.setattr(ac.ctk, "CTkLabel",
-                        lambda *a, **kw: SimpleNamespace(grid=lambda **k: None,
-                                                         destroy=lambda: None))
 
 
 class _Widget:

@@ -13,7 +13,7 @@ from openpyxl import Workbook
 
 from ecg.core.detection import correct_rr_artifacts
 from ecg.io.export import ExcelExporter, premature_beats_frame
-from ecg.ui.export_controller import ExportController
+from ecg.app.export_controller import ExportController
 
 from tests.helpers import rpeaks_from_rr
 from tests.ui.test_premature_events_view import FS, _rr_mixture, _run, _stub_app
@@ -65,7 +65,7 @@ def test_artifact_correction_change_makes_the_classification_stale():
 
 def test_no_classification_is_never_stale():
     app, _ = _stub_app(rpeaks_from_rr(_rr_mixture(), FS))
-    from ecg.ui.analysis_controller import AnalysisController
+    from ecg.app.analysis_controller import AnalysisController
     app.analysis_ctrl = AnalysisController(app)
     assert ExportController(app).arrhythmia_export_data() == (None, None, False)
 

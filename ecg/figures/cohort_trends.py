@@ -14,7 +14,7 @@ from typing import Any
 
 from matplotlib.figure import Figure
 
-from ecg.ui import theme as _theme
+from ecg.app import theme as _theme
 
 
 def _palette() -> "list[str]":

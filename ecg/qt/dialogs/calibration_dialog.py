@@ -10,7 +10,7 @@ The event-locked rows saved to the cohort registry (label and project
 filters, one method / window configuration at a time) give, per event or
 per subject mean, the paired Wilcoxon Z(k) of CSI and CPI for k = 1..20
 with the knee, the counts and the pre vs post tests at the current gains.
-Every statistic is the Tk dialog's pure helper (ecg.ui.event_locked_view);
+Every statistic is the Tk dialog's pure helper (ecg.app.event_locked_view);
 this window only reads its inputs and draws. Apply writes the knees into
 the Autonomic view's ks / kp boxes -- after a confirmation when a caveat
 applies -- and nothing is recomputed until Compute is pressed there.
@@ -28,7 +28,7 @@ from PySide6 import QtWidgets
 from ecg.io.db import export_event_rows_csv, list_event_labels, list_event_rows
 from ecg.qt import theme
 from ecg.qt.widgets.mpl_canvas import MplCanvas
-from ecg.ui.event_locked_view import (
+from ecg.app.event_locked_view import (
     AGGREGATIONS, CALIBRATION_RULE_NOTE, DEFAULT_AGGREGATION, PSEUDO_REPLICATION_NOTE,
     apply_caveats, apply_plan, calibration_text, cohort_calibration, config_label, config_of,
     config_options, default_calibration_label, draw_calibration, in_sample, label_counts,

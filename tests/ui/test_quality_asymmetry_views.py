@@ -16,10 +16,10 @@ from matplotlib.figure import Figure
 
 from ecg.core import analysis
 from ecg.core.analysis import noisy_time_pct, rr_asymmetry_indices, successive_valid_pairs
-from ecg.ui import export_controller as ec
-from ecg.ui.export_controller import ExportController
-from ecg.ui.plot_controller import PlotController
-from ecg.ui.session_controller import SessionController
+from ecg.app import export_controller as ec
+from ecg.app.export_controller import ExportController
+from ecg.app.plot_controller import PlotController
+from ecg.app.session_controller import SessionController
 
 from tests.ui.test_ui_computation_links import (  # noqa: F401  (fixtures)
     _no_template_writes, _no_tk_widgets, _stub_app, recording,

@@ -15,9 +15,9 @@ from ecg.core.models import MouseECG
 from ecg.io.loaders import _serialise_results
 from ecg.io.session import _SessionEncoder, _session_decode_hook
 from ecg.services import session_service  # where restore reloads the signal
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.plot_controller import PlotController
-from ecg.ui.session_controller import SessionController
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.plot_controller import PlotController
+from ecg.app.session_controller import SessionController
 
 from tests.core.test_legacy_results import _core, _legacy_freq
 from tests.ui.test_autonomic_controller import _session_app

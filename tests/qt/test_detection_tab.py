@@ -8,7 +8,7 @@ import pytest
 from ecg.core import analysis
 from ecg.core.detection import apply_threshold
 from ecg.qt.main_window import MainWindow
-from ecg.ui.tab_keys import TAB_ORDER
+from ecg.app.tab_keys import TAB_ORDER
 from tests.regression import golden
 
 ROOT = Path(__file__).resolve().parents[2]

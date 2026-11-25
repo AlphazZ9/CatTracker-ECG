@@ -153,7 +153,7 @@ def test_clear_edits_and_go_to(qtbot, analysed):
 
 
 def test_tab_states_follow_the_freshness(qtbot, analysed):
-    from ecg.ui.tab_keys import TAB_HRV, TAB_ORDER
+    from ecg.app.tab_keys import TAB_HRV, TAB_ORDER
     w = analysed
     w.refresh_tab_states()
     i = TAB_ORDER.index(TAB_HRV)

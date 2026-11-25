@@ -162,9 +162,9 @@ class MorphologyTab(QtWidgets.QScrollArea):
         """TabMorphologyMixin._refresh_morphology: the steps, the interval
         table (rebuilt only when the frame changes) and the stale line."""
         from ecg.qt import theme
-        from ecg.ui.freshness import COMPUTING, OUT_OF_DATE, UP_TO_DATE, stale_banner_text
-        from ecg.ui.tab_morphology import interval_lines, measured_headline, morphology_steps, \
-            step_tip
+        from ecg.app.freshness import COMPUTING, OUT_OF_DATE, UP_TO_DATE, stale_banner_text
+        from ecg.app.morphology_helpers import (interval_lines, measured_headline,
+                                                morphology_steps, step_tip)
         host = self.win.figures
         p = theme.current()
         r = self.win.recording.analysis.results or {}

@@ -6,7 +6,7 @@ Group: the animals of one experiment, from a group table (.xlsx,
 ecg.io.group_data), compared without groups, by group or by sex, on their
 Pre/Post segments, their time course aligned on an annotation, their whole
 recording or their event-locked results (ecg.io.group_compare); the figure
-(ecg.ui.group_tab_figure), the results table and the statistics workbook.
+(ecg.app.group_tab_figure), the results table and the statistics workbook.
 
 The analyses, the table's reading / writing and Add open recording are
 those of the Tk tab (ecg/ui/tab_group.py), with its defaults. Not yet
@@ -55,10 +55,10 @@ class GroupTab(QtWidgets.QScrollArea):
         lay = QtWidgets.QVBoxLayout(page)
         self.setWidget(page)
         # Add open recording is the Tk tab's (TabGroupMixin), on the window's host.
-        from ecg.ui.tab_group import TabGroupMixin
+        from ecg.app.group_helpers import group_lines_of_open_recording
         host = window.figures
         host._group_lines_of_open_recording = (
-            lambda comparison=None: TabGroupMixin._group_lines_of_open_recording(host, comparison))
+            lambda comparison=None: group_lines_of_open_recording(host, comparison))
         self.path = ""
         self.name = ""                  # a table from saved sessions: its project
         self.sheets: "Optional[dict]" = None
@@ -289,7 +289,7 @@ class GroupTab(QtWidgets.QScrollArea):
         """Tk _from_sessions: the group of every saved session of a project
         (TabGroupMixin's project_sheets), held in memory."""
         from ecg.io import db
-        from ecg.ui.tab_group import project_sheets
+        from ecg.app.group_helpers import project_sheets
         if project is None:
             names = db.project_names()
             if not names:
@@ -449,12 +449,12 @@ class GroupTab(QtWidgets.QScrollArea):
 
     def add_open(self) -> None:
         """Tk _add_open: the recording open written to the table (created if new)."""
-        from ecg.ui.tab_group import TabGroupMixin
+        from ecg.app.group_helpers import add_open_recording_to_group_table
         host = self.win.figures
         comparison = self.win.recording.analysis.last_comparison
         if self.sheets is not None and not self.path:
             try:
-                n, replaced, what = TabGroupMixin._add_open_recording_to_group_table(
+                n, replaced, what = add_open_recording_to_group_table(
                     host, "", comparison=comparison, sheets=self.sheets)
             except Exception as exc:
                 QtWidgets.QMessageBox.critical(self, "Group table", str(exc))
@@ -472,7 +472,7 @@ class GroupTab(QtWidgets.QScrollArea):
             if not path:
                 return
         try:
-            n, replaced, what = TabGroupMixin._add_open_recording_to_group_table(
+            n, replaced, what = add_open_recording_to_group_table(
                 host, path, comparison=comparison)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Group table", str(exc))
@@ -561,7 +561,7 @@ class GroupTab(QtWidgets.QScrollArea):
 
     def run(self) -> "Optional[gc.GroupResult]":
         """Tk _run."""
-        from ecg.ui.tab_group import _bin_size, _float
+        from ecg.app.group_helpers import _bin_size, _float
         sheets, an = self.sheets, self.animals
         if sheets is None or an is None:
             return None
@@ -689,7 +689,7 @@ class GroupTab(QtWidgets.QScrollArea):
         res = self.res
         if res is None:
             return
-        from ecg.ui.group_tab_figure import draw_group_tab_figure
+        from ecg.app.group_tab_figure import draw_group_tab_figure
         metric, lines = self._fig_metric(), self.chk_lines.isChecked()
         self.slot.update(lambda fig: draw_group_tab_figure(fig, res, metric=metric,
                                                            show_animals=lines))
@@ -699,7 +699,7 @@ class GroupTab(QtWidgets.QScrollArea):
         return os.path.splitext(os.path.basename(self.path or "group"))[0]
 
     def save_stats(self) -> None:
-        from ecg.ui.tab_group import _file_tag
+        from ecg.app.group_helpers import _file_tag
         res = self.res
         if res is None:
             return
@@ -719,9 +719,9 @@ class GroupTab(QtWidgets.QScrollArea):
 
     def save_figure(self) -> None:
         from matplotlib.figure import Figure
-        from ecg.ui.group_tab_figure import draw_group_tab_figure
-        from ecg.ui.tab_group import _file_tag
-        from ecg.ui.theme import light_plot_theme
+        from ecg.app.group_tab_figure import draw_group_tab_figure
+        from ecg.app.group_helpers import _file_tag
+        from ecg.app.theme import light_plot_theme
         res = self.res
         if res is None:
             return
@@ -753,7 +753,7 @@ class GroupTab(QtWidgets.QScrollArea):
 
     def prism_new(self, path: "Optional[str]" = None) -> None:
         from ecg.io.prism_template import write_metric_pzfx
-        from ecg.ui.tab_group import _file_tag
+        from ecg.app.group_helpers import _file_tag
         res = self.res
         if res is None:
             return

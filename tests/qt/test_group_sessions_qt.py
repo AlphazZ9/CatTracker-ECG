@@ -8,7 +8,7 @@ from ecg.io import group_compare as gc
 from ecg.io import group_data as gd
 from ecg.io import prism_template as pt
 from ecg.qt.main_window import MainWindow
-from ecg.ui import tab_group as tg
+from ecg.app import group_helpers as tg
 
 
 def _saved(tmp_path, name, subject, sex, project, analysed=True):

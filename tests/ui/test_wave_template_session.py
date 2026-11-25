@@ -22,16 +22,15 @@ from ecg.core import wave_template
 from ecg.core.wave_template import WaveTemplate
 from ecg.io.session import _SessionEncoder, _session_decode_hook
 from ecg.services import session_service  # where restore reloads the signal
-from ecg.ui import wave_editor as we_module
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.session_controller import (
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.session_controller import (
     SessionController, template_info_text, wave_template_from_session,
 )
-from ecg.ui.state import AnalysisState, DetectionState, SignalState
-from ecg.ui.wave_editor import WaveTemplateMiniEditor
+from ecg.app.state import AnalysisState, DetectionState, SignalState
 
 from tests.core.test_wave_template_provenance import _REC_A, _REC_B, _train
 from tests.ui.test_autonomic_controller import _session_app
+from ecg.app.wave_landmarks import WaveLandmarks as WaveTemplateMiniEditor
 
 FS = 2000.0
 
@@ -175,43 +174,10 @@ def _editor(template):
     return ed
 
 
-def test_apply_changes_the_recording_only(_profile, monkeypatch):
-    monkeypatch.setattr(we_module.messagebox, "showinfo", lambda *a, **k: None)
-    wt = WaveTemplate()
-    ed = _editor(wt)
-    ed._lm["T_peak"][0] = 60.0
-    ed._mark_edited()
-    ed._apply()
-    assert wt.landmarks["T_peak"][0] == 60.0 and wt.confirmed and ed._saved
-    assert wt.provenance() == "edited on this recording (based on: built-in mouse defaults)"
-    assert ed._parent_app._wave_template is wt
-    assert not _profile.exists()
 
 
-def test_save_as_default_is_the_explicit_write(_profile, monkeypatch):
-    monkeypatch.setattr(we_module.messagebox, "showinfo", lambda *a, **k: None)
-    monkeypatch.setattr(we_module.messagebox, "askyesno", lambda *a, **k: False)
-    wt = WaveTemplate()
-    ed = _editor(wt)
-    ed._set_provenance("auto-calibrated")
-    ed._save_default()                         # declined: nothing happens
-    assert not _profile.exists() and wt.source == "default"
-    monkeypatch.setattr(we_module.messagebox, "askyesno", lambda *a, **k: True)
-    ed._save_default()
-    assert _profile.exists() and wt.source == "auto-calibrated"
-    assert WaveTemplate.load_default().origin == (
-        "originally auto-calibrated on the mean beat of another recording")
 
 
-def test_a_hand_edit_keeps_its_first_origin():
-    wt = WaveTemplate()
-    wt.source, wt.origin = "file", "lab.json"
-    ed = _editor(wt)
-    ed._mark_edited()
-    ed._mark_edited()
-    assert ed._pending_template().provenance() == "edited on this recording (based on: loaded from lab.json)"
-    ed._reset_defaults()
-    assert ed._pending_template().provenance() == "built-in mouse defaults"
 
 
 # ── saved default not used: reported once ─────────────────────────────────
@@ -223,7 +189,7 @@ _NARROWED = {"landmarks": {"P_peak": [-7.5, 2.0], "Q_peak": [-5.1, 2.0],
 
 
 def test_an_unused_saved_default_is_reported_once(_profile, monkeypatch):
-    from ecg.ui import analysis_controller as ac_module
+    from ecg.app import analysis_controller as ac_module
     shown = []
     monkeypatch.setattr(ac_module.messagebox, "showwarning",
                         lambda title, msg, **k: shown.append(msg))
@@ -238,26 +204,8 @@ def test_an_unused_saved_default_is_reported_once(_profile, monkeypatch):
     assert len(shown) == 1                       # once per app session
 
 
-def test_save_as_default_refuses_implausible_windows(_profile, monkeypatch):
-    warned = []
-    monkeypatch.setattr(we_module.messagebox, "showwarning",
-                        lambda *a, **k: warned.append(a))
-    monkeypatch.setattr(we_module.messagebox, "askyesno", lambda *a, **k: True)
-    ed = _editor(WaveTemplate())
-    ed._lm["P_peak"] = [-7.5, 2.0]               # on the Q wave
-    ed._save_default()
-    assert warned and not _profile.exists()
 
 
-def test_save_as_default_records_the_recording(_profile, monkeypatch):
-    monkeypatch.setattr(we_module.messagebox, "showinfo", lambda *a, **k: None)
-    monkeypatch.setattr(we_module.messagebox, "askyesno", lambda *a, **k: True)
-    ed = _editor(WaveTemplate())
-    ed._parent_app._filepath = "C:/data/mouse_A.mat"
-    ed._set_provenance("auto-calibrated")
-    ed._save_default()
-    assert WaveTemplate.load_default().provenance().endswith(
-        "originally auto-calibrated on the mean beat of mouse_A.mat")
 
 
 # ── Beat Template label across recordings ─────────────────────────────────
@@ -285,7 +233,7 @@ def test_template_label_does_not_keep_the_previous_recording(_profile):
 
 def _signal_app():
     from unittest.mock import MagicMock
-    from ecg.ui.state import SessionState, UIState
+    from ecg.app.state import SessionState, UIState
     app = MagicMock()
     app.analysis, app.detection = AnalysisState(), DetectionState()
     app.signal, app.ui, app.session = SignalState(fs=FS), UIState(), SessionState()
@@ -307,21 +255,21 @@ def _bundle():
 
 
 def test_reset_for_new_file_drops_the_template():
-    from ecg.ui.signal_controller import SignalController
+    from ecg.app.signal_controller import SignalController
     app, _ = _signal_app()
     SignalController(app).reset_for_new_file()
     assert app.analysis.wave_template is None
 
 
 def test_raw_load_drops_the_template():
-    from ecg.ui.signal_controller import SignalController
+    from ecg.app.signal_controller import SignalController
     app, _ = _signal_app()
     SignalController(app).on_raw_load_done(_bundle())
     assert app.analysis.wave_template is None
 
 
 def test_re_detection_keeps_the_recordings_template():
-    from ecg.ui.signal_controller import SignalController
+    from ecg.app.signal_controller import SignalController
     app, wt = _signal_app()
     SignalController(app).on_preview_done(_bundle())
     assert app.analysis.wave_template is wt and wt.source == "auto-calibrated"
@@ -337,7 +285,7 @@ def _ch_bundle(ch):
 def test_another_channel_drops_the_template():
     """A channel can be another animal: re-detecting on a different channel
     must not delineate it with windows fitted on the previous channel."""
-    from ecg.ui.signal_controller import SignalController
+    from ecg.app.signal_controller import SignalController
     app, wt = _signal_app()
     ctrl = SignalController(app)
     app.signal.channel = "ECG1"
@@ -355,7 +303,7 @@ def test_another_channel_drops_the_template():
 def test_auto_detected_channel_change_drops_the_template():
     """Requested channel not found: the one load_mat_signal falls back to
     is what counts."""
-    from ecg.ui.signal_controller import SignalController
+    from ecg.app.signal_controller import SignalController
     app, _ = _signal_app()
     app.signal.channel = "ECG1"
     b = _bundle()
@@ -365,7 +313,7 @@ def test_auto_detected_channel_change_drops_the_template():
 
 
 def test_raw_load_and_new_file_record_the_channel():
-    from ecg.ui.signal_controller import SignalController
+    from ecg.app.signal_controller import SignalController
     app, _ = _signal_app()
     ctrl = SignalController(app)
     ctrl.on_raw_load_done(_ch_bundle("ECG3"))
@@ -383,7 +331,7 @@ def test_session_restore_records_the_channel(monkeypatch):
 # ── pending-template label: no repeated warning ───────────────────────────
 
 def test_pending_label_does_not_log_the_rejection(_profile, caplog):
-    from ecg.ui.session_controller import pending_template_info_text
+    from ecg.app.session_controller import pending_template_info_text
     _profile.write_text(json.dumps(_NARROWED), encoding="utf-8")
     with caplog.at_level("WARNING"):
         for _ in range(3):

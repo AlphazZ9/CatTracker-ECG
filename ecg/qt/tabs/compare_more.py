@@ -12,7 +12,7 @@ tab (ecg/ui/compare_segments.py):
   (ecg.io.prism_template), the figures (tachograms and Poincaré, 300 dpi
   PNG or PDF / SVG) and Add to group table;
 * the GROUP card: the group Poincaré of one pair A -> B of the group table
-  the Group tab uses (ecg.ui.group_figure), and its figure;
+  the Group tab uses (ecg.app.group_figure), and its figure;
 * the setup (rows, block, reference, view, jitter, stim, the windows of
   the comparison shown) saved in and restored from sessions.
 
@@ -378,8 +378,8 @@ class CompareMoreMixin:
         '<name>_poincare', 300 dpi."""
         import matplotlib.pyplot as plt
         from matplotlib.figure import Figure
-        from ecg.ui.compare_segments import draw_rr_tachograms, segment_color, tachogram_groups
-        from ecg.ui.poincare_figure import draw_poincare_set
+        from ecg.app.compare_helpers import draw_rr_tachograms, segment_color, tachogram_groups
+        from ecg.app.poincare_figure import draw_poincare_set
         from ecg.qt.tabs.compare_tab import segment_names
         res = self._result()
         if res is None:
@@ -430,7 +430,7 @@ class CompareMoreMixin:
         """The recording open (this comparison's segments with its whole
         recording, time course and events) into a group table (created if
         new): Tk _add_to_group with TabGroupMixin._add_open_recording_to_group_table."""
-        from ecg.ui.tab_group import TabGroupMixin
+        from ecg.app.group_helpers import add_open_recording_to_group_table
         res = self._result()
         if res is None:
             return
@@ -442,7 +442,7 @@ class CompareMoreMixin:
         if not path:
             return
         try:
-            _n, replaced, what = TabGroupMixin._add_open_recording_to_group_table(
+            _n, replaced, what = add_open_recording_to_group_table(
                 self.win.figures, path, comparison=res)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Group table", str(exc))
@@ -590,8 +590,8 @@ class CompareMoreMixin:
         the pair, the animals used; drawn again only when one changed."""
         from ecg.io import group_compare as gc
         from ecg.io import group_data as gd
-        from ecg.ui.compare_segments import group_poincare_data, segment_choices, segment_color
-        from ecg.ui.group_figure import draw_group_figure
+        from ecg.app.compare_helpers import group_poincare_data, segment_choices, segment_color
+        from ecg.app.group_figure import draw_group_figure
         if force:
             self._group_cache = None
         path = self.group_path()
@@ -675,8 +675,8 @@ class CompareMoreMixin:
     def save_group_figure(self, out: "Optional[str]" = None) -> None:
         import matplotlib.pyplot as plt
         from matplotlib.figure import Figure
-        from ecg.ui.group_figure import draw_group_figure
-        from ecg.ui.theme import light_plot_theme
+        from ecg.app.group_figure import draw_group_figure
+        from ecg.app.theme import light_plot_theme
         if self.group_shown is None:
             return
         rows, a, b, names, table, colors = self.group_shown
@@ -704,7 +704,7 @@ class CompareMoreMixin:
         """CompareSegmentsMixin._compare_setup_snapshot: the rows as typed,
         the block, the reference, the view, the jitter, the stim and the
         windows of the comparison shown. None without a recording."""
-        from ecg.ui.compare_segments import normalize_compare_setup
+        from ecg.app.compare_helpers import normalize_compare_setup
         if self.win.recording.signal.filtered is None or self.rows.rowCount() == 0:
             return None
 
@@ -729,7 +729,7 @@ class CompareMoreMixin:
     def restore_setup(self, raw: Any) -> None:
         """CompareSegmentsMixin._restore_compare_setup: the setup into the
         tab, its comparison re-run on the restored peaks."""
-        from ecg.ui.compare_segments import normalize_compare_setup
+        from ecg.app.compare_helpers import normalize_compare_setup
         setup = normalize_compare_setup(raw)
         if setup is None:
             return

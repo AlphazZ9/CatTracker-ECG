@@ -40,7 +40,7 @@ def test_measure_intervals_gives_the_reference_intervals(qtbot):
     for name in ("beat", "intervals"):
         assert w.figures.slot(name).figure.axes, name
     # the steps and the interval table (the Tk tab's)
-    from ecg.ui.tab_morphology import interval_lines, measured_headline
+    from ecg.app.morphology_helpers import interval_lines, measured_headline
     m = w.morphology
     m.refresh_banner()
     assert m.lbl_measured.text() == measured_headline(ivl)[0]
