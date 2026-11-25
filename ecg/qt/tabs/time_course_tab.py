@@ -144,6 +144,8 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         box = TextBox()
         box.setPlaceholderText(TABLE_PLACEHOLDER)
         lay.addWidget(box, 2)
+        from ecg.qt.figure_host import data_table
+        lay.addWidget(data_table(box), 2)
         return box
 
     def _epochs_page(self, host) -> QtWidgets.QWidget:

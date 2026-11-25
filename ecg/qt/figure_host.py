@@ -474,6 +474,11 @@ class FigureHost:
         if isinstance(widget, TextBox):
             widget.setPlainText(text)
             widget.tsv = tsv
+            table = getattr(widget, "table", None)
+            if table is not None:
+                fill_table(table, tsv)
+                widget.setVisible(not tsv)
+                table.setVisible(bool(tsv))
 
     def _windowed_peaks(self):
         d, s, a = self.detection, self.signal, self.analysis
@@ -526,6 +531,68 @@ class FigureHost:
         if name.startswith("__"):
             raise AttributeError(name)
         return _NULL
+
+
+def pretty_column(name: str) -> str:
+    """A table column's name for the eye: 'Epoch_start_s' -> 'Epoch start (s)',
+    'N_beats' -> 'Beats', 'HR_mean' -> 'HR mean' (the exports keep theirs)."""
+    import re
+    n = str(name)
+    unit = ""
+    for suffix, u in (("_s", "s"), ("_ms", "ms"), ("_bpm", "bpm"), ("_pct", "%")):
+        if n.endswith(suffix):
+            n, unit = n[: -len(suffix)], u
+            break
+    if n.startswith("N_"):
+        n = n[2:]
+    n = re.sub(r"^HRV_", "", n).replace("_", " ")
+    n = n[:1].upper() + n[1:]
+    return f"{n} ({unit})" if unit else n
+
+
+def fill_table(table: QtWidgets.QTableWidget, tsv: "Optional[str]") -> None:
+    """A table from tab-separated text (header line first): sortable, numbers
+    right-aligned; 'Copy' gives the TSV back."""
+    rows = [r.split("\t") for r in (tsv or "").splitlines() if r.strip()]
+    table.setSortingEnabled(False)
+    if not rows:
+        table.setRowCount(0)
+        table.setColumnCount(0)
+        return
+    head, body = rows[0], rows[1:]
+    table.setColumnCount(len(head))
+    table.setHorizontalHeaderLabels([pretty_column(h) for h in head])
+    table.setRowCount(len(body))
+    for r, row in enumerate(body):
+        for c, text in enumerate(row[:len(head)]):
+            item = QtWidgets.QTableWidgetItem(text)
+            try:
+                item.setData(QtCore.Qt.ItemDataRole.DisplayRole, float(text))
+                item.setText(text)
+                item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight
+                                      | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            except ValueError:
+                pass
+            table.setItem(r, c, item)
+    table.resizeColumnsToContents()
+    table.setSortingEnabled(True)
+
+
+def data_table(box: "TextBox") -> QtWidgets.QTableWidget:
+    """A table twin of the text box *box*: shown instead of it when what
+    fills it comes with a table (FigureHost._set_textbox)."""
+    table = QtWidgets.QTableWidget(0, 0)
+    table.verticalHeader().setVisible(False)
+    table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.setVisible(False)
+    table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.ActionsContextMenu)
+    act = QtGui.QAction("Copy as table (paste into Excel)", table)
+    act.triggered.connect(lambda: QtWidgets.QApplication.clipboard().setText(box.tsv or ""))
+    table.addAction(act)
+    box.table = table
+    return table
 
 
 def _safe_float(widget: Any, default: float) -> float:

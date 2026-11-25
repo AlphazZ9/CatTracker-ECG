@@ -44,7 +44,7 @@ def test_a_figure_of_a_hidden_tab_is_drawn_when_read(window):
 
 def test_a_figure_is_drawn_when_its_tab_is_shown(window, qtbot):
     calls = []
-    slot = window.figures.slot("rr")
+    slot = window.figures.slot("asymmetry")            # on Rhythm & HRV
     slot.update(lambda fig: calls.append(fig.add_subplot()))
     window.tabs.setCurrentWidget(window.rhythm)
     qtbot.waitUntil(lambda: len(calls) == 1, timeout=5000)
@@ -52,7 +52,7 @@ def test_a_figure_is_drawn_when_its_tab_is_shown(window, qtbot):
 
 def test_the_dark_theme_reaches_the_figures(window, qtbot):
     window.tabs.setCurrentWidget(window.rhythm)
-    shown, hidden = window.figures.slot("rr"), window.figures.slot("beat")
+    shown, hidden = window.figures.slot("asymmetry"), window.figures.slot("beat")
     for slot in (shown, hidden):
         slot.update(lambda fig: fig.add_subplot())
     window.toggle_theme()
@@ -93,3 +93,42 @@ def test_detecting_again_asks_before_dropping_hand_edits(window, qtbot, monkeypa
 def test_detect_peaks_is_ctrl_d_not_space(window):
     keys = {s.key().toString() for s in window.findChildren(QtGui.QShortcut)}
     assert "Ctrl+D" in keys and "Space" not in keys
+
+
+def test_rhythm_charts_and_report_export_in_one_folder(window, qtbot, tmp_path, monkeypatch):
+    """The Rhythm charts follow Analyze; Export N files asks for one folder."""
+    from ecg.app import dialogs
+    _detect(qtbot, window)
+    window.analyze()
+    qtbot.waitUntil(lambda: window.statusBar().currentMessage() == "Analysis done",
+                    timeout=120000)
+    charts = window.rhythm.charts
+    x, y = charts.t_line.getData()
+    assert x is not None and len(x) > 100
+    assert charts.poincare.getPlotItem().listDataItems()
+    rep = window.report
+    window.tabs.setCurrentWidget(rep)
+    for m, t in rep.tiles.items():
+        t.setChecked(m in ("export_excel", "export_rr_csv"))
+    assert rep.btn_export.text() == "Export 2 files"
+
+    class Folder:
+        def askdirectory(self, **_k):
+            return str(tmp_path)
+
+        def __getattr__(self, name):
+            return getattr(dialogs._Headless(), name)
+    monkeypatch.setattr(dialogs.filedialog, "backend", Folder())
+    rep.export_selected()
+    window.jobs.wait(60000)
+    qtbot.wait(300)
+    names = sorted(p.suffix for p in tmp_path.iterdir() if p.is_file())
+    assert ".xlsx" in names and ".csv" in names
+
+
+def test_command_search_finds_pages_and_runs_them(window):
+    window.open_palette()
+    window._palette.edit.setText("go morphology")
+    assert window._palette.list.count() == 1
+    window._palette._run_current()
+    assert window.tabs.currentWidget() is window.morphology

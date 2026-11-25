@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from ecg.core.analysis import (ENSEMBLE_BEATS_DEFAULT, analyse_intervals,
                                normalize_ensemble_beats, recompute_qtc_column)
@@ -108,7 +108,8 @@ class MorphologyTab(QtWidgets.QScrollArea):
         self.tbl_ivl.verticalHeader().setVisible(False)
         self.tbl_ivl.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tbl_ivl.horizontalHeader().setStretchLastSection(True)
-        self.tbl_ivl.setMaximumHeight(170)
+        self.tbl_ivl.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.tbl_ivl.setShowGrid(False)
         lay.addWidget(self.tbl_ivl)
         self._ivl_shown: object = False
 
@@ -202,6 +203,9 @@ class MorphologyTab(QtWidgets.QScrollArea):
                                        line.measured)):
                     self.tbl_ivl.setItem(i, c, QtWidgets.QTableWidgetItem(v))
             self.tbl_ivl.resizeColumnsToContents()
+            h = self.tbl_ivl.horizontalHeader().height() + 4 + sum(       # every line shown
+                self.tbl_ivl.rowHeight(r) for r in range(self.tbl_ivl.rowCount()))
+            self.tbl_ivl.setFixedHeight(max(h, 60))
         self.banner.set_text(stale_banner_text(
             "Intervals", host.freshness.status("intervals"),
             host.ui.module_computed_at.get("intervals"), host.ui.peaks_edited_at,
