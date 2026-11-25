@@ -150,3 +150,16 @@ def test_clear_edits_and_go_to(qtbot, analysed):
     det.go_to(1e6)                                     # kept inside the recording
     _t0, t1 = det.plot.window()
     assert t1 <= float(w.recording.signal.time[-1]) + 1e-6
+
+
+def test_tab_states_follow_the_freshness(qtbot, analysed):
+    from ecg.ui.tab_keys import TAB_HRV, TAB_ORDER
+    w = analysed
+    w.refresh_tab_states()
+    i = TAB_ORDER.index(TAB_HRV)
+    assert w.tabs.tabToolTip(i).startswith(f"{TAB_HRV}: up to date")
+    det, d = w.detection, w.recording.detection
+    det.btn_edit.setChecked(True)
+    det._clicked(float(d.rpeaks_ok[30] / w.recording.signal.fs), "left")
+    w.refresh_tab_states()
+    assert not w.tabs.tabToolTip(i).startswith(f"{TAB_HRV}: up to date")

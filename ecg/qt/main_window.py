@@ -144,6 +144,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_menu()
         # The out-of-date banners follow the state on a tick, as Tk's shell
         # tick: only the tab shown is looked at (cheap: freshness.status).
+        self._tab_state_shown: "dict[str, tuple]" = {}
         self._banner_timer = QtCore.QTimer(self, interval=1000)
         self._banner_timer.timeout.connect(self.refresh_banners)
         self._banner_timer.start()
@@ -512,7 +513,50 @@ class MainWindow(QtWidgets.QMainWindow):
                            ("Metrics", lambda: pc.plot_table_views(r))],
                           on_complete=self._nonlin_then)
 
+    def refresh_tab_states(self) -> None:
+        """ECGApp._refresh_tab_states: each tab's state (up to date, out of
+        date, not computed) as a coloured dot on its head, why in its tooltip."""
+        from ecg.ui.context_strip import tab_states
+        from ecg.ui.freshness import NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE
+        from ecg.ui.tab_keys import TAB_MODULES
+        fresh = self.figures.freshness
+        statuses = {m: fresh.status(m) for m in fresh.states()}
+        rp = self.recording.detection.rpeaks_ok
+        per_tab = tab_states({m: s.state for m, s in statuses.items()},
+                             rp is not None and len(rp) > 0)
+        p = theme.current()
+        colors = {UP_TO_DATE: p.GREEN, OUT_OF_DATE: p.ORANGE, NOT_COMPUTED: p.LIGHT}
+        names = [self.tabs.tabText(i).replace("&&", "&") for i in range(self.tabs.count())]
+        for tab, state in per_tab.items():
+            if tab not in names:
+                continue
+            reasons: "list[str]" = []
+            for m in TAB_MODULES.get(tab, ()):
+                reasons += [f"{m.replace('_', ' ')}: {why}" for why in statuses[m].reasons]
+                if state == UP_TO_DATE and statuses[m].state == NOT_COMPUTED:
+                    reasons.append(f"{m.replace('_', ' ')}: not computed")
+            i = names.index(tab)
+            key = (state, tuple(reasons))
+            if self._tab_state_shown.get(tab) == key:
+                continue
+            self._tab_state_shown[tab] = key
+            pix = QtGui.QPixmap(10, 10)
+            pix.fill(QtCore.Qt.GlobalColor.transparent)
+            painter = QtGui.QPainter(pix)
+            painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            painter.setBrush(QtGui.QColor(colors.get(state, p.LIGHT)))
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.drawEllipse(1, 1, 8, 8)
+            painter.end()
+            self.tabs.setTabIcon(i, QtGui.QIcon(pix))
+            self.tabs.setTabToolTip(i, f"{tab}: {state}" + ("\n" + "\n".join(reasons)
+                                                            if reasons else ""))
+
     def refresh_banners(self) -> None:
+        try:
+            self.refresh_tab_states()
+        except Exception as exc:
+            log.debug("tab states refresh failed: %s", exc, exc_info=True)
         w = self.tabs.currentWidget()
         refresh = getattr(w, "refresh_banner", None)
         if callable(refresh):
@@ -701,6 +745,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sync_figure_theme(p.is_dark)
         self.detection.apply_palette(p)
         self.redraw_results()
+        self._tab_state_shown.clear()          # the dots in the new colours
         theme.save_prefs()
 
     def choose_text_size(self) -> None:
