@@ -37,6 +37,7 @@ THRESH_MIN, THRESH_MAX, THRESH_DEFAULT = 0.01, 2.0, 0.50   # Tk slider range and
 THRESH_DEBOUNCE_MS = 150
 BREAK_REDETECT_TOL_MS = 5.0     # AnalysisController.BREAK_REDETECT_TOL_MS
 WINDOW_PRESETS_S = (1.0, 2.0, 5.0, 10.0)   # the view's lengths offered as one click
+NARROW_PX = 1000                            # below this page width, a more compact bar
 
 
 class DetectionTab(QtWidgets.QWidget):
@@ -72,8 +73,12 @@ class DetectionTab(QtWidgets.QWidget):
         row = QtWidgets.QHBoxLayout(bar)
         row.setContentsMargins(14, 8, 14, 8)
         row.setSpacing(8)
-        row.addWidget(QtWidgets.QLabel("Method"))
+        self.lbl_method = QtWidgets.QLabel("Method")
+        row.addWidget(self.lbl_method)
         self.cb_method = QtWidgets.QComboBox()
+        self.cb_method.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cb_method.setMinimumContentsLength(14)
         for label, key in METHODS:
             self.cb_method.addItem(label, key)
         self.cb_method.setCurrentIndex([k for _l, k in METHODS].index(DEFAULT_METHOD))
@@ -345,6 +350,15 @@ class DetectionTab(QtWidgets.QWidget):
         self._thr_timer.timeout.connect(self.apply_threshold)
         self.sl_thr.valueChanged.connect(lambda v: self._set_threshold(v / 100.0, from_slider=True))
         self.sp_thr.valueChanged.connect(lambda v: self._set_threshold(v, from_slider=False))
+
+    def resizeEvent(self, ev) -> None:
+        """A narrow window: the bar drops its two quiet labels and shortens
+        the slider rather than cutting its buttons."""
+        super().resizeEvent(ev)
+        narrow = ev.size().width() < NARROW_PX
+        self.lbl_thr.setVisible(not narrow)
+        self.lbl_method.setVisible(not narrow)
+        self.sl_thr.setMinimumWidth(70 if narrow else 140)
 
     # ── parameters ──────────────────────────────────────────
     def threshold(self) -> float:
