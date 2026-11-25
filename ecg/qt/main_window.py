@@ -41,7 +41,7 @@ from ecg.app.tab_keys import (TAB_COMPARE, TAB_DETECTION, TAB_GROUP, TAB_EVENTS,
 
 FILE_FILTER = "Recordings (*.mat *.smr);;All files (*)"
 SHORTCUTS_TEXT = (
-    "Space          Detect Peaks\n"
+    "Ctrl+D         Detect Peaks\n"
     "Ctrl+R         Analyze\n"
     "Ctrl+O         Open a recording\n"
     "Ctrl+S         Save session\n"
@@ -152,7 +152,9 @@ class MainWindow(QtWidgets.QMainWindow):
         QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self, activated=self.detection.undo)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Y"), self, activated=self.detection.redo)
         # The Tk interface's shortcuts (Help > Keyboard shortcuts).
-        for key, fn in (("Space", self._shortcut_detect), ("Ctrl+R", self._shortcut_analyze),
+        # Detect Peaks is Ctrl+D, not Space: a stray Space press re-detected
+        # and replaced the peaks edited by hand.
+        for key, fn in (("Ctrl+D", self._shortcut_detect), ("Ctrl+R", self._shortcut_analyze),
                         ("Ctrl+E", lambda: self.figures.export_ctrl.export_excel()),
                         ("Ctrl+Shift+E", lambda: self.figures.export_ctrl.export_rr_csv()),
                         ("Ctrl+M", lambda: self.tabs.setCurrentWidget(self.compare)),

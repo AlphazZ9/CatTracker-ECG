@@ -256,11 +256,33 @@ class DetectionTab(QtWidgets.QWidget):
 
     def detect(self) -> None:
         path = self.win.recording.signal.filepath
-        if not path:
+        if not path or not self.confirm_redetect():
             return
         self.btn_detect.setEnabled(False)
         self.win.run_job("Detect Peaks", load_and_detect, path, self.params(),
                          on_done=self._detected, on_end=lambda: self.btn_detect.setEnabled(True))
+
+    def confirm_redetect(self) -> bool:
+        """A new detection starts from the detector's peaks: the peaks
+        excluded and added by hand, and the Undo history, are dropped. Asked
+        first when there are any (True: go on)."""
+        d = self.win.recording.detection
+        n_excl, n_add = len(d.manual_excluded), len(d.manual_added)
+        if not (n_excl or n_add):
+            return True
+        parts = [f"{n} {what}" for n, what in ((n_excl, "excluded"), (n_add, "added"))
+                 if n]
+        B = QtWidgets.QMessageBox.StandardButton
+        box = QtWidgets.QMessageBox(
+            QtWidgets.QMessageBox.Icon.Question, "Detect the peaks again",
+            f"Detecting again replaces the peaks edited by hand ({' and '.join(parts)}) "
+            "with the detector's, and clears Undo.", B.Cancel, self)
+        box.addButton("Detect again", QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(B.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        return clicked is not None and box.buttonRole(clicked) == \
+            QtWidgets.QMessageBox.ButtonRole.DestructiveRole
 
     def _detected(self, bundle: dict) -> None:
         """SignalController.on_preview_done's state writes, on the main thread."""
