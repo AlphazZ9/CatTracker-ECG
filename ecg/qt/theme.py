@@ -206,6 +206,14 @@ def style_sheet(p: Palette, scale: float = 1.0) -> str:
         border: none; }}
     QPushButton[flat="true"]:hover, QToolButton[flat="true"]:hover {{
         background: {p.HAIRLINE}; }}
+    QPushButton[link="true"] {{ background: transparent; border: none; color: {p.ACCENT_TEXT};
+        font-weight: 600; padding: 4px 6px; }}
+    QPushButton[link="true"]:hover {{ text-decoration: underline; }}
+    QPushButton[link="true"]:disabled {{ color: {p.LIGHT}; }}
+    QPushButton[tile="true"] {{ text-align: left; padding: 12px 14px; border-radius: 12px;
+        border: 1px solid {p.BORDER}; background: {p.CARD}; }}
+    QPushButton[tile="true"]:checked {{ border: 2px solid {p.ACCENT}; background: {p.ACCENT_SOFT};
+        color: {p.TEXT}; }}
     QPushButton[chip="true"] {{ background: {p.SIDEBAR}; border: none; }}
     QPushButton[chip="true"]:hover {{ background: {p.BORDER}; }}
     QToolButton::menu-indicator {{ image: url("{down}"); width: 9px; height: 9px;

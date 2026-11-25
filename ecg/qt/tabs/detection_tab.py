@@ -65,13 +65,30 @@ class DetectionTab(QtWidgets.QWidget):
         self.seg_window.setToolTip("Length of the view")
         for b, w in zip(self.seg_window.buttons, WINDOW_PRESETS_S):
             b.clicked.connect(lambda _c=False, w=w: self.set_view_width(w))
+        self.seg_trace = Segmented(["Filtered", "Raw"])
+        self.seg_trace.setToolTip("The trace shown: the filtered signal the peaks were found "
+                                  "on, or the raw one (display only)")
+        self.seg_trace.buttons[0].setChecked(True)
+        for b in self.seg_trace.buttons:
+            b.clicked.connect(lambda _c=False: self._show_trace())
+        top.addWidget(self.seg_trace, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         top.addWidget(self.seg_window, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
+        # The detection settings in a sheet under their button: the trace
+        # keeps the page's width. Detect peaks is also the header's button.
+        self.btn_detection = QtWidgets.QToolButton()
+        self.btn_detection.setText("Detection…")
+        self.btn_detection.setToolTip("Method, filtering and threshold of the R-peak detection")
+        self.btn_detection.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        det_menu = QtWidgets.QMenu(self.btn_detection)
+        self.btn_detection.setMenu(det_menu)
+        top.addWidget(self.btn_detection, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         lay.addLayout(top)
 
         # ── detection: method, filtering, threshold, Detect peaks ──
-        bar = QtWidgets.QFrame(objectName="Card")
+        bar = QtWidgets.QFrame()
+        bar.setMinimumWidth(640)
         row = QtWidgets.QHBoxLayout(bar)
-        row.setContentsMargins(14, 8, 14, 8)
+        row.setContentsMargins(14, 10, 14, 10)
         row.setSpacing(8)
         self.lbl_method = QtWidgets.QLabel("Method")
         row.addWidget(self.lbl_method)
@@ -118,7 +135,9 @@ class DetectionTab(QtWidgets.QWidget):
                                       "circle the accepted beats none of them found")
         self.btn_agreement.clicked.connect(self.check_agreement)
         row.addWidget(self.btn_agreement)
-        lay.addWidget(bar)
+        wa = QtWidgets.QWidgetAction(det_menu)
+        wa.setDefaultWidget(bar)
+        det_menu.addAction(wa)
         # Read in the summary line and the status row rather than on the bar.
         self.lbl_peaks = QtWidgets.QLabel("Peaks: —")
         self.lbl_quality = QtWidgets.QLabel("Quality: —")
@@ -137,6 +156,22 @@ class DetectionTab(QtWidgets.QWidget):
         self.lbl_view = QtWidgets.QLabel("")
         self.lbl_view.setProperty("muted", True)
         tools.addWidget(self.lbl_view)
+        tools.addSpacing(10)
+        self.legend = QtWidgets.QHBoxLayout()
+        self.legend.setSpacing(12)
+        self._legend_icons = []
+        for kind, text in (("peak", "R peak"), ("excluded", "Excluded"), ("check", "To check"),
+                           ("noise", "Noisy")):
+            item = QtWidgets.QHBoxLayout()
+            item.setSpacing(5)
+            icon = QtWidgets.QLabel()
+            self._legend_icons.append((kind, icon))
+            item.addWidget(icon)
+            lbl = QtWidgets.QLabel(text)
+            lbl.setProperty("muted", True)
+            item.addWidget(lbl)
+            self.legend.addLayout(item)
+        tools.addLayout(self.legend)
         tools.addStretch(1)
         # Move / Edit peaks / Mark noise: one mode at a time.
         self.seg_tools = Segmented([], exclusive=False)
@@ -283,9 +318,15 @@ class DetectionTab(QtWidgets.QWidget):
         # ── status: beats to check, the analysis window ──
         status = QtWidgets.QHBoxLayout()
         status.setSpacing(8)
-        lbl = QtWidgets.QLabel("Beats to check")
-        lbl.setProperty("muted", True)
-        status.addWidget(lbl)
+        self.lbl_quality.setProperty("muted", True)
+        status.addWidget(self.lbl_quality)
+        status.addSpacing(14)
+        self.lbl_agreement.setProperty("muted", True)
+        status.addWidget(self.lbl_agreement)
+        status.addSpacing(14)
+        self.lbl_to_check = QtWidgets.QLabel("Beats to check")
+        self.lbl_to_check.setProperty("muted", True)
+        status.addWidget(self.lbl_to_check)
         for text, step, tip in (("‹", -1, "The previous beat flagged on the tachogram, centred"),
                                 ("›", +1, "The next beat flagged on the tachogram, centred")):
             b = QtWidgets.QPushButton(text)
@@ -293,8 +334,13 @@ class DetectionTab(QtWidgets.QWidget):
             b.setFixedWidth(34)
             b.clicked.connect(lambda _c=False, d=step: self.step_spike(d))
             status.addWidget(b)
-        status.addSpacing(12)
-        status.addWidget(self.lbl_agreement)
+        status.addSpacing(14)
+        self.btn_review_link = QtWidgets.QPushButton("Review artifacts")
+        self.btn_review_link.setProperty("link", True)
+        self.btn_review_link.setToolTip(self.btn_review.toolTip())
+        self.btn_review_link.clicked.connect(self.btn_review.click)
+        self.btn_review_link.setEnabled(False)
+        status.addWidget(self.btn_review_link)
         status.addStretch(1)
         lbl = QtWidgets.QLabel("Analysis window:")
         lbl.setProperty("muted", True)
@@ -341,6 +387,8 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_strip.setChecked(on)
         self.plot.set_strip_visible(on)
         self.btn_strip.toggled.connect(self._strip_toggled)
+        from ecg.qt import theme as _theme
+        self._paint_legend(_theme.current())
         # The beat quality is real per-beat work: recomputed 250 ms after the
         # last peak change (PlotController._ensure_beat_corr_cache).
         self._corr_timer = QtCore.QTimer(self, singleShot=True, interval=250)
@@ -402,7 +450,10 @@ class DetectionTab(QtWidgets.QWidget):
         self._update_undo_buttons()
         self.plot.clear()
         self.lbl_peaks.setText("Peaks: —")
-        self.lbl_quality.setText("Quality: —")
+        self.lbl_quality.setText("Quality —")
+        self.btn_review_link.setEnabled(False)
+        self.seg_trace.buttons[0].setChecked(True)
+        self.seg_trace.buttons[1].setChecked(False)
         self.lbl_summary.setText("Detect the peaks: choose the method and threshold, then "
                                  "Detect peaks.")
         self.lbl_view.setText("")
@@ -534,6 +585,59 @@ class DetectionTab(QtWidgets.QWidget):
                 "Ctrl+Z / Ctrl+Y" if edit else "")
         self.lbl_edit.setText(hint)
         self.lbl_edit.setVisible(bool(hint))
+
+    def refresh_to_check(self) -> None:
+        """How many beats the tachogram flagged (after Analyze)."""
+        spikes = self.win.figures.ui.rr_spike_times
+        k = (0 if spikes is None or self.win.recording.analysis.results is None
+             else len(spikes))
+        self.lbl_to_check.setText(f"Beats to check: {k}" if k else "Beats to check")
+
+    def _show_trace(self) -> None:
+        """Filtered or raw on the trace (display only: the peaks stay those
+        found on the filtered signal), the view kept."""
+        s = self.win.recording.signal
+        raw = self.seg_trace.buttons[1].isChecked()
+        self.seg_trace.buttons[0].setChecked(not raw)
+        sig = s.raw_norm if raw and s.raw_norm is not None else s.filtered
+        if sig is None or s.fs is None:
+            return
+        t0, t1 = self.plot.window()
+        self.plot.set_signal(sig, s.fs, s.time)
+        self.plot.set_noise_regions(self.win.recording.analysis.noise_regions)
+        self.plot.set_annotations(self.win.recording.analysis.annotations)
+        self._show_peaks()
+        self.plot.set_window(t0, t1)
+
+    def _paint_legend(self, p) -> None:
+        """The trace's legend: the marks as drawn."""
+        from PySide6 import QtGui
+        for kind, label in self._legend_icons:
+            pix = QtGui.QPixmap(28, 28)
+            pix.setDevicePixelRatio(2)
+            pix.fill(QtCore.Qt.GlobalColor.transparent)
+            painter = QtGui.QPainter(pix)
+            painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            if kind == "peak":
+                painter.setBrush(QtGui.QColor(p.plot_rpeak))
+                painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                painter.drawEllipse(QtCore.QRectF(3, 3, 8, 8))
+            elif kind == "excluded":
+                painter.setPen(QtGui.QPen(QtGui.QColor(p.TEXT), 1.8))
+                painter.drawLine(QtCore.QPointF(3, 3), QtCore.QPointF(11, 11))
+                painter.drawLine(QtCore.QPointF(11, 3), QtCore.QPointF(3, 11))
+            elif kind == "check":
+                pen = QtGui.QPen(QtGui.QColor("#FF9800"), 1.6)
+                painter.setPen(pen)
+                painter.drawEllipse(QtCore.QRectF(2, 2, 10, 10))
+            else:
+                c = QtGui.QColor(p.ORANGE)
+                c.setAlpha(80)
+                painter.setBrush(c)
+                painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(QtCore.QRectF(0, 3, 14, 8), 2, 2)
+            painter.end()
+            label.setPixmap(pix)
 
     def set_view_width(self, width: float) -> None:
         """Show *width* seconds from the start of the current view."""
@@ -964,7 +1068,11 @@ class DetectionTab(QtWidgets.QWidget):
              if d.rpeaks_ok is not None and s.time is not None else None)
         if q is not None:
             d.sig_quality = q
-        self.lbl_quality.setText(f"Quality: {q}" if q is not None else "Quality: —")
+        word = ("" if q is None else " · good" if q >= 85 else " · fair" if q >= 60
+                else " · poor")
+        self.lbl_quality.setText(f"Quality {q}/100{word}" if q is not None else "Quality —")
+        self.btn_review_link.setEnabled(self.btn_review.isEnabled())
+        self.refresh_to_check()
         self._show_summary(n, q)
         self._show_hr()
         # The amplitude itself is a detail: in the tooltip, not on the bar.
@@ -992,6 +1100,7 @@ class DetectionTab(QtWidgets.QWidget):
         self.lbl_summary.setText(" · ".join(parts))
 
     def apply_palette(self, p) -> None:
+        self._paint_legend(p)
         self.plot.apply_palette(p)
         self._show_peaks() if self.win.recording.detection.rpeaks_ok is not None else None
 
