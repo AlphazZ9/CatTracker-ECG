@@ -192,6 +192,7 @@ class QtSession:
         host.event_ctrl.apply_params(bundle.get("event_locked_params"))
         a.t_start = bundle["analysis_t_start"]
         a.t_end = bundle["analysis_t_end"]
+        win.detection.show_window_in_entries()
         a.analysed_window = bundle.get("analysed_window") if bundle["results"] is not None else None
 
         formula = normalize_qtc_formula(bundle.get("qtc_formula", "mitchell"))

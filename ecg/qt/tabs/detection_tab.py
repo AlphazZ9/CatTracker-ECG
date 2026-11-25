@@ -163,6 +163,25 @@ class DetectionTab(QtWidgets.QWidget):
             b.setMaximumWidth(40)
             b.clicked.connect(lambda _c=False, d=step: self.step_spike(d))
             nav.addWidget(b)
+        nav.addSpacing(16)
+        nav.addWidget(QtWidgets.QLabel("Analysis window (s):"))
+        self.ed_win0, self.ed_win1 = QtWidgets.QLineEdit(), QtWidgets.QLineEdit()
+        for ed, ph in ((self.ed_win0, "start"), (self.ed_win1, "end")):
+            ed.setPlaceholderText(ph)
+            ed.setMaximumWidth(80)
+            ed.setToolTip("The part of the recording Analyze uses (empty = signal start / "
+                          "end); applied at the next Analyze")
+            ed.returnPressed.connect(self.apply_analysis_window)
+            nav.addWidget(ed)
+        b = QtWidgets.QPushButton("Apply")
+        b.clicked.connect(self.apply_analysis_window)
+        nav.addWidget(b)
+        b = QtWidgets.QPushButton("Full")
+        b.setToolTip("The whole signal")
+        b.clicked.connect(self.reset_analysis_window)
+        nav.addWidget(b)
+        self.lbl_window = QtWidgets.QLabel("")
+        nav.addWidget(self.lbl_window)
         nav.addStretch(1)
         self.btn_strip = QtWidgets.QPushButton("RR/HR/Quality")
         self.btn_strip.setCheckable(True)
@@ -226,6 +245,9 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_review.setEnabled(False)
         self.btn_agreement.setEnabled(False)
         self.lbl_agreement.setText("")
+        self.ed_win0.clear()
+        self.ed_win1.clear()
+        self._say_window("")
         self._update_undo_buttons()
         self.plot.clear()
         self.lbl_peaks.setText("Peaks: —")
@@ -268,6 +290,7 @@ class DetectionTab(QtWidgets.QWidget):
         d.edit_redo.clear()
         self._clear_agreement()
         rec.analysis.results = None
+        self.reset_analysis_window(quiet=True)
         self.btn_edit.setEnabled(True)
         self.btn_agreement.setEnabled(True)
         self.btn_mark_noise.setEnabled(True)
@@ -427,6 +450,71 @@ class DetectionTab(QtWidgets.QWidget):
         a = self.win.recording.analysis
         a.results = None
         a.autonomic_result = None
+
+    # ── analysis window ─────────────────────────────────────
+    def _say_window(self, text: str, color: "str | None" = None) -> None:
+        self.lbl_window.setText(text)
+        self.lbl_window.setStyleSheet(f"color: {color};" if color else "")
+
+    def show_window_in_entries(self) -> None:
+        """The entries say the applied window (empty = signal start / end)."""
+        a = self.win.recording.analysis
+        for ed, v in ((self.ed_win0, a.t_start), (self.ed_win1, a.t_end)):
+            ed.setText(f"{v:g}" if v and v > 0 else "")
+
+    def apply_analysis_window(self) -> None:
+        """SignalController.apply_analysis_window: stored for the next
+        Analyze, with the peaks inside it counted (nothing recomputed)."""
+        from ecg.qt import theme
+        p = theme.current()
+        rec = self.win.recording
+        s, d, a = rec.signal, rec.detection, rec.analysis
+        try:
+            t0_raw, t1_raw = self.ed_win0.text().strip(), self.ed_win1.text().strip()
+            t0 = float(t0_raw) if t0_raw else 0.0
+            t1 = float(t1_raw) if t1_raw else 0.0
+        except ValueError:
+            self.win.set_status("Invalid window — enter numeric values.", warn=True)
+            return
+        if t1 > 0 and t0 >= t1:
+            self.win.set_status("Start bound must be less than the end bound.", warn=True)
+            return
+        if s.time is not None and t1 > float(s.time[-1]) + 0.1:
+            self.win.set_status(f"End bound exceeds the signal duration ({s.time[-1]:.1f} s).",
+                                warn=True)
+        a.t_start, a.t_end = t0, t1
+        if d.rpeaks_ok is not None and s.fs is not None:
+            fs = s.fs
+            t_end_eff = float(s.time[-1]) if (s.time is not None and t1 == 0) else t1
+            mask = d.rpeaks_ok / fs >= t0
+            if t1 > 0:
+                mask &= d.rpeaks_ok / fs <= t1
+            n = int(mask.sum())
+            dur = (t_end_eff - t0) if t1 > 0 else (float(s.time[-1]) - t0
+                                                   if s.time is not None else 0)
+            text = (f"✓  {n} peaks  ·  {t0:.1f} s → {t_end_eff:.1f} s  ({dur:.1f} s)"
+                    if t0 > 0 or t1 > 0 else f"✓  {n} peaks  ·  full signal")
+            self._say_window(text, p.GREEN if n >= 5 else p.ORANGE)
+        else:
+            self._say_window("✓  Window applied — run analysis")
+        self.win.session_dirty = True
+        self.win.set_status("Analysis window updated — click Analyze to refresh.")
+        self.win.figures.analysis_ctrl.refresh_autonomic_status()
+
+    def reset_analysis_window(self, quiet: bool = False) -> None:
+        """SignalController.reset_analysis_window: the full signal."""
+        rec = self.win.recording
+        a, d, s = rec.analysis, rec.detection, rec.signal
+        a.t_start = a.t_end = 0.0
+        self.show_window_in_entries()
+        if d.rpeaks_ok is not None:
+            dur = float(s.time[-1]) if s.time is not None else 0.0
+            self._say_window(f"Full signal  ·  {len(d.rpeaks_ok)} peaks  ·  {dur:.1f} s")
+        else:
+            self._say_window("")
+        if not quiet:
+            self.win.set_status("Analysis window reset — full signal.")
+            self.win.figures.analysis_ctrl.refresh_autonomic_status()
 
     # ── navigation ──────────────────────────────────────────
     def _view_width(self) -> float:

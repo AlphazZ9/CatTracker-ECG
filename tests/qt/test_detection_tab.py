@@ -120,3 +120,27 @@ def test_rr_hr_quality_strip(qtbot, window):
     det.btn_strip.setChecked(False)
     assert not window.figures.ui.rrhr_strip_visible
     assert all(not p.isVisible() for p in det.plot.strip)
+
+
+def test_analysis_window(qtbot, window):
+    _detect(qtbot, window)
+    det, rec = window.detection, window.recording
+    a, d, fs = rec.analysis, rec.detection, rec.signal.fs
+    det.ed_win0.setText("20")
+    det.ed_win1.setText("80")
+    det.apply_analysis_window()
+    assert (a.t_start, a.t_end) == (20.0, 80.0)
+    n = int(((d.rpeaks_ok / fs >= 20) & (d.rpeaks_ok / fs <= 80)).sum())
+    assert det.lbl_window.text().startswith(f"✓  {n} peaks  ·  20.0 s → 80.0 s")
+    p = window.analysis_params()
+    assert (p["analysis_t_start"], p["analysis_t_end"]) == (20.0, 80.0)
+    assert len(window.figures._windowed_peaks()) == n
+    det.ed_win0.setText("90")                        # start after end: refused
+    det.apply_analysis_window()
+    assert a.t_start == 20.0 and "less than" in window.statusBar().currentMessage()
+    det.reset_analysis_window()
+    assert (a.t_start, a.t_end) == (0.0, 0.0) and det.ed_win0.text() == ""
+    det.ed_win0.setText("10")
+    det.apply_analysis_window()
+    det.detect()                                     # Detect Peaks: the full signal again
+    qtbot.waitUntil(lambda: a.t_start == 0.0, timeout=60000)

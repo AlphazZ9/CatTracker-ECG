@@ -272,6 +272,13 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         bar.addWidget(self.btn_evt_save)
         bar.addWidget(self.btn_evt_csv)
         bar.addStretch(1)
+        self.btn_to_compare = QtWidgets.QPushButton("Compare segments →")
+        self.btn_to_compare.setToolTip("Open the Compare segments tab: time windows chosen by "
+                                       "hand, block statistics, tachograms and Poincaré, no "
+                                       "annotation needed (Ctrl+M)")
+        self.btn_to_compare.clicked.connect(
+            lambda: self.win.tabs.setCurrentWidget(self.win.compare))
+        bar.addWidget(self.btn_to_compare)
         right.addLayout(bar)
         body.addLayout(right, 2)
         lay.addLayout(body, 1)
