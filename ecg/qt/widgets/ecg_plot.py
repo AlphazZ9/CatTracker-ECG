@@ -83,7 +83,9 @@ class EcgPlot(QtWidgets.QWidget):
         self.rejected = pg.ScatterPlotItem(size=5, symbol="o")
         self.excluded = pg.ScatterPlotItem(size=9, symbol="x")
         self.added = pg.ScatterPlotItem(size=8, symbol="t")
-        for item in (self.rejected, self.accepted, self.excluded, self.added):
+        # Check agreement: accepted beats no other detector found (open ring).
+        self.unconfirmed = pg.ScatterPlotItem(size=16, symbol="o")
+        for item in (self.rejected, self.accepted, self.unconfirmed, self.excluded, self.added):
             self.detail.addItem(item)
 
         self.band = pg.LinearRegionItem(values=(0, DEFAULT_WINDOW_S), movable=True)
@@ -126,6 +128,15 @@ class EcgPlot(QtWidgets.QWidget):
             idx = np.asarray(peaks, dtype=np.int64)
             idx = idx[(idx >= 0) & (idx < len(self._signal))]
             item.setData(idx / self._fs, self._signal[idx])
+
+    def set_unconfirmed(self, peaks: "Optional[np.ndarray]") -> None:
+        """Circle the beats Check agreement found unconfirmed (sample indices)."""
+        if self._signal is None or peaks is None or len(peaks) == 0:
+            self.unconfirmed.setData([], [])
+            return
+        idx = np.asarray(peaks, dtype=np.int64)
+        idx = idx[(idx >= 0) & (idx < len(self._signal))]
+        self.unconfirmed.setData(idx / self._fs, self._signal[idx])
 
     def set_noise_regions(self, regions: "list[dict]") -> None:
         """Shade the noisy regions ({t_start, t_end} in s)."""
@@ -177,6 +188,7 @@ class EcgPlot(QtWidgets.QWidget):
         for item in (self.trace, self.over_trace):
             item.setData([], [])
         self.set_peaks()
+        self.set_unconfirmed(None)
         self.set_noise_regions([])
 
     # ── window ──────────────────────────────────────────────
@@ -265,6 +277,8 @@ class EcgPlot(QtWidgets.QWidget):
         self.excluded.setPen(pg.mkPen(p.RED))
         self.added.setBrush(pg.mkBrush("#14B8A6"))
         self.added.setPen(pg.mkPen(None))
+        self.unconfirmed.setBrush(pg.mkBrush(None))
+        self.unconfirmed.setPen(pg.mkPen("#FF9800", width=1.8))   # AMBER, as the Tk ring
         self.band.setBrush(pg.mkBrush(_alpha(p.BLUE, 70)))
         for line in self.band.lines:
             line.setPen(pg.mkPen(p.BLUE, width=1))

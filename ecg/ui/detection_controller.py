@@ -21,11 +21,8 @@ import customtkinter as ctk  # type: ignore[import-untyped]
 from ecg.core.models import MouseECG
 from ecg.core.peak_editing import (apply_click_edit, apply_peak_edits, edit_at_click,
                                    push_undo, signal_quality_score, undo_redo)
-from ecg.core.detection import (
-    peak_agreement_counts,
-    detect_peaks_wavelet, detect_peaks_sg_derivative, detect_peaks_envelope_max,
-)
-from ecg.core.ml_detector import detect_peaks_ml, MLPeakModel, NoModelError
+from ecg.core.ml_detector import MLPeakModel
+from ecg.services.agreement_service import method_agreement
 from ecg.ui.ml_examples import NO_MODEL_STATUS
 from ecg.ui.theme import (
     BLUE, BORDER, BORDER2, GREEN, LIGHT, MUTED, ORANGE, ORANGE_DEEP, RED,
@@ -694,66 +691,13 @@ class DetectionController:
         min_rr_ms = self.app._safe_float(self.app.ent_minrr, MouseECG.MIN_RR_MS)
         active    = (self.app.cb_det_method.get()
                      if self.app.cb_det_method is not None else "").lower()
-        tolerance_samples = max(1, int(round(0.010 * fs)))  # 10 ms snap tolerance
 
         if self.app.lbl_agreement_status is not None:
             self.app.lbl_agreement_status.configure(
                 text="  Running other detectors…", text_color=ORANGE)
 
         def _worker() -> dict:
-            other_peaks: "list[np.ndarray]" = []
-            methods_run: "list[str]" = []
-            methods_skipped: "list[str]" = []
-
-            def _try(name: str, active_key: str, fn) -> None:
-                if active_key in active:
-                    methods_skipped.append(f"{name} (already the active method)")
-                    return
-                try:
-                    peaks, _proms, _t = fn()
-                    other_peaks.append(np.asarray(peaks))
-                    methods_run.append(f"{name} ({len(peaks)} peaks)")
-                except Exception as exc:
-                    methods_skipped.append(f"{name} ({exc})")
-
-            _try("Wavelet", "wavelet",
-                 lambda: detect_peaks_wavelet(sig, fs, min_rr_ms=min_rr_ms))
-            _try("SG+Derivative", "sg",
-                 lambda: detect_peaks_sg_derivative(sig, fs, min_rr_ms=min_rr_ms))
-            _try("Envelope Max", "envelope",
-                 lambda: detect_peaks_envelope_max(sig, fs, min_rr_ms=min_rr_ms))
-            if "ml" in active or "machine" in active:
-                methods_skipped.append("ML Detector (already the active method)")
-            else:
-                try:
-                    model = MLPeakModel.load()
-                    peaks, _proms, _t = detect_peaks_ml(sig, fs, model)
-                    other_peaks.append(np.asarray(peaks))
-                    methods_run.append(f"ML Detector ({len(peaks)} peaks)")
-                except NoModelError:
-                    methods_skipped.append("ML Detector (no model trained yet)")
-                except Exception as exc:
-                    methods_skipped.append(f"ML Detector ({exc})")
-
-            if not other_peaks:
-                return {"ok": False, "methods_skipped": methods_skipped}
-
-            counts     = peak_agreement_counts(primary, other_peaks, tolerance_samples)
-            n_methods  = len(other_peaks)
-            n_disagree = int(np.sum(counts == 0))
-            n_full     = int(np.sum(counts == n_methods))
-            histogram  = [int(np.sum(counts == k)) for k in range(n_methods + 1)]
-            return {
-                "ok": True,
-                "methods_run": methods_run,
-                "methods_skipped": methods_skipped,
-                "n_methods": n_methods,
-                "n_beats": len(primary),
-                "n_disagree": n_disagree,
-                "n_full": n_full,
-                "histogram": histogram,
-                "disagree_samples": primary[counts == 0],
-            }
+            return method_agreement(sig, fs, primary, min_rr_ms, active)
 
         def _done(result: dict) -> None:
             if self.app.detection.rpeaks_ok is None:

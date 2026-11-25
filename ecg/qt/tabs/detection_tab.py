@@ -82,6 +82,14 @@ class DetectionTab(QtWidgets.QWidget):
         row.addWidget(self.lbl_peaks)
         self.lbl_quality = QtWidgets.QLabel("Quality: —")
         row.addWidget(self.lbl_quality)
+        self.btn_agreement = QtWidgets.QPushButton("Check agreement")
+        self.btn_agreement.setEnabled(False)
+        self.btn_agreement.setToolTip("Run the other detectors on the same filtered signal and "
+                                      "circle the accepted beats none of them found")
+        self.btn_agreement.clicked.connect(self.check_agreement)
+        row.addWidget(self.btn_agreement)
+        self.lbl_agreement = QtWidgets.QLabel("")
+        row.addWidget(self.lbl_agreement)
         lay.addWidget(bar)
 
         edit_bar = QtWidgets.QHBoxLayout()
@@ -176,6 +184,8 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_mark_noise.setChecked(False)
         self.btn_mark_noise.setEnabled(False)
         self.btn_review.setEnabled(False)
+        self.btn_agreement.setEnabled(False)
+        self.lbl_agreement.setText("")
         self._update_undo_buttons()
         self.plot.clear()
         self.lbl_peaks.setText("Peaks: —")
@@ -216,8 +226,10 @@ class DetectionTab(QtWidgets.QWidget):
         d.manual_added.clear()
         d.edit_undo.clear()
         d.edit_redo.clear()
+        self._clear_agreement()
         rec.analysis.results = None
         self.btn_edit.setEnabled(True)
+        self.btn_agreement.setEnabled(True)
         self.btn_mark_noise.setEnabled(True)
         self.btn_review.setEnabled(True)
         self._update_undo_buttons()
@@ -374,6 +386,67 @@ class DetectionTab(QtWidgets.QWidget):
         a = self.win.recording.analysis
         a.results = None
         a.autonomic_result = None
+
+    # ── Check agreement ─────────────────────────────────────
+    def _clear_agreement(self) -> None:
+        """A new detection drops the last check (SignalController's reset)."""
+        d = self.win.recording.detection
+        d.agreement_disagree_samples = None
+        d.agreement_summary = ""
+        d.agreement_pct = None
+        d.agreement_peaks = None
+        self.lbl_agreement.setText("")
+        self.plot.set_unconfirmed(None)
+
+    def check_agreement(self) -> None:
+        """DetectionController.check_method_agreement: the other detectors
+        in a background job (ecg.services.agreement_service), then the
+        report and the unconfirmed beats circled on the trace."""
+        from ecg.services.agreement_service import method_agreement
+        rec = self.win.recording
+        s, d = rec.signal, rec.detection
+        if s.filtered is None or d.rpeaks_ok is None or len(d.rpeaks_ok) == 0:
+            QtWidgets.QMessageBox.warning(self, "Not ready", "Click Detect Peaks first.")
+            return
+        sig, fs, primary = s.filtered, s.fs, d.rpeaks_ok.copy()
+        host = self.win.figures
+        min_rr_ms = host._safe_float(host.ent_minrr, MouseECG.MIN_RR_MS)
+        active = self.cb_method.currentText().lower()
+        self.btn_agreement.setEnabled(False)
+        self.lbl_agreement.setProperty("warn", True)
+        self.lbl_agreement.setText("Running other detectors…")
+        self.win.run_job("Check agreement",
+                         lambda progress_cb=None: method_agreement(sig, fs, primary,
+                                                                   min_rr_ms, active),
+                         on_done=lambda r: self._agreement_done(r, primary, fs),
+                         on_end=lambda: self.btn_agreement.setEnabled(True))
+
+    def _agreement_done(self, result: dict, primary, fs: float) -> None:
+        from ecg.qt.dialogs.agreement_dialog import AgreementDialog, agreement_color
+        from ecg.services.agreement_service import agreement_summary
+        d = self.win.recording.detection
+        if d.rpeaks_ok is None:
+            return
+        lbl = self.lbl_agreement
+        if not result.get("ok"):
+            reason = "; ".join(result.get("methods_skipped", [])) or "no other methods available"
+            lbl.setText(f"Agreement check: {reason}")
+            self.win.set_status(f"Cross-method agreement: {reason}", warn=True)
+            return
+        summary, pct = agreement_summary(result)
+        d.agreement_disagree_samples = result["disagree_samples"]
+        d.agreement_summary = summary
+        d.agreement_pct = pct
+        d.agreement_peaks = primary
+        lbl.setProperty("warn", False)
+        lbl.setStyleSheet(f"color: {agreement_color(result['n_disagree'], pct)};")
+        lbl.setText(summary)
+        skipped = result.get("methods_skipped", [])
+        note = ("  ·  skipped: " + ", ".join(skipped)) if skipped else ""
+        self.win.set_status(f"Cross-method agreement done — {summary}{note}")
+        self.plot.set_unconfirmed(d.agreement_disagree_samples)
+        self.agreement_dialog = AgreementDialog(self.win, result, fs)
+        self.agreement_dialog.show()
 
     def _review(self) -> None:
         from ecg.qt.dialogs.artifact_review import review_artifacts

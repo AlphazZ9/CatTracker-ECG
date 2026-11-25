@@ -67,3 +67,37 @@ def test_a_result_for_another_recording_is_discarded(qtbot, window):
     window.jobs.wait(60000)
     qtbot.wait(100)
     assert window.recording.detection.rpeaks_ok is None
+
+
+def test_check_agreement_counts_and_circles_the_unconfirmed_beats(qtbot, window, monkeypatch):
+    from ecg.core import ml_detector
+    from ecg.qt.dialogs import agreement_dialog
+    from ecg.services.agreement_service import method_agreement
+    monkeypatch.setattr(ml_detector.MLPeakModel, "load",
+                        staticmethod(lambda: (_ for _ in ()).throw(ml_detector.NoModelError())))
+    _detect(qtbot, window)
+    s, d = window.recording.signal, window.recording.detection
+    det = window.detection
+    assert det.btn_agreement.isEnabled()
+    det.check_agreement()
+    qtbot.waitUntil(lambda: d.agreement_pct is not None, timeout=60000)
+    from ecg.core.models import MouseECG
+    host = window.figures
+    min_rr = host._safe_float(host.ent_minrr, MouseECG.MIN_RR_MS)
+    expected = method_agreement(s.filtered, s.fs, d.rpeaks_ok, min_rr,
+                                det.cb_method.currentText().lower())
+    assert expected["ok"] and "SG+Derivative (already the active method)" in expected["methods_skipped"]
+    assert np.array_equal(d.agreement_disagree_samples, expected["disagree_samples"])
+    dlg = det.agreement_dialog
+    assert isinstance(dlg, agreement_dialog.AgreementDialog)
+    assert [b.value() for b in dlg.bars] == expected["histogram"][::-1]
+    x, _y = det.plot.unconfirmed.getData()
+    assert np.allclose(x, expected["disagree_samples"] / s.fs)
+    if dlg.times:
+        dlg.jump_to(dlg.times[0])
+        t0, t1 = det.plot.window()
+        assert t0 <= dlg.times[0] <= t1
+    # A new detection drops the check.
+    det.detect()
+    qtbot.waitUntil(lambda: d.agreement_pct is None, timeout=60000)
+    assert len(det.plot.unconfirmed.getData()[0]) == 0
