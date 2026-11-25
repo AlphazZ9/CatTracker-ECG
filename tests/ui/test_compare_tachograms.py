@@ -8,7 +8,7 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from ecg.core.segment_plan import PAIRS, PAIRWISE, reference_comparators
-from ecg.ui.compare_segments import draw_rr_tachograms, tachogram_groups
+from ecg.app.compare_helpers import draw_rr_tachograms, tachogram_groups
 
 COLORS = ["C0", "C1", "C2", "C3", "C4", "C5"]
 

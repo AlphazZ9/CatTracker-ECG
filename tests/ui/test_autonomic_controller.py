@@ -18,12 +18,12 @@ from ecg.io.session import _SessionEncoder, _session_decode_hook
 from ecg.services import autonomic_service  # where compute_autonomic runs the indices
 from ecg.core import peak_editing as dc_module  # where run_detection applies the threshold
 from ecg.services import session_service  # where restore reloads the signal
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.autonomic_view import default_autonomic_params
-from ecg.ui.detection_controller import DetectionController
-from ecg.ui.session_controller import SessionController
-from ecg.ui.state import AnalysisState, DetectionState, SessionState, SignalState, UIState
-from ecg.ui.theme import GREEN, ORANGE, RED
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.autonomic_view import default_autonomic_params
+from ecg.app.detection_controller import DetectionController
+from ecg.app.session_controller import SessionController
+from ecg.app.state import AnalysisState, DetectionState, SessionState, SignalState, UIState
+from ecg.app.theme import GREEN, ORANGE, RED
 
 from tests.helpers import rpeaks_from_rr
 
@@ -480,30 +480,3 @@ def test_a_rebuild_keeps_the_not_applied_and_peaks_changed_notices():
     assert app.lbl_auto_status.text == note and app.lbl_auto_status.text_color == ORANGE
 
 
-def test_stop_progress_survives_a_button_destroyed_by_a_rebuild():
-    # A theme toggle during a long job destroys the job's button; restoring
-    # it must not raise, or _finish_success would skip on_done (the result
-    # would be dropped).
-    import tkinter as tk
-    from ecg.ui.app import ECGApp
-
-    class _Gone:
-        def winfo_exists(self):
-            return False
-
-        def configure(self, **_kw):
-            raise tk.TclError('invalid command name ".!ctkbutton"')
-
-    class _Raises(_Gone):
-        def winfo_exists(self):
-            raise tk.TclError("bad window path name")
-
-    calls = []
-    stub = SimpleNamespace(
-        progress=SimpleNamespace(set=lambda v: calls.append(("set", v))),
-        _prog_row=SimpleNamespace(place_forget=lambda: calls.append("forget")),
-        lbl_progress=SimpleNamespace(configure=lambda **kw: calls.append(kw)),
-        _async_start_time=1.0)
-    for button in (_Gone(), _Raises()):
-        ECGApp._stop_progress(stub, button, "⟳ Compute")
-    assert stub._async_start_time is None and ("set", 1.0) in calls

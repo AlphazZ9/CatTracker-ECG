@@ -9,10 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import ecg
-from ecg.ui.session_controller import SessionController
-from ecg.ui.signal_controller import SignalController
+from ecg.app.session_controller import SessionController
+from ecg.app.signal_controller import SignalController
 
-UI_DIR = Path(ecg.__file__).parent / "ui"
+UI_DIR = Path(ecg.__file__).parent / "app"   # the controllers moved there
 
 
 class _Entry:
@@ -109,11 +109,6 @@ def test_load_path_fills_before_the_session_restore():
     assert calls.index("autofill_subject_from_name") < calls.index("_try_restore_session")
 
 
-def test_add_to_group_table_writes_the_sex():
-    src = (UI_DIR / "compare_segments.py").read_text(encoding="utf-8")
-    call = next(n for n in ast.walk(ast.parse(src))
-                if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "group_row")
-    assert "sex" in {k.arg for k in call.keywords}
 
 
 def test_a_kept_typed_value_the_name_contradicts_is_reported():

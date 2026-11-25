@@ -39,7 +39,7 @@ Security > Open Anyway*. Step-by-step help:
 
 - **First launch needs an Internet connection.** The launcher installs
   [uv](https://docs.astral.sh/uv/) if missing, a private Python 3.12 (never
-  your system Python, nor Apple's with its old Tk 8.5) and the libraries of
+  your system Python, nor Apple's) and the libraries of
   `requirements.txt` — a few minutes and roughly 400 MB, with a progress
   window. Later launches take a few seconds and work offline; libraries are
   reinstalled only when `requirements.txt` or

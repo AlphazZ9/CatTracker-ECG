@@ -18,8 +18,8 @@ from ecg.core.detection import (
 from ecg.io.export import (
     ExcelExporter, abnormal_events_frame, premature_beats_frame,
 )
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.state import AnalysisState, DetectionState, SignalState
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.state import AnalysisState, DetectionState, SignalState
 
 from tests.helpers import rpeaks_from_rr
 
@@ -84,7 +84,7 @@ def _stub_app(peaks, artifact_report=None):
 def _run(app):
     ctrl = AnalysisController(app)
     cards = []
-    ctrl.build_arrhythmia_card = lambda idx, ev, icons: cards.append(ev)
+    app.on_events_list = cards.extend          # the interface's event list
     ctrl.run_arrhythmia_analysis()
     return ctrl, cards
 
@@ -133,21 +133,6 @@ def test_without_correction_the_counts_are_the_same():
     assert "removed" not in app.lbl_arr_premature.text
 
 
-def test_event_card_list_is_capped(monkeypatch):
-    rr = []
-    for _ in range(12):
-        rr += [120.0] * 15 + [70.0, 170.0]
-    rr += [120.0] * 15
-    app, _ = _stub_app(rpeaks_from_rr(rr, FS))
-    monkeypatch.setattr(AnalysisController, "MAX_EVENT_CARDS", 5)
-    made = []
-    import ecg.ui.analysis_controller as ac
-    monkeypatch.setattr(ac.ctk, "CTkLabel",
-                        lambda *a, **kw: made.append(kw) or SimpleNamespace(grid=lambda **k: None))
-    _, cards = _run(app)
-    assert len(cards) == 5
-    assert app.analysis.premature_summary["n_isolated"] == 12
-    assert made and "7 more events" in made[-1]["text"]
 
 
 def test_premature_summary_text_empty_before_classification():

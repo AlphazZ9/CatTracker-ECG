@@ -34,7 +34,7 @@ def test_nothing_when_no_region():
 
 
 def test_the_session_brings_pacing_periods_back_as_annotations():
-    from ecg.ui.session_controller import pacing_as_annotations
+    from ecg.app.session_controller import pacing_as_annotations
     got = pacing_as_annotations([{"t_start": 10, "t_end": 70, "note": "20 Hz"},
                                  {"t_start": 100, "t_end": 110, "note": ""}, {"bad": 1}])
     assert [a["label"] for a in got] == ["20 Hz", "Pacing"]
@@ -43,8 +43,8 @@ def test_the_session_brings_pacing_periods_back_as_annotations():
 
 def test_a_drag_in_mark_noise_marks_a_region_and_a_right_click_removes_it():
     from types import SimpleNamespace as NS
-    from ecg.ui.detection_controller import DetectionController
-    from ecg.ui.state import AnalysisState, DetectionState
+    from ecg.app.detection_controller import DetectionController
+    from ecg.app.state import AnalysisState, DetectionState
     changed, status = [], []
     app = NS(detection=DetectionState(), analysis=AnalysisState(),
              signal=NS(fs=1000.0, filtered=np.zeros(20_000)), ui=NS(nav_pos=0.0),
@@ -69,7 +69,7 @@ def test_a_drag_in_mark_noise_marks_a_region_and_a_right_click_removes_it():
 
 def test_the_strip_names_the_noisy_regions():
     from types import SimpleNamespace as NS
-    from ecg.ui.context_strip import exclusion_field
+    from ecg.app.context_fields import exclusion_field
     vals = {"rr.n_excluded": 4, "rr.n_spanning_removed": 4, "rr.excluded_pct": 1.0}
     t = NS(has=lambda k: k in vals, value=lambda k, d=None: vals.get(k, d))
     assert "spanning a removed beat" in exclusion_field(t).text

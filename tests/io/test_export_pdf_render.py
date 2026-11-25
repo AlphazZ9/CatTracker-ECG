@@ -17,10 +17,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import ecg.ui.export_controller as export_controller
+import ecg.app.export_controller as export_controller
 from ecg.core.analysis import signal_crop_info
-from ecg.ui.export_controller import ExportController
-from ecg.ui.state import AnalysisState, DetectionState, SignalState
+from ecg.app.export_controller import ExportController
+from ecg.app.state import AnalysisState, DetectionState, SignalState
 
 FS = 200
 ARTIFACTS = {"n_in": 503, "n_out": 500, "n_nonphysio": 1, "n_ectopic": 2, "n_duplicate": 0}

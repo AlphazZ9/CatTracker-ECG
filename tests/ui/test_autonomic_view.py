@@ -1,5 +1,5 @@
 """
-Time course > Autonomic view helpers (ecg.ui.autonomic_view) -- no Tk window:
+Time course > Autonomic view helpers (ecg.app.autonomic_view) -- no Tk window:
 parameter parsing (strict, for a Compute click) and normalisation (tolerant,
 for sessions and UI rebuilds), the withheld-window spans, the
 recording-level summary and status, and the stacked figure drawn on a bare
@@ -15,8 +15,7 @@ from ecg.core.autonomic import (
     COV_METHODS, DEFAULT_METHOD, KP_RAT_SHR, KS_RAT_SHR, compute_autonomic_indices,
 )
 from ecg.io.session import _SessionEncoder, _session_decode_hook
-from ecg.ui import autonomic_view as av
-
+from ecg.app import autonomic_view as av
 from tests.helpers import rpeaks_from_rr
 
 FS = 2000.0

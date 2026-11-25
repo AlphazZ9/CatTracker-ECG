@@ -1,6 +1,5 @@
 # Core runtime dependencies — see setup.py for the packaging metadata.
 # Version floors reflect what this app is developed and tested against.
-customtkinter>=5.2
 matplotlib>=3.8
 numpy>=1.26
 pandas>=2.1
@@ -11,8 +10,8 @@ Pillow>=10.0
 scikit-learn>=1.4  # ML R-peak detector (was already a transitive neurokit2 dep)
 skops>=0.10         # safer persistence for the ML R-peak detector
 PyWavelets>=1.4     # Wavelet (CWT) R-peak detector (also a neurokit2 dependency)
-# Qt interface (migration in progress: python -m ecg.qt). Essentials only:
-# QtCore / QtGui / QtWidgets, without the web engine and other add-ons.
+# The interface (Qt). Essentials only: QtCore / QtGui / QtWidgets, without
+# the web engine and other add-ons.
 PySide6-Essentials>=6.7
 pyqtgraph>=0.13.7
 

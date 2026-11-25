@@ -46,4 +46,28 @@ def test_classification_list_and_event_view(qtbot):
     assert a.arr_selected_idx == 0
     assert w.figures.slot("arr_detail").figure.axes
     assert "#1" in w.figures.lbl_arr_event_title.text()
+    # Next / Previous, Copy for Excel
+    ev = w.events
+    if len(a.arrhythmia_events) > 1:
+        ev.step_event(+1)
+        assert a.arr_selected_idx == 1
+        ev.step_event(-1)
+    assert a.arr_selected_idx == 0
+    from PySide6 import QtWidgets
+    QtWidgets.QApplication.clipboard().clear()
+    ev.btn_copy.click()
+    assert a.arrhythmia_tsv and QtWidgets.QApplication.clipboard().text() == a.arrhythmia_tsv
+    # Edit peaks here: a left click on a peak of the event trace excludes it
+    from types import SimpleNamespace
+    d, fs = w.recording.detection, w.recording.signal.fs
+    ev.btn_edit.setChecked(True)
+    e0 = a.arrhythmia_events[0]
+    inside = d.rpeaks_ok[(d.rpeaks_ok / fs >= e0.t_start) & (d.rpeaks_ok / fs <= e0.t_end)]
+    peak = int(inside[0] if len(inside) else d.rpeaks_ok[10])
+    n = len(d.rpeaks_ok)
+    w.figures.analysis_ctrl.on_arr_detail_click(SimpleNamespace(xdata=peak / fs, button=1))
+    assert peak in d.manual_excluded and len(d.rpeaks_ok) == n - 1
+    assert w.detection.btn_undo.isEnabled()
+    w.detection.undo()
+    assert peak not in d.manual_excluded and len(d.rpeaks_ok) == n
     w.jobs.wait(5000)

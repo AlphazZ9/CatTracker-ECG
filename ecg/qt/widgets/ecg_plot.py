@@ -28,7 +28,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ecg.qt import theme
 
 DEFAULT_WINDOW_S = 10.0
-MIN_WINDOW_S = 0.1          # as the Tk views (ecg.ui.state.MIN_VIEW_WINDOW_S)
+MIN_WINDOW_S = 0.1          # as the Tk views (ecg.app.state.MIN_VIEW_WINDOW_S)
 
 
 def _alpha(color: str, alpha: int) -> QtGui.QColor:
@@ -60,9 +60,31 @@ class EcgPlot(QtWidgets.QWidget):
         self.view = pg.GraphicsLayoutWidget()
         lay.addWidget(self.view)
         self.detail = self.view.addPlot(row=0, col=0)
-        self.overview = self.view.addPlot(row=1, col=0)
+        self.overview = self.view.addPlot(row=4, col=0)
         self.view.ci.layout.setRowStretchFactor(0, 5)
-        self.view.ci.layout.setRowStretchFactor(1, 1)
+        self.view.ci.layout.setRowStretchFactor(4, 1)
+        # The RR / HR / Quality strip under the trace (the Tk detail_rrhr
+        # panel): each beat's RR and HR at its second peak, and its template
+        # correlation, on the trace's time axis.
+        self.strip = []
+        for r, label in ((1, "RR (ms)"), (2, "HR (bpm)"), (3, "Quality")):
+            p = self.view.addPlot(row=r, col=0)
+            p.setXLink(self.detail)
+            p.setMouseEnabled(x=False, y=False)
+            p.setMenuEnabled(False)
+            p.showGrid(x=True, y=True, alpha=0.15)
+            p.setLabel("left", label)
+            p.hideButtons()
+            p.setMaximumHeight(90)
+            self.view.ci.layout.setRowStretchFactor(r, 1)
+            self.strip.append(p)
+        self.rr_curve, self.hr_curve, self.q_curve = (
+            pg.PlotDataItem(symbol="o", symbolSize=3) for _ in range(3))
+        for p, c in zip(self.strip, (self.rr_curve, self.hr_curve, self.q_curve)):
+            p.addItem(c)
+        self.q_line = pg.InfiniteLine(pos=0.90, angle=0, movable=False)  # the 0.90 corr. line
+        self.strip[2].addItem(self.q_line)
+        self._rr = None
         for p in (self.detail, self.overview):
             p.showGrid(x=True, y=True, alpha=0.15)
             p.setMenuEnabled(False)
@@ -83,7 +105,9 @@ class EcgPlot(QtWidgets.QWidget):
         self.rejected = pg.ScatterPlotItem(size=5, symbol="o")
         self.excluded = pg.ScatterPlotItem(size=9, symbol="x")
         self.added = pg.ScatterPlotItem(size=8, symbol="t")
-        for item in (self.rejected, self.accepted, self.excluded, self.added):
+        # Check agreement: accepted beats no other detector found (open ring).
+        self.unconfirmed = pg.ScatterPlotItem(size=16, symbol="o")
+        for item in (self.rejected, self.accepted, self.unconfirmed, self.excluded, self.added):
             self.detail.addItem(item)
 
         self.band = pg.LinearRegionItem(values=(0, DEFAULT_WINDOW_S), movable=True)
@@ -126,6 +150,57 @@ class EcgPlot(QtWidgets.QWidget):
             idx = np.asarray(peaks, dtype=np.int64)
             idx = idx[(idx >= 0) & (idx < len(self._signal))]
             item.setData(idx / self._fs, self._signal[idx])
+
+    def set_strip_visible(self, on: bool) -> None:
+        for p in self.strip:
+            p.setVisible(bool(on))
+
+    def set_beats(self, peaks: "Optional[np.ndarray]", quality_t: "Optional[np.ndarray]" = None,
+                  quality: "Optional[np.ndarray]" = None) -> None:
+        """The strip: RR and HR of *peaks* (sample indices), and the beat
+        quality *quality* at the times *quality_t* (s)."""
+        if self._signal is None or peaks is None or len(peaks) < 2:
+            for c in (self.rr_curve, self.hr_curve, self.q_curve):
+                c.setData([], [])
+            self._rr = None
+            return
+        rp = np.asarray(peaks, dtype=float)
+        rr_ms = np.diff(rp) / self._fs * 1000.0
+        rr_t = rp[1:] / self._fs
+        self._rr = (rr_t, rr_ms, 60000.0 / rr_ms)
+        self.rr_curve.setData(rr_t, rr_ms)
+        self.hr_curve.setData(rr_t, self._rr[2])
+        if quality_t is not None and quality is not None and len(quality):
+            self.q_curve.setData(np.asarray(quality_t, float), np.asarray(quality, float))
+        else:
+            self.q_curve.setData([], [])
+        self._fit_strip()
+
+    def _fit_strip(self) -> None:
+        """RR and HR centred on the mean of what is in view (centered_ylim)."""
+        if self._rr is None:
+            return
+        t0, t1 = self.window()
+        rr_t, rr_ms, hr = self._rr
+        inside = (rr_t >= t0) & (rr_t <= t1)
+        for p, vals in ((self.strip[0], rr_ms[inside]), (self.strip[1], hr[inside])):
+            v = vals[np.isfinite(vals)]
+            if not len(v):
+                continue
+            c = float(np.mean(v))
+            half = float(np.max(np.abs(v - c))) or max(abs(c) * 0.05, 1.0)
+            half *= 1.08
+            p.setYRange(c - half, c + half, padding=0)
+        self.strip[2].setYRange(min(0.0, self.strip[2].viewRange()[1][0]), 1.02, padding=0)
+
+    def set_unconfirmed(self, peaks: "Optional[np.ndarray]") -> None:
+        """Circle the beats Check agreement found unconfirmed (sample indices)."""
+        if self._signal is None or peaks is None or len(peaks) == 0:
+            self.unconfirmed.setData([], [])
+            return
+        idx = np.asarray(peaks, dtype=np.int64)
+        idx = idx[(idx >= 0) & (idx < len(self._signal))]
+        self.unconfirmed.setData(idx / self._fs, self._signal[idx])
 
     def set_noise_regions(self, regions: "list[dict]") -> None:
         """Shade the noisy regions ({t_start, t_end} in s)."""
@@ -177,6 +252,8 @@ class EcgPlot(QtWidgets.QWidget):
         for item in (self.trace, self.over_trace):
             item.setData([], [])
         self.set_peaks()
+        self.set_unconfirmed(None)
+        self.set_beats(None)
         self.set_noise_regions([])
 
     # ── window ──────────────────────────────────────────────
@@ -198,6 +275,10 @@ class EcgPlot(QtWidgets.QWidget):
         self._syncing = False
 
     def _detail_moved(self, *_a) -> None:
+        self._fit_strip()
+        self._detail_moved_band()
+
+    def _detail_moved_band(self, *_a) -> None:
         t0, t1 = self.window()
         if not self._syncing:
             self._syncing = True
@@ -265,6 +346,18 @@ class EcgPlot(QtWidgets.QWidget):
         self.excluded.setPen(pg.mkPen(p.RED))
         self.added.setBrush(pg.mkBrush("#14B8A6"))
         self.added.setPen(pg.mkPen(None))
+        self.unconfirmed.setBrush(pg.mkBrush(None))
+        self.unconfirmed.setPen(pg.mkPen("#FF9800", width=1.8))   # AMBER, as the Tk ring
+        for plot in self.strip:
+            for ax in ("left", "bottom"):
+                plot.getAxis(ax).setPen(pg.mkPen(p.MUTED))
+                plot.getAxis(ax).setTextPen(pg.mkPen(p.MUTED))
+        for c, col in ((self.rr_curve, p.plot_signal), (self.hr_curve, p.BLUE),
+                       (self.q_curve, p.GREEN)):
+            c.setPen(pg.mkPen(col, width=1.2))
+            c.setSymbolBrush(pg.mkBrush(col))
+            c.setSymbolPen(pg.mkPen(None))
+        self.q_line.setPen(pg.mkPen(p.MUTED, width=0.8, style=QtCore.Qt.PenStyle.DashLine))
         self.band.setBrush(pg.mkBrush(_alpha(p.BLUE, 70)))
         for line in self.band.lines:
             line.setPen(pg.mkPen(p.BLUE, width=1))

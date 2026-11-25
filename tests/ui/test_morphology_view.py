@@ -12,19 +12,20 @@ import pytest
 
 from ecg.core.analysis import ENSEMBLE_BEATS_DEFAULT, ensemble_hint_text
 from ecg.core.metric_table import MISSING, MetricTable, interval_rows
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.export_controller import pdf_interval_footer, pdf_metric_rows
-from ecg.ui.freshness import (
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.export_controller import pdf_interval_footer, pdf_metric_rows
+from ecg.app.freshness import (
     NOT_COMPUTED, OUT_OF_DATE, UP_TO_DATE, FreshnessService, ModuleFreshness,
 )
-from ecg.ui.navigation_controller import NavigationController
-from ecg.ui.plot_controller import qtc_rr_fit
-from ecg.ui.session_controller import SessionController, _TAB_KEY_MAP
-from ecg.ui.state import AnalysisState
-from ecg.ui.tab_keys import TAB_EVENTS, TAB_MODULES, TAB_MORPHOLOGY, TAB_ORDER
-from ecg.ui.tab_morphology import (
-    TabMorphologyMixin, interval_lines, measured_headline, morphology_steps, step_tip,
-)
+from ecg.app.navigation_controller import NavigationController
+from ecg.app.plot_controller import qtc_rr_fit
+from ecg.app.session_controller import SessionController, _TAB_KEY_MAP
+from ecg.app.state import AnalysisState
+from ecg.app.tab_keys import TAB_EVENTS, TAB_MODULES, TAB_MORPHOLOGY, TAB_ORDER
+from ecg.app.morphology_helpers import interval_lines
+from ecg.app.morphology_helpers import measured_headline
+from ecg.app.morphology_helpers import morphology_steps
+from ecg.app.morphology_helpers import step_tip
 
 
 def _frame(n=20, measured=8):
@@ -181,7 +182,7 @@ def test_previous_next_without_events_do_nothing():
 
 
 def test_a_new_results_reset_keeps_the_ribbon_of_events_still_held():
-    from ecg.ui.plot_controller import PlotController
+    from ecg.app.plot_controller import PlotController
 
     class Slot:
         def __init__(self):
@@ -242,14 +243,14 @@ def _reset_app(**analysis):
 
 
 def test_dropped_intervals_take_the_qtc_caption_with_them():
-    from ecg.ui.plot_controller import PlotController
+    from ecg.app.plot_controller import PlotController
     app, _ = _reset_app()
     PlotController(app).reset_result_plots()
     assert app.lbl_qtc_rr.text == "" and app._slots["qtc_rr"]._draw_fn is None
 
 
 def test_a_new_analyze_clears_the_qtc_diagnostic_of_the_old_intervals():
-    from ecg.ui.plot_controller import PlotController
+    from ecg.app.plot_controller import PlotController
     app, _ = _reset_app(results={"intervals": pd.DataFrame({"RR_ms": [100.0, 110.0]})})
     ctrl = PlotController(app)
     ctrl.run_plot_chain = lambda tasks, on_complete=None, auto_epochs=False: None
@@ -259,7 +260,7 @@ def test_a_new_analyze_clears_the_qtc_diagnostic_of_the_old_intervals():
 
 def test_new_file_clears_the_caption_and_the_edit_button():
     from unittest.mock import MagicMock
-    from ecg.ui.signal_controller import SignalController
+    from ecg.app.signal_controller import SignalController
     app = MagicMock()
     app.analysis = AnalysisState(arr_edit_mode=True)
     app._slots, app._kpi, app._arr_card_widgets = {}, {}, []
@@ -273,7 +274,7 @@ def test_new_file_clears_the_caption_and_the_edit_button():
 
 
 def test_kept_events_keep_their_status_and_their_selected_zoom():
-    from ecg.ui.plot_controller import PlotController
+    from ecg.app.plot_controller import PlotController
     app, later = _reset_app(arrhythmia_run={"baseline": _BL}, arrhythmia_events=[_ev(1, 2)],
                             arr_selected_idx=0)
     ctrl = PlotController(app)
@@ -288,7 +289,7 @@ def test_kept_events_keep_their_status_and_their_selected_zoom():
 
 
 def test_a_redraw_after_the_selection_went_does_nothing():
-    from ecg.ui.plot_controller import PlotController
+    from ecg.app.plot_controller import PlotController
     app, later = _reset_app(arrhythmia_run={"baseline": _BL}, arrhythmia_events=[_ev(1, 2)],
                             arr_selected_idx=0)
     PlotController(app).reset_result_plots()
@@ -298,7 +299,7 @@ def test_a_redraw_after_the_selection_went_does_nothing():
 
 
 def test_no_selection_leaves_an_empty_zoom_and_no_events_the_prompt():
-    from ecg.ui.plot_controller import PlotController
+    from ecg.app.plot_controller import PlotController
     app, later = _reset_app(arrhythmia_run={"baseline": _BL}, arrhythmia_events=[_ev(1, 2)])
     PlotController(app).reset_result_plots()
     assert app._slots["arr_detail"]._draw_fn is None and later == []
@@ -326,7 +327,7 @@ def _status_app(ivl, wave_template=None):
 
 def test_restore_and_rebuild_rederive_the_measured_status():
     from ecg.core.wave_template import WaveTemplate
-    from ecg.ui.theme import GREEN, RED
+    from ecg.app.theme import GREEN, RED
     wt = WaveTemplate()
     df = _frame(1748, 16)
     df.attrs["wave_template"] = wt.to_dict()
@@ -382,7 +383,7 @@ def _classified(ivl=None):
 
 
 def _events_status(app):
-    from ecg.ui.freshness import FreshnessService
+    from ecg.app.freshness import FreshnessService
     return FreshnessService(app)._status_events()
 
 
@@ -533,28 +534,3 @@ def test_pdf_footer_and_report_say_how_the_rows_were_delineated():
     assert not any("QT IQR" in r[0] for r in pdf_metric_rows({"intervals": df}))
 
 
-def test_a_typed_n_counts_without_return_or_leaving_the_field():
-    # A click on a CTk button does not take the focus: no FocusOut, and
-    # Measure and the session save read the field.
-    import tkinter as tk
-    import customtkinter as ctk
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:
-        pytest.skip(f"no display: {exc}")
-    root.withdraw()
-    try:
-        var = ctk.StringVar(master=root, value="32")
-        ent = ctk.CTkEntry(root, textvariable=var)
-        analysis_state, refreshed = AnalysisState(), []
-        host = SimpleNamespace(analysis=analysis_state, ent_ensemble=ent,
-                               _refresh_morphology=lambda: refreshed.append(True))
-        host.analysis_ctrl = AnalysisController(host)
-        var.trace_add("write", lambda *a: TabMorphologyMixin._on_ensemble_typed(host, *a))
-        ent.delete(0, "end")
-        assert analysis_state.ensemble_beats == 32 and not refreshed   # empty: last valid N
-        ent.insert(0, "8")
-        assert analysis_state.ensemble_beats == 8 and refreshed
-        assert ent.get() == "8"
-    finally:
-        root.destroy()

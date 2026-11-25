@@ -76,9 +76,35 @@ class MorphologyTab(QtWidgets.QScrollArea):
         row.addWidget(self.btn_measure)
         row.addStretch(1)
         lay.addWidget(bar)
+        from ecg.qt.widgets.stale_banner import StaleBanner
+        self.banner = StaleBanner(self, on_recompute=lambda: self.measure())
+        lay.addWidget(self.banner)
         host.lbl_ivl_status = StatusLabel("Click Analyze first")
         host.lbl_ivl_status.setProperty("muted", True)
         lay.addWidget(host.lbl_ivl_status)
+        # The three steps (TabMorphologyMixin's chips): mean beat, check the
+        # landmarks, measure every beat -- the current one highlighted.
+        steps = QtWidgets.QHBoxLayout()
+        self.step_labels = []
+        for _i in range(3):
+            lbl = QtWidgets.QLabel("")
+            steps.addWidget(lbl)
+            self.step_labels.append(lbl)
+        steps.addStretch(1)
+        lay.addLayout(steps)
+        # What the medians rest on, then one line per interval (median, IQR,
+        # beats measured), as the Tk interval table.
+        self.lbl_measured = QtWidgets.QLabel("")
+        lay.addWidget(self.lbl_measured)
+        self.tbl_ivl = QtWidgets.QTableWidget(0, 5)
+        self.tbl_ivl.setHorizontalHeaderLabels(["Interval", "Definition", "Median", "IQR",
+                                                "Measured"])
+        self.tbl_ivl.verticalHeader().setVisible(False)
+        self.tbl_ivl.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_ivl.horizontalHeader().setStretchLastSection(True)
+        self.tbl_ivl.setMaximumHeight(170)
+        lay.addWidget(self.tbl_ivl)
+        self._ivl_shown: object = False
 
         def card(title: str, widget: QtWidgets.QWidget, min_h: int) -> QtWidgets.QFrame:
             f = QtWidgets.QFrame(objectName="Card")
@@ -132,6 +158,46 @@ class MorphologyTab(QtWidgets.QScrollArea):
                 if name in self.win.figures._slots:
                     self.win.figures._slots[name].clear()
 
+    def refresh_banner(self) -> None:
+        """TabMorphologyMixin._refresh_morphology: the steps, the interval
+        table (rebuilt only when the frame changes) and the stale line."""
+        from ecg.qt import theme
+        from ecg.app.freshness import COMPUTING, OUT_OF_DATE, UP_TO_DATE, stale_banner_text
+        from ecg.app.morphology_helpers import (interval_lines, measured_headline,
+                                                morphology_steps, step_tip)
+        host = self.win.figures
+        p = theme.current()
+        r = self.win.recording.analysis.results or {}
+        ivl = r.get("intervals")
+        beats = r.get("beat_corr")
+        glyphs = {UP_TO_DATE: "●", OUT_OF_DATE: "◆", COMPUTING: "◐"}
+        colors = {UP_TO_DATE: p.GREEN, OUT_OF_DATE: p.ORANGE, COMPUTING: p.BLUE}
+        for lbl, step in zip(self.step_labels, morphology_steps(
+                host.freshness.status("core"), host.freshness.status("intervals"),
+                len(beats) if beats is not None else None)):
+            glyph = "●" if step.current else glyphs.get(step.state, "○")
+            color = p.BLUE if step.current else colors.get(step.state, p.MUTED)
+            lbl.setText(f'<span style="color:{color}">{glyph}</span>  {step.number}   '
+                        + (f"<b>{step.text}</b>" if step.current else step.text))
+            lbl.setToolTip(step_tip(step))
+        if ivl is not self._ivl_shown:
+            self._ivl_shown = ivl
+            text, tier = measured_headline(ivl)
+            self.lbl_measured.setText(text)
+            self.lbl_measured.setStyleSheet(
+                f"color: {({'good': p.GREEN, 'partial': p.ORANGE, 'low': p.RED}).get(tier, p.MUTED)};")
+            lines = interval_lines(ivl)
+            self.tbl_ivl.setRowCount(len(lines))
+            for i, line in enumerate(lines):
+                for c, v in enumerate((line.name, line.definition, line.median, line.iqr,
+                                       line.measured)):
+                    self.tbl_ivl.setItem(i, c, QtWidgets.QTableWidgetItem(v))
+            self.tbl_ivl.resizeColumnsToContents()
+        self.banner.set_text(stale_banner_text(
+            "Intervals", host.freshness.status("intervals"),
+            host.ui.module_computed_at.get("intervals"), host.ui.peaks_edited_at,
+            has_values=ivl is not None and "QT_ms" in ivl.columns))
+
     def measure(self) -> None:
         rec = self.win.recording
         host = self.win.figures
@@ -144,17 +210,18 @@ class MorphologyTab(QtWidgets.QScrollArea):
         wt = self.wave_template().copy()
         qtc = ctl.qtc_formula()
         lo, hi = ctl.results_rr_bounds()
+        basis = host.freshness.capture(rr_bounds=(lo, hi))
         host.lbl_ivl_status.configure(text="Delineating all beats…")
         self.btn_measure.setEnabled(False)
         self.win.run_job("Measure intervals", analyse_intervals, sig, rp, fs, rr,
                          wave_template=wt, permissive_bounds=self.chk_permissive.isChecked(),
                          qtc_formula=qtc, rr_min_ms=lo, rr_max_ms=hi,
-                         ensemble_beats=ctl.ensemble_beats(),
-                         on_done=lambda df: self._measured(df, wt, qtc),
+                         ensemble_beats=ctl.ensemble_beats(), peaks_bound=True,
+                         on_done=lambda df: self._measured(df, wt, qtc, basis),
                          on_end=lambda: self.btn_measure.setEnabled(
                              self.win.recording.analysis.results is not None))
 
-    def _measured(self, df, wt: WaveTemplate, qtc: str) -> None:
+    def _measured(self, df, wt: WaveTemplate, qtc: str, basis: "dict | None" = None) -> None:
         """AnalysisController.run_intervals's landing."""
         a = self.win.recording.analysis
         host = self.win.figures
@@ -163,6 +230,8 @@ class MorphologyTab(QtWidgets.QScrollArea):
         if host.analysis_ctrl.qtc_formula() != qtc:
             df = recompute_qtc_column(df, host.analysis_ctrl.qtc_formula())
         a.results["intervals"] = df
+        if basis is not None:
+            host.freshness.stamp("intervals", basis)
         host.analysis_ctrl.note_intervals_measured(df)
         note, color, n_ok, n_total = host.analysis_ctrl._measured_note(df, wt.provenance())
         host.lbl_ivl_status.configure(text=note, text_color=color)

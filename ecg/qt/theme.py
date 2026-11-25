@@ -11,6 +11,7 @@ interface). Plot colours are read from the palette by the widgets.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from dataclasses import dataclass, fields
 
 from PySide6 import QtGui, QtWidgets
@@ -82,10 +83,58 @@ def system_prefers_dark() -> bool:
         return False
 
 
-def style_sheet(p: Palette) -> str:
-    """The application style sheet for palette *p*."""
+# ── preferences: the palette chosen and the text size, kept between runs ──
+PREFS_PATH = Path.home() / ".ecg_qt_prefs.json"
+LEGACY_THEME_PATH = Path.home() / ".ecg_theme.json"     # the Tk interface's
+FONT_SCALE_RANGE = (0.8, 1.6)
+_font_scale = 1.0
+
+
+def load_prefs() -> dict:
+    """{"theme": "Light" / "Dark" / None (the system's), "font_scale"}: this
+    interface's file, else the Tk interface's theme file (its light / dark
+    and text size), else the defaults."""
+    import json
+    for path, legacy in ((PREFS_PATH, False), (LEGACY_THEME_PATH, True)):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if legacy:
+            data = {"theme": DARK.name if data.get("is_dark") else LIGHT.name,
+                    "font_scale": data.get("font_scale", 1.0)}
+        name = data.get("theme")
+        try:
+            scale = float(data.get("font_scale", 1.0))
+        except (TypeError, ValueError):
+            scale = 1.0
+        lo, hi = FONT_SCALE_RANGE
+        return {"theme": name if name in PALETTES else None,
+                "font_scale": min(hi, max(lo, scale))}
+    return {"theme": None, "font_scale": 1.0}
+
+
+def save_prefs() -> None:
+    """Keep the palette in use and the text size for the next run."""
+    import json
+    try:
+        PREFS_PATH.write_text(json.dumps({"theme": _current.name, "font_scale": _font_scale},
+                                         indent=2), encoding="utf-8")
+    except OSError as exc:
+        import logging
+        logging.getLogger("ecg").warning("preferences not saved: %s", exc)
+
+
+def font_scale() -> float:
+    return _font_scale
+
+
+def style_sheet(p: Palette, scale: float = 1.0) -> str:
+    """The application style sheet for palette *p* (text at *scale* x 10 pt)."""
     return f"""
-    QWidget {{ background: {p.BG}; color: {p.TEXT}; font-size: 10pt; }}
+    QWidget {{ background: {p.BG}; color: {p.TEXT}; font-size: {10 * scale:.1f}pt; }}
     QMainWindow, QDialog {{ background: {p.BG}; }}
     QFrame#Header, QFrame#Card {{ background: {p.CARD}; border: 1px solid {p.BORDER};
         border-radius: 6px; }}
@@ -116,14 +165,18 @@ def style_sheet(p: Palette) -> str:
     """
 
 
-def apply(app: QtWidgets.QApplication, name: "str | None" = None) -> Palette:
-    """Apply the palette *name* ("Light" / "Dark"; None: the system's) to
-    *app* and return it."""
-    global _current
+def apply(app: QtWidgets.QApplication, name: "str | None" = None,
+          scale: "float | None" = None) -> Palette:
+    """Apply the palette *name* ("Light" / "Dark"; None: the system's) and
+    the text size *scale* (None: kept) to *app* and return the palette."""
+    global _current, _font_scale
     if name is None:
         name = DARK.name if system_prefers_dark() else LIGHT.name
+    if scale is not None:
+        lo, hi = FONT_SCALE_RANGE
+        _font_scale = min(hi, max(lo, float(scale)))
     _current = PALETTES[name]
-    app.setStyleSheet(style_sheet(_current))
+    app.setStyleSheet(style_sheet(_current, _font_scale))
     return _current
 
 

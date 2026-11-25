@@ -6,7 +6,7 @@ The ML R-peak detector dialog (ecg/ui/dialogs.py MLTrainingDialog) in Qt:
 how to train it, the training examples (each removable), Add / Remove the
 open recording, and Train model with its held-out check. Operates on the
 pooled training cache and the saved model (ecg.core.ml_detector), with
-the Tk dialog's texts and gate (ecg.ui.ml_examples).
+the Tk dialog's texts and gate (ecg.app.ml_examples).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from ecg.core.ml_detector import MLPeakModel, delete_training_sample, train_mode
 from ecg.io.db import _DB_AVAILABLE, set_verified
 from ecg.io.session import _file_fingerprint
 from ecg.qt.figure_host import StatusLabel
-from ecg.ui.ml_examples import status_text, train_gate, train_result_text
+from ecg.app.ml_examples import status_text, train_gate, train_result_text
 
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
@@ -26,19 +26,19 @@ if TYPE_CHECKING:
 
 def training_examples() -> "list[dict]":
     """MLTrainingDialog._examples: each example with its file name and path."""
-    from ecg.ui.dialogs import MLTrainingDialog
-    return MLTrainingDialog._examples(None)   # type: ignore[arg-type]
+    from ecg.app.ml_examples import training_examples
+    return training_examples()
 
 
 class MLTrainingDialog(QtWidgets.QDialog):
     def __init__(self, window: "MainWindow") -> None:
-        from ecg.ui.dialogs import MLTrainingDialog as _Tk
+        from ecg.app.ml_examples import HOW_TO
         super().__init__(window)
         self.win = window
         self.setWindowTitle("ML R-Peak Detector")
         self.resize(760, 640)
         lay = QtWidgets.QVBoxLayout(self)
-        how = QtWidgets.QLabel("<b>How to train it</b><br>" + "<br>".join(_Tk.HOW_TO))
+        how = QtWidgets.QLabel("<b>How to train it</b><br>" + "<br>".join(HOW_TO))
         how.setWordWrap(True)
         lay.addWidget(how)
         self.lbl_status = StatusLabel("")
@@ -129,8 +129,8 @@ class MLTrainingDialog(QtWidgets.QDialog):
             path))
 
     def _busy(self) -> bool:
-        from ecg.ui.ml_examples import BUSY_MESSAGE
-        if self.win.jobs.running:
+        from ecg.app.ml_examples import BUSY_MESSAGE
+        if self.win._active:                  # main-thread list, cleared before on_done
             self.lbl_result.configure(text=f"{BUSY_MESSAGE}: an operation of the main window "
                                            "is still running.")
             return True

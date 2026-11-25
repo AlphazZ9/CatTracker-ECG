@@ -17,9 +17,9 @@ import pytest
 
 from ecg.core.analysis import INTERVAL_DEFINITIONS_TEXT
 from ecg.core.models import QTC_FORMULA_LABELS
-from ecg.ui.plot_controller import PlotController
-from ecg.ui.report_view import report_text
-from ecg.ui.state import AnalysisState, DetectionState, SignalState
+from ecg.app.plot_controller import PlotController
+from ecg.app.report_view import report_text
+from ecg.app.state import AnalysisState, DetectionState, SignalState
 
 
 def _results(t0_s: float = 100.0, n: int = 500) -> dict:

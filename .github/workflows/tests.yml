@@ -6,7 +6,7 @@
 #   - "newest deps": whatever is newest on PyPI within requirements.txt, on
 #     Linux, to see an upstream break (pandas 3...) before it reaches a build.
 #
-# Linux has no display: the Tk tests run under Xvfb.
+# The Qt tests run offscreen (tests/qt/conftest.py).
 name: Tests
 
 on:
@@ -60,33 +60,22 @@ jobs:
           else
             python -m pip install --upgrade -r requirements.txt pytest pytest-qt
           fi
-          python -m pip list | grep -iE "^(pandas|numpy|matplotlib|scipy|customtkinter|pyside6-essentials|pyqtgraph) "
+          python -m pip list | grep -iE "^(pandas|numpy|matplotlib|scipy|neurokit2|pyside6-essentials|pyqtgraph) "
 
-      # Xvfb for the Tk tests; the Qt tests run offscreen (tests/qt/conftest.py)
-      # but Qt still needs its EGL / xkb / xcb system libraries.
-      - name: Display for Tk, libraries for Qt (Linux)
+      # The Qt tests run offscreen (tests/qt/conftest.py), but Qt still needs
+      # its EGL / xkb / xcb system libraries.
+      - name: Libraries for Qt (Linux)
         if: runner.os == 'Linux'
         run: >-
-          sudo apt-get update -q && sudo apt-get install -y -q xvfb libegl1 libgl1
+          sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1
           libxkbcommon0 libxkbcommon-x11-0 libfontconfig1 libdbus-1-3 libxcb-cursor0
           libxcb-icccm4 libxcb-keysyms1 libxcb-shape0
 
       - name: Run the tests (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a -s "-screen 0 1600x1200x24" python -m pytest -q -p no:cacheprovider -rf
-
-      # The runner's screen is 1024 x 768: a window cannot be wider, so the
-      # tests that resize one (Poincaré columns, the tab bar at 1400 px)
-      # would test the runner's screen, not the app. A desktop's size instead.
-      - name: Screen size (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          try { Set-DisplayResolution -Width 1920 -Height 1080 -Force } catch { Write-Host "::warning::Set-DisplayResolution: $_" }
-          Add-Type -AssemblyName System.Windows.Forms
-          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          Write-Host "Screen: $($b.Width) x $($b.Height)"
+        run: python -m pytest -q -p no:cacheprovider -rf
 
       - name: Run the tests (Windows)
         if: runner.os == 'Windows'
+        shell: bash
         run: python -m pytest -q -p no:cacheprovider -rf

@@ -25,15 +25,14 @@ from ecg.core.metric_table import (
     MISSING, MetricTable, build_metric_table, format_metric, metric_text, rhythm_cards,
     rhythm_rows, nonlinear_basis_text, asymmetry_text,
 )
-from ecg.ui import analysis_controller as ac_module
-from ecg.ui.analysis_controller import AnalysisController
-from ecg.ui.context_strip import tab_states
-from ecg.ui.freshness import COMPUTING, NOT_COMPUTED, UP_TO_DATE, FreshnessService
-from ecg.ui.plot_controller import PlotController
-from ecg.ui.session_controller import SessionController, _TAB_KEY_MAP
-from ecg.ui.state import AnalysisState, DetectionState, SignalState, UIState
-from ecg.ui.tab_keys import TAB_DETECTION, TAB_HRV, TAB_MODULES
-from ecg.ui.tabbar import STATE_GLYPHS
+from ecg.app import analysis_controller as ac_module
+from ecg.app.analysis_controller import AnalysisController
+from ecg.app.context_fields import tab_states
+from ecg.app.freshness import COMPUTING, NOT_COMPUTED, UP_TO_DATE, FreshnessService
+from ecg.app.plot_controller import PlotController
+from ecg.app.session_controller import SessionController, _TAB_KEY_MAP
+from ecg.app.state import AnalysisState, DetectionState, SignalState, UIState
+from ecg.app.tab_keys import TAB_DETECTION, TAB_HRV, TAB_MODULES
 
 from tests.helpers import add_qrs_pulse, rpeaks_from_rr
 
@@ -393,30 +392,8 @@ def test_restored_session_runs_nothing():
 
 # ── computing state of the tab ───────────────────────────────────────────
 
-def test_tab_reads_computing_while_one_of_its_modules_runs():
-    states = {m: NOT_COMPUTED for mods in TAB_MODULES.values() for m in mods}
-    states["core"] = UP_TO_DATE
-    assert tab_states(states, True, ())[TAB_HRV] == UP_TO_DATE
-    out = tab_states(states, True, {"nonlinear"})
-    assert out[TAB_HRV] == COMPUTING
-    assert out[TAB_DETECTION] == UP_TO_DATE
-    assert COMPUTING in STATE_GLYPHS
 
 
-def test_a_chain_that_stopped_stops_reading_as_computing():
-    from ecg.ui.context_strip import ContextStripMixin, _RUNNING_GRACE_TICKS
-    stub = SimpleNamespace(ui=UIState(), _async_busy=False)
-    stub.ui.running_modules = {"nonlinear"}
-    for _ in range(_RUNNING_GRACE_TICKS):
-        assert ContextStripMixin._running_modules(stub) == {"nonlinear"}
-    assert ContextStripMixin._running_modules(stub) == set()
-    # A job running keeps it, however long it takes.
-    stub.ui.running_modules = {"nonlinear"}
-    stub.ui.running_idle_ticks = 0
-    stub._async_busy = True
-    for _ in range(_RUNNING_GRACE_TICKS * 3):
-        ContextStripMixin._running_modules(stub)
-    assert stub.ui.running_modules == {"nonlinear"}
 
 
 def test_a_refused_job_marks_nothing(recording):
@@ -587,7 +564,7 @@ def test_dropped_results_clear_labels_boxes_and_buttons():
 
 def test_every_peak_change_goes_through_the_full_drop():
     import inspect
-    from ecg.ui.detection_controller import DetectionController
+    from ecg.app.detection_controller import DetectionController
     src = inspect.getsource(DetectionController)
     assert src.count("self.app.analysis.results  = None") == 1   # only in _drop_results
     assert "_reset_hrv_readouts" in inspect.getsource(DetectionController._drop_results)
