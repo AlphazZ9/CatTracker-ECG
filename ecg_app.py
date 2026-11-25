@@ -9,6 +9,9 @@ apps built by PyInstaller (packaging/ecg.spec).
 
 To run directly from the package:
     python -m ecg
+
+With the environment variable ECG_INTERFACE=qt it starts the Qt interface
+instead (python -m ecg.qt); the "Lancer ECG (Qt)" launchers set it.
 """
 import multiprocessing
 import sys
@@ -27,5 +30,9 @@ if __name__ == "__main__":
     # executable, and freeze_support() turns that run into a worker instead
     # of a second copy of the application. A no-op under plain Python.
     multiprocessing.freeze_support()
+    # ECG_INTERFACE=qt (the "Lancer ECG (Qt)" launchers): the Qt interface.
+    if os.environ.get("ECG_INTERFACE", "").strip().lower() == "qt":
+        from ecg.qt.app import main as qt_main
+        sys.exit(qt_main())
     from ecg.__main__ import main
     main()

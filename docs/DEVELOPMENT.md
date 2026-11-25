@@ -200,6 +200,9 @@ then extract the whole ZIP), and double-click the launcher in that folder:
 | Windows | `Lancer ECG.bat` |
 | macOS (Apple Silicon or Intel) | `Lancer ECG.command` |
 
+`Lancer ECG (Qt).bat` / `Lancer ECG (Qt).command` do the same with the Qt
+interface (they set `ECG_INTERFACE=qt`, which `ecg_app.py` reads).
+
 - **First launch: an Internet connection is required.** The launcher
   installs [uv](https://docs.astral.sh/uv/) if it is missing, a private
   Python 3.12 (never your system Python, nor Apple's Python with its old

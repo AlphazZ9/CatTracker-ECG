@@ -125,11 +125,45 @@ zip) ne touche pas à ces fichiers.
   numpy/scipy sont installés en version « Accelerate », qui exige macOS 14.
   Sur un Mac plus ancien, utilisez le lanceur `Lancer ECG.command`.
 
+## Interface Qt (pendant la migration)
+
+En plus de l'application Tk, le workflow construit **« Tom ECG Analysis Qt »**,
+l'interface PySide6, à partir de `packaging/ecg_qt.spec` (point d'entrée
+`ecg_qt_app.py`). Elle est publiée à côté, sous les noms
+`Tom-ECG-Analysis-Qt-Windows.zip`, `Tom-ECG-Analysis-Qt-macOS-arm64.zip` et
+`Tom-ECG-Analysis-Qt-macOS-x86_64.zip`. L'application Tk reste inchangée
+tant que son retrait n'est pas décidé.
+
+**Vérification de chaque build Qt.** L'application construite est lancée en
+mode test sur l'enregistrement de test :
+```
+"Tom ECG Analysis Qt" --self-test resultat.txt tests/fixtures/synthetic_mouse_ecg.mat
+```
+Ce mode ouvre la fenêtre et affiche les 8 onglets, puis lance Detect Peaks,
+Analyze et Measure intervals. Ce dernier passe par les processus de calcul
+parallèle, qui doivent redémarrer correctement depuis l'exécutable. Il écrit
+« ok … peaks … intervals … » ou l'erreur. Le build échoue sinon. Contrairement
+à l'application Tk, la version Qt est donc **lancée** sur Windows et sur les
+deux Mac.
+
+Testé localement sous Linux (PyInstaller 6.22.3, Qt 6.12) : build de
+444 Mo, auto-test réussi (« ok 6.2.0 Qt 6.12.0 … peaks 1298 intervals 1298 »).
+
+**Lanceurs sans installation** : `Lancer ECG (Qt).bat` (Windows) et
+`Lancer ECG (Qt).command` (macOS). Ils font comme `Lancer ECG`, même Python
+privé et mêmes bibliothèques, mais ouvrent l'interface Qt (variable
+`ECG_INTERFACE=qt`). Depuis un terminal : `python -m ecg.qt`.
+
+Tant que l'interface Tk existe, l'application Qt embarque aussi
+`customtkinter` / `tkinter` : elle réutilise le code des figures de
+`ecg.ui`.
+
 ## Construire en local (développeurs)
 
 ```bash
 python -m pip install -r requirements.txt pyinstaller
-pyinstaller --noconfirm packaging/ecg.spec
+pyinstaller --noconfirm packaging/ecg.spec        # interface Tk
+pyinstaller --noconfirm packaging/ecg_qt.spec     # interface Qt
 ```
 
 Résultat dans `dist/` (`dist/Tom ECG Analysis/` sous Windows,
