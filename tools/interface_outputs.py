@@ -128,9 +128,20 @@ def run_tk(recording: str, out: Path, restore: "str | None" = None) -> None:
     def chain(*items):
         steps.extend(items)
 
+    def finish(code: int) -> None:
+        """End the process once the outputs are written: on the Windows CI
+        runner the Tk main loop did not return after quit()."""
+        import os
+        import traceback
+        if failed:
+            traceback.print_exception(failed[0])
+        print(f"tk: {'outputs written' if code == 0 else 'failed'}", flush=True)
+        sys.stderr.flush()
+        os._exit(code)
+
     def run_next(t0=None):
         if not steps:
-            app.quit()
+            finish(0)
             return
         cond, action = steps[0]
         if cond is None or cond():
@@ -139,15 +150,15 @@ def run_tk(recording: str, out: Path, restore: "str | None" = None) -> None:
             done_steps.append(1)
             try:
                 action()
-            except Exception as exc:          # stop, reported below
+            except Exception as exc:          # stop, reported by finish()
                 failed.append(exc)
-                app.quit()
+                finish(1)
                 return
             app.after(10, run_next)
             return
         if time.time() - (t0 or time.time()) > TIMEOUT_S:
             failed.append(TimeoutError(getattr(action, "__name__", "step")))
-            app.quit()
+            finish(1)
             return
         app.after(50, lambda: run_next(t0 or time.time()))
 
