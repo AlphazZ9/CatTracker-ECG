@@ -84,6 +84,7 @@ def system_prefers_dark() -> bool:
 
 
 # ── preferences: the palette chosen and the text size, kept between runs ──
+ASSETS = Path(__file__).resolve().parents[1] / "app" / "assets"
 PREFS_PATH = Path.home() / ".ecg_qt_prefs.json"
 LEGACY_THEME_PATH = Path.home() / ".ecg_theme.json"     # the Tk interface's
 FONT_SCALE_RANGE = (0.8, 1.6)
@@ -133,6 +134,10 @@ def font_scale() -> float:
 
 def style_sheet(p: Palette, scale: float = 1.0) -> str:
     """The application style sheet for palette *p* (text at *scale* x 10 pt)."""
+    # The spin box and combo box arrows: drawn from the app's own images,
+    # since a styled box without them shows broken arrows.
+    up = (ASSETS / "chevron_up.svg").as_posix()
+    down = (ASSETS / "chevron_down.svg").as_posix()
     return f"""
     QWidget {{ background: {p.BG}; color: {p.TEXT}; font-size: {10 * scale:.1f}pt; }}
     QMainWindow, QDialog {{ background: {p.BG}; }}
@@ -154,6 +159,21 @@ def style_sheet(p: Palette, scale: float = 1.0) -> str:
     QTabBar::tab:selected {{ background: {p.PANEL}; color: {p.ACCENT_TEXT}; }}
     QComboBox, QLineEdit, QDoubleSpinBox, QSpinBox {{ background: {p.CARD};
         border: 1px solid {p.BORDER2}; border-radius: 4px; padding: 2px 6px; }}
+    QAbstractSpinBox {{ padding-right: 20px; }}
+    QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ subcontrol-origin: border;
+        width: 18px; border: none; border-left: 1px solid {p.BORDER}; background: transparent; }}
+    QAbstractSpinBox::up-button {{ subcontrol-position: top right;
+        border-top-right-radius: 4px; }}
+    QAbstractSpinBox::down-button {{ subcontrol-position: bottom right;
+        border-bottom-right-radius: 4px; }}
+    QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
+        background: {p.HAIRLINE}; }}
+    QAbstractSpinBox::up-arrow {{ image: url("{up}"); width: 9px; height: 9px; }}
+    QAbstractSpinBox::down-arrow {{ image: url("{down}"); width: 9px; height: 9px; }}
+    QComboBox {{ padding-right: 20px; }}
+    QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right;
+        width: 20px; border: none; }}
+    QComboBox::down-arrow {{ image: url("{down}"); width: 9px; height: 9px; }}
     QCheckBox {{ background: transparent; spacing: 6px; }}
     QCheckBox::indicator {{ width: 14px; height: 14px; border: 1px solid {p.BORDER2};
         border-radius: 3px; background: {p.CARD}; }}
