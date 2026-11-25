@@ -76,16 +76,29 @@ messagebox = _Relay()
 filedialog = _Relay()
 
 
+def _reset(relay: "_Relay") -> None:
+    """Drop the functions set on the relay itself: a test's monkeypatch of
+    ``filedialog.asksaveasfilename`` puts back, on undo, the function it
+    read through the relay -- the backend of that moment -- and it then
+    shadowed every later backend (exports silently saved nowhere)."""
+    for name in [n for n in vars(relay) if n != "backend"]:
+        delattr(relay, name)
+
+
 def install(message_box: Any = None, file_dialog: Any = None) -> None:
     """Send the controllers' message boxes / file choosers to these objects
     (each with the tkinter function names); None keeps the current one."""
     if message_box is not None:
+        _reset(messagebox)
         messagebox.backend = message_box
     if file_dialog is not None:
+        _reset(filedialog)
         filedialog.backend = file_dialog
 
 
 def uninstall() -> None:
     """Back to no window (tests)."""
+    _reset(messagebox)
+    _reset(filedialog)
     messagebox.backend = _Headless()
     filedialog.backend = _Headless()
