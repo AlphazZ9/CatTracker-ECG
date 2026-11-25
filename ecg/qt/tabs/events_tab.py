@@ -92,6 +92,9 @@ class EventsTab(QtWidgets.QWidget):
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self._selected)
+        header = self.table.horizontalHeader()      # every column readable, no side scroll
+        header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(True)
         split.addWidget(self.table)
         right = QtWidgets.QWidget()
         rl = QtWidgets.QVBoxLayout(right)

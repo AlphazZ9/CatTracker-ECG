@@ -30,6 +30,33 @@ from ecg.qt.widgets.mpl_canvas import MplCanvas
 log = logging.getLogger("ecg")
 
 
+# What an empty figure says, by slot: which step fills it.
+PLACEHOLDERS = {
+    "rr": "Detect the peaks, then click Analyze: the RR interval and heart rate of every "
+          "beat appear here.",
+    "poincare": "Click Analyze to see the Poincaré plot.",
+    "psd": "Click Analyze to see the power spectrum.",
+    "rr_hist": "Click Analyze to see the RR distribution.",
+    "asymmetry": "Click Analyze to see the RR asymmetry.",
+    "beat": "Click Analyze: the mean beat and its landmarks appear here.",
+    "intervals": "Click Measure intervals: PR, QRS and the other intervals of every beat "
+                 "appear here.",
+    "qtc_rr": "Click Measure intervals to see QTc against RR.",
+    "beat_dist": "Click Measure intervals to see the beat distributions.",
+    "epochs": "Click Compute epochs: the metrics ticked above, window by window, through "
+              "the recording.",
+    "rolling_hrv": "Click Compute: heart rate variability in a window sliding along the "
+                   "recording.",
+    "autonomic": "Click Compute: the sympathetic (CSI) and parasympathetic (CPI) indices "
+                 "through the recording.",
+    "event_locked": "Label a period in Signal & Detection (Annotations), then click Compute: "
+                    "the indices before and after each event.",
+    "arr_ribbon": "Click Classify events: the episodes appear here along the recording.",
+    "arr_detail": "Select an event in the list to see the ECG around it.",
+    "compare": "Set the segments above, then click Compare.",
+}
+
+
 class FigureSlot(MplCanvas):
     """A CanvasSlot (ecg.app.plots) as PlotController uses it.
 
@@ -44,6 +71,7 @@ class FigureSlot(MplCanvas):
 
     def update(self, draw_fn: Callable) -> None:          # noqa: A003 (CanvasSlot API)
         self._draw_fn = draw_fn
+        self._sync_placeholder()
         if self.isVisible():
             self._pending = None
             self.redraw()
@@ -68,7 +96,10 @@ class FigureSlot(MplCanvas):
     def retheme(self) -> None:
         """The figure again in the current theme: now if it is on screen,
         else when it is next shown."""
-        if self._draw_fn is None:
+        if self._draw_fn is None:                         # empty: its background only
+            import matplotlib
+            self._figure.set_facecolor(matplotlib.rcParams["figure.facecolor"])
+            self.canvas.draw_idle()
             return
         if self.isVisible():
             self._pending = None
@@ -241,6 +272,7 @@ class _Slots(dict):
 
     def __missing__(self, name: str) -> FigureSlot:
         slot = self[name] = FigureSlot(None)
+        slot.set_placeholder(PLACEHOLDERS.get(name, ""))
         return slot
 
 
@@ -384,6 +416,7 @@ class FigureHost:
              width_in: float = 6.0, height_in: float = 3.5) -> FigureSlot:
         if name not in self._slots:
             dict.__setitem__(self._slots, name, FigureSlot(parent, width_in, height_in))
+            self._slots[name].set_placeholder(PLACEHOLDERS.get(name, ""))
         elif parent is not None and self._slots[name].parent() is None:
             self._slots[name].setParent(parent)
         return self._slots[name]

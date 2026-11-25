@@ -17,7 +17,7 @@ from typing import Callable, Optional
 import matplotlib
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 log = logging.getLogger("ecg")
 
@@ -35,14 +35,31 @@ class MplCanvas(QtWidgets.QWidget):
         dpi = screen.logicalDotsPerInch() if screen is not None else 96.0
         self._figure = Figure(figsize=(width_in, height_in), dpi=dpi, layout="constrained")
         self.canvas = FigureCanvasQTAgg(self._figure)
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.canvas)
+        # An empty figure shows what to do instead (set_placeholder): a blank
+        # frame told nothing.
+        self._placeholder = QtWidgets.QLabel("")
+        self._placeholder.setProperty("muted", True)
+        self._placeholder.setWordWrap(True)
+        self._placeholder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self._placeholder.setObjectName("Placeholder")
+        self._stack = QtWidgets.QStackedLayout(self)
+        self._stack.setContentsMargins(0, 0, 0, 0)
+        self._stack.addWidget(self.canvas)
+        self._stack.addWidget(self._placeholder)
         self._draw_fn: "Optional[Callable[[Figure], None]]" = None
 
     @property
     def figure(self) -> Figure:
         return self._figure
+
+    def set_placeholder(self, text: str) -> None:
+        """What an empty figure says instead (e.g. which button fills it)."""
+        self._placeholder.setText(text)
+        self._sync_placeholder()
+
+    def _sync_placeholder(self) -> None:
+        empty = self._draw_fn is None and bool(self._placeholder.text())
+        self._stack.setCurrentWidget(self._placeholder if empty else self.canvas)
 
     def update_figure(self, draw_fn: "Callable[[Figure], None]") -> None:
         """Replace the figure's content by what *draw_fn(fig)* draws."""
@@ -56,6 +73,7 @@ class MplCanvas(QtWidgets.QWidget):
         drew light text on a white figure)."""
         self._figure.clear()
         self._figure.set_facecolor(matplotlib.rcParams["figure.facecolor"])
+        self._sync_placeholder()
         if self._draw_fn is not None:
             try:
                 self._draw_fn(self._figure)
@@ -66,4 +84,6 @@ class MplCanvas(QtWidgets.QWidget):
     def clear(self) -> None:
         self._draw_fn = None
         self._figure.clear()
+        self._figure.set_facecolor(matplotlib.rcParams["figure.facecolor"])
+        self._sync_placeholder()
         self.canvas.draw_idle()

@@ -32,6 +32,7 @@ WINDOW_METRICS = (("HR", "HR"), ("SDNN", "SDNN"), ("RMSSD", "RMSSD"), ("pNN6", "
                   ("SD1", "SD1"), ("SD2", "SD2"), ("LF_nu", "LF (n.u.)"),
                   ("HF_nu", "HF (n.u.)"), ("LF_HF", "LF/HF"))
 EPOCH_DEFAULTS = ("HR", "SDNN", "RMSSD", "pNN6")
+TABLE_PLACEHOLDER = "The values of each window appear here once computed, ready to copy into Excel."
 SLIDING_DEFAULTS = ("HR", "SDNN", "RMSSD")
 
 
@@ -134,6 +135,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         legend.setWordWrap(True)
         lay.addWidget(legend)
         box = TextBox()
+        box.setPlaceholderText(TABLE_PLACEHOLDER)
         lay.addWidget(box, 2)
         return box
 
@@ -211,7 +213,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         row.addWidget(QtWidgets.QLabel("Window (s):"))
         self.sp_auto_win = _spin(float(p["window_s"]), 0.5, 600.0, 0.5, 1)
         row.addWidget(self.sp_auto_win)
-        row.addWidget(QtWidgets.QLabel("Min pairs:"))
+        row.addWidget(QtWidgets.QLabel("Min RR pairs:"))
         self.sp_auto_pairs = QtWidgets.QSpinBox()
         self.sp_auto_pairs.setRange(1, 10000)
         self.sp_auto_pairs.setValue(int(p["min_pairs"]))
@@ -221,13 +223,25 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.cb_auto_method.addItems(list(COV_METHODS.values()))
         self.cb_auto_method.setCurrentText(COV_METHODS[p["method"]])
         row.addWidget(self.cb_auto_method)
-        row.addWidget(QtWidgets.QLabel("ks:"))
+        self.cb_auto_method.setToolTip("How the SD1 / SD2 of each window are estimated")
+        self.cb_auto_method.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cb_auto_method.setMinimumContentsLength(18)
+        lbl = QtWidgets.QLabel("Sympathetic scale ks:")
+        lbl.setToolTip("Scale of the cardiac sympathetic index (CSI). The paper's value is "
+                       "for rats; calibrate it for mice.")
+        row.addWidget(lbl)
         self.sp_ks = _spin(float(p["ks"]), 0.0, 1000.0, 0.5, 2)
+        self.sp_ks.setToolTip(lbl.toolTip())
         row.addWidget(self.sp_ks)
-        row.addWidget(QtWidgets.QLabel("kp:"))
+        lbl = QtWidgets.QLabel("Parasympathetic scale kp:")
+        lbl.setToolTip("Scale of the cardiac parasympathetic index (CPI). The paper's value is "
+                       "for rats; calibrate it for mice.")
+        row.addWidget(lbl)
         self.sp_kp = _spin(float(p["kp"]), 0.0, 1000.0, 0.5, 2)
+        self.sp_kp.setToolTip(lbl.toolTip())
         row.addWidget(self.sp_kp)
-        self.btn_calibrate = QtWidgets.QPushButton("Calibrate ks/kp…")
+        self.btn_calibrate = QtWidgets.QPushButton("Calibrate…")
         self.btn_calibrate.setToolTip("Choose ks / kp on the cohort registry's event-locked rows "
                                       "(the paper's values are rat values, not validated in mice)")
         self.btn_calibrate.clicked.connect(self.open_calibration)
@@ -255,6 +269,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         canvas.setMinimumHeight(460)
         lay.addWidget(canvas, 3)
         host.txt_autonomic = TextBox()
+        host.txt_autonomic.setPlaceholderText(TABLE_PLACEHOLDER)
         lay.addWidget(host.txt_autonomic, 2)
         return page
 
@@ -329,6 +344,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         body.addLayout(right, 2)
         lay.addLayout(body, 1)
         host.txt_event_locked = TextBox()
+        host.txt_event_locked.setPlaceholderText(TABLE_PLACEHOLDER)
         lay.addWidget(host.txt_event_locked)
         host._fill_event_rows = self._fill_event_rows
         ctl = EventLockedController(host)
