@@ -965,6 +965,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.apply_shell_palette(p)
         self.detection.apply_palette(p)
         self.rhythm.apply_palette(p)
+        self.morphology.beat_chart.apply_palette(p)
         self.redraw_figures()
         self._tab_state_shown.clear()          # the dots in the new colours
         theme.save_prefs()

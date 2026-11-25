@@ -121,7 +121,12 @@ class MorphologyTab(QtWidgets.QScrollArea):
             fl.addWidget(widget, 1)
             return f
 
-        lay.addWidget(card("Mean beat and landmarks", host.slot("beat", page, 12.0, 4.6), 420))
+        # The mean beat on screen (PyQtGraph); the Matplotlib figure stays,
+        # hidden, for the exports.
+        from ecg.qt.widgets.beat_chart import BeatChart
+        self.beat_chart = BeatChart()
+        host.slot("beat", page, 12.0, 4.6).hide()
+        lay.addWidget(card("Mean beat and landmarks", self.beat_chart, 0))
         lay.addWidget(card("Intervals per beat", host.slot("intervals", page, 12.0, 5.4), 460))
         if QT_REPORTED:
             lay.addWidget(card("QTc vs RR", host.slot("qtc_rr", page, 6.0, 2.0), 220))
@@ -156,7 +161,27 @@ class MorphologyTab(QtWidgets.QScrollArea):
         open_editor(self.win)
 
     # ── Measure intervals ───────────────────────────────────
+    def refresh_beat(self) -> None:
+        """The mean beat chart from the results and the template in use."""
+        from ecg.app.plot_controller import beat_template_overlay
+        from ecg.app.wave_landmarks import WaveLandmarks
+        a = self.win.recording.analysis
+        r = a.results
+        marks: dict = {}
+        if r is not None:
+            wt, _note = beat_template_overlay(a.wave_template, r.get("intervals"))
+            if wt is None:
+                wt, _n = WaveTemplate.load_default_checked(quiet=True)
+            marks = {k: (float(v[0]), float(v[1])) for k, v in wt.landmarks.items()}
+        key = (id(r), tuple(sorted(marks.items())))
+        if key == getattr(self, "_beat_key", None):
+            return
+        self._beat_key = key
+        self.beat_chart.set_beat(r, marks, WaveLandmarks.WAVE_SHORT_LABELS,
+                                 WaveLandmarks.WAVE_COLORS)
+
     def results_changed(self) -> None:
+        QtCore.QTimer.singleShot(0, self.refresh_beat)
         has = self.win.recording.analysis.results is not None
         self.btn_measure.setEnabled(has)
         lbl = self.win.figures.lbl_ivl_status
@@ -171,6 +196,7 @@ class MorphologyTab(QtWidgets.QScrollArea):
     def refresh_banner(self) -> None:
         """TabMorphologyMixin._refresh_morphology: the steps, the interval
         table (rebuilt only when the frame changes) and the stale line."""
+        self.refresh_beat()                     # a template moved in the editor
         from ecg.qt import theme
         from ecg.app.freshness import COMPUTING, OUT_OF_DATE, UP_TO_DATE, stale_banner_text
         from ecg.app.morphology_helpers import (interval_lines, measured_headline,
