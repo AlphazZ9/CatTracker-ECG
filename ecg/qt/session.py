@@ -48,13 +48,9 @@ class QtSession:
         host = window.figures
         host.session = SessionState()
         # What collect_session_state reads with getattr(..., None): absent here.
-        # The Recording fields Tk saves: no sex / project entries here yet
-        # (the file name's sex, no project) and the raw view on, as Tk's
-        # defaults, so a session saved here holds the same keys.
-        from ecg.io.subject_name import subject_from_filename
-        host.ent_sex = Value(lambda: (subject_from_filename(window.recording.signal.filepath)
-                                      [1] or "") if window.recording.signal.filepath else "")
-        host.ent_project_name = Value(lambda: "")
+        # The Recording fields Tk saves: Subject / Sex / Project are the
+        # Recording sheet's (ecg.qt.dialogs.recording_dialog); the raw view
+        # on, as Tk's default, so a session saved here holds the same keys.
         host.sw_show_raw = Value(lambda: True)
         for name in (
                      "_compare_setup_snapshot", "lbl_session_info", "lbl_template_info",
@@ -243,6 +239,14 @@ class QtSession:
                 win.settings.sp_sg_win.setValue(float(fields["sg_window_ms"]))
             except ValueError:
                 pass
+        if isinstance(fields, dict):
+            # Subject, sex and project (SessionController.apply_recording_fields:
+            # a typed value is kept over the file name's; the project only
+            # fills an empty field).
+            self.ctrl.apply_recording_fields({k: v for k, v in fields.items()
+                                              if k in ("subject", "sex", "project_name")})
+        win.recording_sheet.notes_restored()
+        win.update_file_label()
 
         # The plot and the peaks: re-derived from the candidates (DetectionController
         # .run_detection), then the saved artifact removals re-applied.

@@ -238,6 +238,7 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot.set_annotations(rec.analysis.annotations)
         self._show_peaks()
         self.win.peaks_changed()
+        self.win.update_file_label()
         warning = bundle.get("detector_warning")
         self.win.set_status(warning or f"{len(d.rpeaks_ok):,} peaks detected · "
                                        f"{s.filter_text or ''}", warn=bool(warning))

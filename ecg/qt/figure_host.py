@@ -344,7 +344,6 @@ class FigureHost:
         from ecg.ui.freshness import FreshnessService
         self.freshness = FreshnessService(self)
                                      # (Qt drops them on every peak change)
-        self.ent_subject = Value(lambda: self._window.subject())
         self._arr_card_widgets: list = []
         self.on_events_list: "Optional[Callable]" = None
         self.on_rhythm_table: "Optional[Callable]" = None

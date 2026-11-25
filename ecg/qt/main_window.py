@@ -117,6 +117,8 @@ class MainWindow(QtWidgets.QMainWindow):
         from ecg.qt.dialogs.settings_dialog import SettingsDialog
         from ecg.qt.session import QtSession
         self.settings = SettingsDialog(self)
+        from ecg.qt.dialogs.recording_dialog import RecordingDialog
+        self.recording_sheet = RecordingDialog(self)
         self.session = QtSession(self)
         self.tabs.currentChanged.connect(
             lambda i: self.report.refresh() if self.tabs.widget(i) is self.report else None)
@@ -137,17 +139,50 @@ class MainWindow(QtWidgets.QMainWindow):
                               ("Save Session", QtGui.QKeySequence.StandardKey.Save,
                                lambda: self.session.save()),
                               (None, None, None),
+                              ("Recent recordings…", None, self.open_recent),
+                              ("Recording (subject, project, notes)…", None,
+                               lambda: (self.recording_sheet.show(),
+                                        self.recording_sheet.raise_())),
+                              (None, None, None),
                               ("Quit", QtGui.QKeySequence.StandardKey.Quit, self.close)):
             if text is None:
                 m.addSeparator()
                 continue
             act = m.addAction(text)
-            act.setShortcut(key)
+            if key is not None:
+                act.setShortcut(key)
             act.triggered.connect(fn)
+            if text == "Open…":
+                self.menu_recent = m.addMenu("Open Recent")
+                self.menu_recent.aboutToShow.connect(self._fill_recent_menu)
         h = mb.addMenu("&Help")
         h.addAction("Open log folder").triggered.connect(self.open_log_folder)
         h.addAction("About").triggered.connect(lambda: QtWidgets.QMessageBox.about(
             self, "ECG Analysis", f"ECG Analysis {ecg.__version__}\nQt interface (PySide6)."))
+
+    def _fill_recent_menu(self) -> None:
+        """The last files opened (newest first), then the registry view."""
+        import os
+        m = self.menu_recent
+        m.clear()
+        paths = [p for p in self.figures.session.recent_files if os.path.exists(p)]
+        if not paths:
+            from ecg.qt.dialogs.recent_dialog import recent_rows
+            paths = [r["filepath"] for r in recent_rows([])][:8]
+        if not paths:
+            m.addAction("No recent files yet").setEnabled(False)
+        for p in paths:
+            act = m.addAction(Path(p).name)
+            act.setToolTip(p)
+            act.triggered.connect(lambda _c=False, p=p: self.open_path(p))
+        m.addSeparator()
+        m.addAction("All recent recordings (stats, cohort trends)…").triggered.connect(
+            self.open_recent)
+
+    def open_recent(self) -> None:
+        from ecg.qt.dialogs.recent_dialog import RecentDialog
+        self.recent_dialog = RecentDialog(self)
+        self.recent_dialog.show()
 
     def open_log_folder(self) -> None:
         from ecg.qt.errors import default_log_dir
@@ -166,6 +201,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_open = QtWidgets.QPushButton("Open…")
         self.btn_open.clicked.connect(self.open_dialog)
         row.addWidget(self.btn_open)
+        self.btn_recording = QtWidgets.QPushButton("Recording…")
+        self.btn_recording.setToolTip("Subject ID, sex, project and notes of this recording")
+        self.btn_recording.clicked.connect(
+            lambda: (self.recording_sheet.show(), self.recording_sheet.raise_()))
+        row.addWidget(self.btn_recording)
         self.btn_settings = QtWidgets.QPushButton("Settings…")
         self.btn_settings.setToolTip("Channel, crop, filters, RR bounds, artifact correction")
         self.btn_settings.clicked.connect(lambda: (self.settings.show(), self.settings.raise_()))
@@ -257,23 +297,48 @@ class MainWindow(QtWidgets.QMainWindow):
         self.time_course.results_changed()
         self.events.clear()
         self.events.peaks_changed()
-        self.lbl_file.setText(Path(path).name)
         self.lbl_file.setToolTip(str(path))
+        # Notes, subject and sex from the file name, and the recent list
+        # (SignalController.load_path); a saved session then restores its own.
+        from ecg.services.recording_fields import autofill_subject_from_name
+        self.recording_sheet.file_opened(str(path))
+        kept_note = autofill_subject_from_name(self.figures, str(path))
+        self.session.ctrl.add_recent(str(path))
+        self.update_file_label()
         self.detection.file_opened()
         self.compare.file_opened()
         self.btn_save.setEnabled(False)
         self.recording_changed.emit()
-        self.set_status(f"Opened {Path(path).name} — click Detect Peaks")
+        self.set_status(kept_note or f"Opened {Path(path).name} — click Detect Peaks",
+                        warn=bool(kept_note))
         if check_session:
             self.session.check(str(path))
 
     def subject(self) -> str:
-        """The subject ID of the recording: from its file name, as the Tk
-        interface's default (ecg.io.subject_name)."""
-        from ecg.io.subject_name import DEFAULT_SUBJECT, subject_from_filename
-        path = self.recording.signal.filepath
-        subject = subject_from_filename(path)[0] if path else None
-        return subject or DEFAULT_SUBJECT
+        """The Subject ID of the Recording sheet (filled from the file name,
+        as in Tk, unless typed there)."""
+        return self.figures.ent_subject.get().strip()
+
+    def update_file_label(self) -> None:
+        """The header's file chip: name · channel · rate · subject, and the
+        project (ECGApp._update_topbar_filename / _on_project_name_change)."""
+        s = self.recording.signal
+        if not s.filepath:
+            self.lbl_file.setText("No recording")
+            return
+        text = Path(s.filepath).name
+        if s.channel is not None:
+            channel = str(s.channel)
+            if len(channel) > 12:
+                channel = channel.rsplit("_", 1)[-1]
+            text += f" · {channel} · {s.fs:g} Hz"
+        subject = self.subject()
+        if subject:
+            text += f" · {subject}"
+        project = self.figures.ent_project_name.get().strip()
+        if project:
+            text = f"[{project}]  {text}"
+        self.lbl_file.setText(text)
 
     # ── Analyze ─────────────────────────────────────────────
     def open_ml_dialog(self) -> None:

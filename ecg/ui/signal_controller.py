@@ -17,6 +17,8 @@ from tkinter import messagebox
 
 import numpy as np
 
+from ecg.services.recording_fields import autofill_subject_from_name as _autofill_subject
+
 from ecg.core.analysis import signal_crop_info
 from ecg.core.models import MouseECG
 from ecg.core.filtering import normalize
@@ -24,9 +26,7 @@ from ecg.core import pipeline
 from ecg.services.detection_service import load_and_detect
 from ecg.io.loaders import load_mat_signal, read_spike2_markers
 from ecg.io.db import _DB_AVAILABLE, get_notes
-from ecg.io.subject_name import (
-    DEFAULT_SUBJECT, is_default_subject, subject_from_filename,
-)
+from ecg.io.subject_name import is_default_subject
 from ecg.ui.app_async import recording_changed
 from ecg.ui.session_controller import pending_template_info_text
 from ecg.ui.theme import BLUE, GREEN, LIGHT, MUTED, ORANGE, RED
@@ -788,46 +788,8 @@ class SignalController:
         does not give goes back to the placeholder, an auto-filled sex to
         empty: they belonged to the previous file."""
         app = self.app
-        subject, sex = subject_from_filename(path)
-        kept: "list[str]" = []      # typed values the name contradicts
-        ent = getattr(app, "ent_subject", None)
-        if ent is not None:
-            try:
-                cur = ent.get().strip()
-                auto = getattr(app, "_subject_autofill", None)
-                was_auto = bool(auto) and cur == auto
-                if not cur or is_default_subject(cur) or was_auto:
-                    new = subject or (DEFAULT_SUBJECT if was_auto else cur)
-                    if new != cur:
-                        ent.delete(0, "end")
-                        ent.insert(0, new)
-                    app._subject_autofill = subject
-                elif subject and cur != subject:
-                    kept.append(f"subject {cur} (the file name says {subject})")
-            except Exception as exc:
-                log.debug("Could not fill the subject from the file name: %s", exc)
-        ent = getattr(app, "ent_sex", None)
-        if ent is not None:
-            try:
-                cur = ent.get().strip()
-                auto = getattr(app, "_sex_autofill", None)
-                if not cur or (bool(auto) and cur == auto):
-                    new = sex or ""
-                    if new != cur:
-                        ent.delete(0, "end")
-                        if new:
-                            ent.insert(0, new)
-                    app._sex_autofill = sex
-                elif sex and cur.upper() != sex:
-                    kept.append(f"sex {cur} (the file name says {sex})")
-            except Exception as exc:
-                log.debug("Could not fill the sex from the file name: %s", exc)
-        app._subject_kept_note = ""
-        if kept:
-            # The typed value stays, but say so: it may belong to the
-            # previous animal.
-            note = "Kept as typed: " + "; ".join(kept) + "."
-            app._subject_kept_note = note
+        note = _autofill_subject(app, path)
+        if note:
             set_status = getattr(app, "_set_status", None)
             if callable(set_status):
                 try:
