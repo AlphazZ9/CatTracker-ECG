@@ -105,12 +105,5 @@ class AgreementDialog(QtWidgets.QDialog):
     def jump_to(self, t: float) -> None:
         """Centre the Signal & Detection trace on beat time *t* (s), the
         window width kept."""
-        det = self.win.detection
-        t0, t1 = det.plot.window()
-        width = max(t1 - t0, 0.1)
-        time = self.win.recording.signal.time
-        end = float(time[-1]) if time is not None and len(time) else t + width
-        start = max(0.0, min(t - width / 2, max(0.0, end - width)))
-        self.win.tabs.setCurrentWidget(det)
-        det.plot.set_window(start, start + width)
+        self.win.detection.center_on(t)
         self.raise_()

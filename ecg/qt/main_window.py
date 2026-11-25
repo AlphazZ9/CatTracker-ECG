@@ -421,9 +421,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.morphology.results_changed()
         self.time_course.results_changed()
         self.morphology.wave_template()       # the saved default, first time (as Tk)
-        self.figures.plot_ctrl.draw_core_results(on_complete=self._run_freq)
+        self.figures.plot_ctrl.draw_core_results(
+            on_complete=lambda: self._run_freq(then=lambda: self._run_nonlinear(
+                then=self._analysis_chain_done)))
 
-    def _run_freq(self) -> None:
+    def _run_freq(self, then: "Optional[Callable[[], None]]" = None) -> None:
+        """Frequency HRV of the analysis window (AnalysisController.run_freq),
+        then *then* once drawn: Analyze's chain, or nothing for Recompute."""
+        self._freq_then = then
         ctl, s = self.figures.analysis_ctrl, self.recording.signal
         rp = self.figures._windowed_peaks()
         lo, hi = ctl.results_rr_bounds()
@@ -445,9 +450,10 @@ class MainWindow(QtWidgets.QMainWindow):
         pc.run_plot_chain([("PSD", lambda: pc.plot_psd(r)),
                            ("HRV tables (freq)", lambda: pc.plot_hrv_tables(r)),
                            ("Metrics", lambda: pc.plot_table_views(r))],
-                          on_complete=self._run_nonlinear)
+                          on_complete=self._freq_then)
 
-    def _run_nonlinear(self) -> None:
+    def _run_nonlinear(self, then: "Optional[Callable[[], None]]" = None) -> None:
+        self._nonlin_then = then
         ctl, s = self.figures.analysis_ctrl, self.recording.signal
         rp = self.figures._windowed_peaks()
         lo, hi = ctl.results_rr_bounds()
@@ -469,7 +475,30 @@ class MainWindow(QtWidgets.QMainWindow):
         pc = self.figures.plot_ctrl
         pc.run_plot_chain([("Non-linear metrics", lambda: pc.plot_nonlinear(r)),
                            ("Metrics", lambda: pc.plot_table_views(r))],
-                          on_complete=self._analysis_chain_done)
+                          on_complete=self._nonlin_then)
+
+    def recompute_freq(self) -> None:
+        """Rhythm & HRV > Recompute Frequency: on the current peaks, window
+        and RR bounds (the core results kept)."""
+        if not self._can_recompute():
+            return
+        self._run_freq(then=lambda: self.set_status("Frequency HRV recomputed"))
+
+    def recompute_nonlinear(self) -> None:
+        """Rhythm & HRV > Recompute Non-linear (e.g. after an entropy cap change)."""
+        if not self._can_recompute():
+            return
+        self._run_nonlinear(then=lambda: self.set_status("Non-linear HRV recomputed"))
+
+    def _can_recompute(self) -> bool:
+        if self.recording.analysis.results is None:
+            self.set_status("Click Analyze first.", warn=True)
+            return False
+        rp = self.figures._windowed_peaks()
+        if rp is None or len(rp) < 5:
+            self.set_status("Not enough peaks in the analysis window.", warn=True)
+            return False
+        return True
 
     def _analysis_chain_done(self) -> None:
         """The end of Analyze; the epochs last when asked (Settings: "Compute

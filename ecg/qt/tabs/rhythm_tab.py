@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ecg.core.metric_table import TIER_ALL, MetricTable, rhythm_cards, rhythm_rows
-from ecg.qt.figure_host import StatusLabel, TextBox
+from ecg.core.models import MouseECG
+from ecg.qt.figure_host import Field, StatusLabel, TextBox
 
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
@@ -109,14 +110,41 @@ class RhythmTab(QtWidgets.QScrollArea):
         grid.addWidget(card("RR asymmetry", asym, 380), 6, 1)
         host.on_rhythm_table = self.show_table
         self._table: "MetricTable | None" = None
-        grid.addWidget(card("RR / HR tachogram", host.slot("rr", page, 9.0, 4.4), 420), 1, 0)
+        tacho = QtWidgets.QWidget()
+        tl2 = QtWidgets.QVBoxLayout(tacho)
+        tl2.setContentsMargins(0, 0, 0, 0)
+        srow = QtWidgets.QHBoxLayout()
+        srow.addStretch(1)
+        self.btn_spikes = QtWidgets.QPushButton("▲▼ Spike markers")
+        self.btn_spikes.setCheckable(True)
+        self.btn_spikes.setChecked(bool(host.ui.show_spike_markers))
+        self.btn_spikes.setToolTip("Show / hide the flagged beats (▲ / ▼) of the tachogram: "
+                                   "the trace and the mean ± SD band stay")
+        self.btn_spikes.toggled.connect(self._spikes_toggled)
+        srow.addWidget(self.btn_spikes)
+        self.btn_review = QtWidgets.QPushButton("Review ▶")
+        self.btn_review.setToolTip("The next flagged beat (▲ / ▼), centred in Signal & "
+                                   "Detection; press again for the following one")
+        self.btn_review.clicked.connect(lambda: window.detection.step_spike(+1))
+        srow.addWidget(self.btn_review)
+        tl2.addLayout(srow)
+        tl2.addWidget(host.slot("rr", page, 9.0, 4.4), 1)
+        grid.addWidget(card("RR / HR tachogram", tacho, 420), 1, 0)
         grid.addWidget(card("Poincaré", host.slot("poincare", page, 5.0, 4.4), 420), 1, 1)
 
         psd_box = QtWidgets.QWidget()
         psd_lay = QtWidgets.QVBoxLayout(psd_box)
         psd_lay.setContentsMargins(0, 0, 0, 0)
+        frow = QtWidgets.QHBoxLayout()
+        self.btn_freq = QtWidgets.QPushButton("Recompute Frequency")
+        self.btn_freq.setToolTip("Frequency HRV again on the current peaks, analysis window and "
+                                 "RR bounds")
+        self.btn_freq.clicked.connect(window.recompute_freq)
+        frow.addWidget(self.btn_freq)
         host.lbl_freq_status = StatusLabel("")
-        psd_lay.addWidget(host.lbl_freq_status)
+        host.lbl_freq_status.setWordWrap(True)
+        frow.addWidget(host.lbl_freq_status, 1)
+        psd_lay.addLayout(frow)
         psd_lay.addWidget(host.slot("psd", page, 6.0, 3.6), 1)
         grid.addWidget(card("Power spectral density", psd_box, 360), 2, 0)
 
@@ -137,6 +165,24 @@ class RhythmTab(QtWidgets.QScrollArea):
             col = QtWidgets.QVBoxLayout()
             col.addWidget(QtWidgets.QLabel(title))
             if attr == "txt_nl":
+                nrow = QtWidgets.QHBoxLayout()
+                self.btn_nonlin = QtWidgets.QPushButton("Recompute Non-linear")
+                self.btn_nonlin.clicked.connect(window.recompute_nonlinear)
+                nrow.addWidget(self.btn_nonlin)
+                nrow.addWidget(QtWidgets.QLabel("Entropy cap (RR):"))
+                # Runtime cap of the O(N²) entropy block only (SampEn, ApEn, MSE…):
+                # Poincaré and DFA always use every beat of the analysis window.
+                self.sp_entropy = QtWidgets.QSpinBox()
+                self.sp_entropy.setRange(0, 10_000_000)
+                self.sp_entropy.setValue(int(MouseECG.ENTROPY_MAX_BEATS))
+                self.sp_entropy.setToolTip("Valid RR intervals used by the entropy block, for "
+                                           "runtime (0 = no cap). SD1 / SD2 and DFA always use "
+                                           "every valid RR of the window. Takes effect at the "
+                                           "next Analyze or Recompute.")
+                nrow.addWidget(self.sp_entropy)
+                nrow.addStretch(1)
+                col.addLayout(nrow)
+                host.ent_entropy_cap = Field(self.sp_entropy, text=True)
                 host.lbl_nonlin_status = StatusLabel("")
                 col.addWidget(host.lbl_nonlin_status)
             box = TextBox()
@@ -146,6 +192,14 @@ class RhythmTab(QtWidgets.QScrollArea):
         grid.addWidget(card("HRV tables (right click: copy as a table)", raw, 300), 3, 0, 1, 2)
         grid.setColumnStretch(0, 3)
         grid.setColumnStretch(1, 2)
+
+    def _spikes_toggled(self, on: bool) -> None:
+        """ECGApp._toggle_spike_markers: only the flagged-beat layer."""
+        host = self.win.figures
+        host.ui.show_spike_markers = bool(on)
+        r = self.win.recording.analysis.results
+        if r is not None:
+            host.plot_ctrl.plot_rr(r)
 
     def _show_all_toggled(self, on: bool) -> None:
         self.win.figures.ui.hrv_show_all = on

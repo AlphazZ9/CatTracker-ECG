@@ -92,3 +92,61 @@ def test_analyze_result_dropped_when_peaks_change_meanwhile(qtbot):
     assert "peaks changed" in w.statusBar().currentMessage()
     w.jobs.cancel_all()
     w.jobs.wait(5000)
+
+
+def test_recompute_entropy_cap_and_spike_markers(qtbot, analysed):
+    import numpy as np
+    import pandas as pd
+    from ecg.core.analysis import analyse_hrv_nonlinear
+    w = analysed
+    r = w.recording.analysis.results
+    before = r["hrv_freq"].copy()
+    tab = w.rhythm
+    # Recompute Frequency alone: the same numbers, non-linear untouched
+    nl = r["hrv_nonlin"]
+    tab.btn_freq.click()
+    qtbot.waitUntil(lambda: w.statusBar().currentMessage() == "Frequency HRV recomputed",
+                    timeout=60000)
+    pd.testing.assert_frame_equal(r["hrv_freq"], before)
+    assert r["hrv_nonlin"] is nl
+    # the entropy cap reaches the non-linear computation
+    tab.sp_entropy.setValue(300)
+    ctl = w.figures.analysis_ctrl
+    assert ctl.entropy_cap() == 300
+    tab.btn_nonlin.click()
+    qtbot.waitUntil(lambda: w.statusBar().currentMessage() == "Non-linear HRV recomputed",
+                    timeout=120000)
+    lo, hi = ctl.results_rr_bounds()
+    ref = analyse_hrv_nonlinear(w.figures._windowed_peaks(), w.recording.signal.fs,
+                                max_beats=300, rr_min_ms=lo, rr_max_ms=hi,
+                                breaks=ctl.hrv_breaks())
+    pd.testing.assert_frame_equal(r["hrv_nonlin"], ref)
+    # spike markers: the layer toggles, Review steps through the flagged beats
+    spikes = w.figures.ui.rr_spike_times
+    tab.btn_spikes.setChecked(not tab.btn_spikes.isChecked())
+    assert w.figures.ui.show_spike_markers == tab.btn_spikes.isChecked()
+    if spikes is not None and len(spikes):
+        tab.btn_review.click()
+        t0, t1 = w.detection.plot.window()
+        assert any(t0 <= s <= t1 for s in np.asarray(spikes))
+        assert w.tabs.currentWidget() is w.detection
+
+
+def test_clear_edits_and_go_to(qtbot, analysed):
+    w = analysed
+    det, d = w.detection, w.recording.detection
+    peaks = d.rpeaks_ok.copy()
+    det.btn_edit.setChecked(True)
+    det._clicked(float(peaks[50] / w.recording.signal.fs), "left")
+    assert len(d.manual_excluded) == 1 and len(d.rpeaks_ok) == len(peaks) - 1
+    det.clear_edits()
+    assert not d.manual_excluded and (d.rpeaks_ok == peaks).all()
+    assert w.recording.analysis.results is None
+    det.undo()                                         # Clear Edits is undoable
+    assert len(d.manual_excluded) == 1
+    det.go_to(100.0)
+    t0, _t1 = det.plot.window()
+    assert abs(t0 - 100.0) < 1e-6
+    det.go_to(1e6)                                     # kept inside the recording
+    _t0, t1 = det.plot.window()
+    assert t1 <= float(w.recording.signal.time[-1]) + 1e-6

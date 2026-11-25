@@ -111,6 +111,11 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_redo.clicked.connect(self.redo)
         edit_bar.addWidget(self.btn_undo)
         edit_bar.addWidget(self.btn_redo)
+        self.btn_clear_edits = QtWidgets.QPushButton("Clear Edits")
+        self.btn_clear_edits.setToolTip("Re-include every peak excluded by hand and remove every "
+                                        "peak added by hand (Undo brings them back)")
+        self.btn_clear_edits.clicked.connect(self.clear_edits)
+        edit_bar.addWidget(self.btn_clear_edits)
         self.lbl_edit = QtWidgets.QLabel("")
         self.lbl_edit.setProperty("muted", True)
         edit_bar.addWidget(self.lbl_edit, 1)
@@ -138,6 +143,28 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_noise.clicked.connect(lambda: self.open_periods("noise"))
         edit_bar.addWidget(self.btn_noise)
         lay.addLayout(edit_bar)
+
+        nav = QtWidgets.QHBoxLayout()
+        nav.addWidget(QtWidgets.QLabel("Go to (s):"))
+        self.sp_goto = QtWidgets.QDoubleSpinBox()
+        self.sp_goto.setRange(0.0, 1e7)
+        self.sp_goto.setDecimals(3)
+        self.sp_goto.setToolTip("Start of the view, in seconds (Enter or Go)")
+        self.sp_goto.editingFinished.connect(lambda: self.go_to(self.sp_goto.value()))
+        nav.addWidget(self.sp_goto)
+        b_go = QtWidgets.QPushButton("Go")
+        b_go.clicked.connect(lambda: self.go_to(self.sp_goto.value()))
+        nav.addWidget(b_go)
+        nav.addSpacing(16)
+        nav.addWidget(QtWidgets.QLabel("Flagged beat:"))
+        for text, step in (("◀", -1), ("▶", +1)):
+            b = QtWidgets.QPushButton(text)
+            b.setToolTip("The previous / next beat flagged on the RR tachogram (▲ / ▼), centred")
+            b.setMaximumWidth(40)
+            b.clicked.connect(lambda _c=False, d=step: self.step_spike(d))
+            nav.addWidget(b)
+        nav.addStretch(1)
+        lay.addLayout(nav)
 
         self.plot = EcgPlot()
         self.plot.time_clicked.connect(self._clicked)
@@ -387,6 +414,69 @@ class DetectionTab(QtWidgets.QWidget):
         a = self.win.recording.analysis
         a.results = None
         a.autonomic_result = None
+
+    # ── navigation ──────────────────────────────────────────
+    def _view_width(self) -> float:
+        t0, t1 = self.plot.window()
+        return max(t1 - t0, 0.1)
+
+    def _end(self) -> float:
+        time = self.win.recording.signal.time
+        return float(time[-1]) if time is not None and len(time) else 0.0
+
+    def go_to(self, t: float) -> None:
+        """NavigationController.nav_goto: the view starts at *t* (kept inside
+        the recording), its width kept."""
+        if self.win.recording.signal.time is None:
+            return
+        width = self._view_width()
+        start = max(0.0, min(self._end() - width, float(t)))
+        self.plot.set_window(start, start + width)
+
+    def center_on(self, t: float) -> None:
+        """The view centred on *t*, its width kept, on this tab."""
+        width = self._view_width()
+        start = max(0.0, min(float(t) - width / 2, max(0.0, self._end() - width)))
+        self.win.tabs.setCurrentWidget(self)
+        self.plot.set_window(start, start + width)
+
+    def step_spike(self, direction: int) -> None:
+        """NavigationController.step_spike: the next / previous beat flagged
+        on the tachogram (ui.rr_spike_times), from the centre of the view."""
+        import numpy as np
+        spikes = self.win.figures.ui.rr_spike_times
+        if spikes is None or len(spikes) == 0 or self.win.recording.signal.time is None:
+            self.win.set_status("No suspicious beats to step through — run Analyze first")
+            return
+        spikes = np.asarray(spikes, dtype=float)
+        t0, t1 = self.plot.window()
+        cur = (t0 + t1) / 2
+        later, earlier = spikes[spikes > cur + 1e-6], spikes[spikes < cur - 1e-6]
+        if direction > 0:
+            t_nav = float(later.min()) if len(later) else float(spikes.min())
+        else:
+            t_nav = float(earlier.max()) if len(earlier) else float(spikes.max())
+        self.center_on(t_nav)
+        self.win.set_status(f"Navigation → spike at {t_nav:.3f} s")
+
+    def clear_edits(self) -> None:
+        """DetectionController.clear_manual_exclusions (undoable)."""
+        import numpy as np
+        d = self.win.recording.detection
+        if not d.manual_excluded and not d.manual_added:
+            return
+        push_undo(d.edit_undo, d.edit_redo, d.manual_excluded, d.manual_added)
+        n_excl, n_added = len(d.manual_excluded), len(d.manual_added)
+        d.manual_excluded.clear()
+        d.manual_added.clear()
+        self._drop_results()
+        self.mark_peaks_edited()
+        d.rpeaks_manual_excl = np.array([], dtype=int)
+        d.rpeaks_manual_added = np.array([], dtype=int)
+        self.apply_threshold()
+        self._update_undo_buttons()
+        self.win.set_status(f"Manual edits cleared — {n_excl} exclusion(s), {n_added} "
+                            "addition(s) removed.")
 
     # ── Check agreement ─────────────────────────────────────
     def _clear_agreement(self) -> None:
