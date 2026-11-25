@@ -28,22 +28,32 @@ def test_report_view_and_exports(qtbot, tmp_path, monkeypatch):
     w.analyze()
     qtbot.waitUntil(lambda: w.statusBar().currentMessage() == "Analysis done", timeout=120000)
 
+    # Nothing left running in the background (a figure drawn late, a job
+    # still landing) before the exports read the results.
+    qtbot.waitUntil(lambda: not w._active, timeout=120000)
+    w.jobs.wait(60000)
+
     w.tabs.setCurrentWidget(w.report)
     tab = w.report
     assert tab.provenance.rowCount() > 3 and tab.lines.rowCount() >= 5
     assert "RMSSD" in tab.text.toPlainText()
 
-    targets = iter([tmp_path / "r.xlsx", tmp_path / "r.pdf", tmp_path / "figs.zip",
-                    tmp_path / "rr.csv"])
-    monkeypatch.setattr(figure_host.QtFileDialog, "asksaveasfilename",
-                        classmethod(lambda cls, **k: str(next(targets))))
+    # One file per export, asked for by that export only: an export that
+    # stops before its file dialog fails here under its own name, instead of
+    # shifting the files of the exports after it.
     monkeypatch.setattr(figure_host.QtFileDialog, "askdirectory",
                         staticmethod(lambda **k: str(tmp_path)))
-    for method in ("export_excel", "export_pdf_report", "export_zip", "export_rr_csv"):
+    for method, name in (("export_excel", "r.xlsx"), ("export_pdf_report", "r.pdf"),
+                         ("export_zip", "figs.zip"), ("export_rr_csv", "rr.csv")):
+        asked = []
+        monkeypatch.setattr(
+            figure_host.QtFileDialog, "asksaveasfilename",
+            classmethod(lambda cls, _n=name, _a=asked, **k: _a.append(_n) or str(tmp_path / _n)))
+        assert tab.buttons[method].isEnabled(), method
         tab.buttons[method].click()
-        qtbot.wait(200)
-    w.jobs.wait(60000)
-    qtbot.wait(500)
+        w.jobs.wait(60000)
+        assert asked == [name], (method, asked, w.statusBar().currentMessage())
+        qtbot.waitUntil(lambda: (tmp_path / name).exists(), timeout=30000)
     wb = openpyxl.load_workbook(tmp_path / "r.xlsx", read_only=True)
     assert len(wb.sheetnames) >= 3
     assert (tmp_path / "r.pdf").stat().st_size > 10_000
