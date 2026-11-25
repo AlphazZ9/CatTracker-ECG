@@ -1,6 +1,6 @@
 """examples/analyse_recording.py analyses a recording without the interface
 and gets the app's numbers: its results equal the reference outputs of the
-app's own pipeline (tests/regression/golden.py, start-up settings)."""
+app's own pipeline (tests/regression/golden.py, FilterParams defaults)."""
 import importlib.util
 import json
 from pathlib import Path

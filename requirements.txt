@@ -11,6 +11,10 @@ Pillow>=10.0
 scikit-learn>=1.4  # ML R-peak detector (was already a transitive neurokit2 dep)
 skops>=0.10         # safer persistence for the ML R-peak detector
 PyWavelets>=1.4     # Wavelet (CWT) R-peak detector (also a neurokit2 dependency)
+# Qt interface (migration in progress: python -m ecg.qt). Essentials only:
+# QtCore / QtGui / QtWidgets, without the web engine and other add-ons.
+PySide6-Essentials>=6.7
+pyqtgraph>=0.13.7
 
 # Optional — only needed for specific features:
 h5py>=3.10       # MATLAB v7.3 / HDF5 file loading
