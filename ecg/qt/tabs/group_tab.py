@@ -10,10 +10,12 @@ recording or their event-locked results (ecg.io.group_compare); the figure
 
 The analyses, the table's reading / writing and Add open recording are
 those of the Tk tab (ecg/ui/tab_group.py), with its defaults. Not yet
-here (Tk only for now): From saved sessions and the Prism exports.
+here: From saved sessions (a table in memory, from the project's saved
+sessions) and the Prism exports (a new file or a template filled).
 """
 from __future__ import annotations
 
+import logging
 import math
 import os
 from typing import TYPE_CHECKING, Any, Optional
@@ -31,6 +33,8 @@ if TYPE_CHECKING:
 ALL_EVENTS = "All events"
 FIG_SIZE = (12.0, 4.6)
 
+
+log = logging.getLogger("ecg")
 
 class _Text:
     """A QLineEdit read as the Tk entry the tab's helpers take."""
@@ -56,6 +60,7 @@ class GroupTab(QtWidgets.QScrollArea):
         host._group_lines_of_open_recording = (
             lambda comparison=None: TabGroupMixin._group_lines_of_open_recording(host, comparison))
         self.path = ""
+        self.name = ""                  # a table from saved sessions: its project
         self.sheets: "Optional[dict]" = None
         self.animals = None
         self.res: "Optional[gc.GroupResult]" = None
@@ -75,6 +80,10 @@ class GroupTab(QtWidgets.QScrollArea):
         for key, text, fn, tip in (
                 ("open", "Open Excel…", self.open_dialog,
                  "Open a group table (.xlsx): one animal per recording"),
+                ("sessions", "From saved sessions…", lambda: self.from_sessions(),
+                 "Every saved session of a project (Recording sheet → Project) makes the group, "
+                 "in memory (Save as Excel… keeps it as a file). Segments are not in a "
+                 "session: Compare segments → Add to group table for them."),
                 ("add", "Add open recording…", self.add_open,
                  "Write the recording open to the table: its whole-recording metrics and time "
                  "course (after Analyze), its annotations, its event-locked results and its "
@@ -228,8 +237,20 @@ class GroupTab(QtWidgets.QScrollArea):
         self.btn_stats.clicked.connect(self.save_stats)
         self.btn_fig = QtWidgets.QPushButton("Save figure…")
         self.btn_fig.clicked.connect(self.save_figure)
+        self.btn_prism = QtWidgets.QPushButton("Prism… (new file / template)")
+        self.btn_prism.setToolTip("GraphPad Prism: per group one table per metric (one row per "
+                                  "animal), the changes by group, the time course as XY tables; "
+                                  "new file or poured into your template")
+        menu = QtWidgets.QMenu(self.btn_prism)
+        menu.addAction("New Prism file…").triggered.connect(lambda: self.prism_new())
+        menu.addAction("Fill a Prism template…").triggered.connect(lambda: self.prism_fill())
+        self.btn_prism.setMenu(menu)
+        self.btn_stats.setToolTip("Excel: the results table, every number behind it (means, "
+                                  "SEM, n, tests, Holm), the ANOVA, the per-animal values and "
+                                  "the settings")
         brow.addWidget(self.btn_stats)
         brow.addWidget(self.btn_fig)
+        brow.addWidget(self.btn_prism)
         self.lbl_out = StatusLabel("")
         brow.addWidget(self.lbl_out, 1)
         rl.addLayout(brow)
@@ -249,7 +270,9 @@ class GroupTab(QtWidgets.QScrollArea):
         self.lbl_msg.configure(text=text, text_color=None if ok else "#E65100")
 
     def table_name(self) -> str:
-        return os.path.basename(self.path) if self.path else "group (not saved)"
+        if self.path:
+            return os.path.basename(self.path)
+        return f"{self.name} (not saved)" if self.name else "group (not saved)"
 
     def load(self, path: str) -> bool:
         try:
@@ -258,8 +281,47 @@ class GroupTab(QtWidgets.QScrollArea):
             QtWidgets.QMessageBox.critical(self, "Group table", f"{os.path.basename(path)}: {exc}")
             return False
         self.path = path
+        self.name = ""
         self.show_sheets(sheets)
         return True
+
+    def from_sessions(self, project: "Optional[str]" = None) -> None:
+        """Tk _from_sessions: the group of every saved session of a project
+        (TabGroupMixin's project_sheets), held in memory."""
+        from ecg.io import db
+        from ecg.ui.tab_group import project_sheets
+        if project is None:
+            names = db.project_names()
+            if not names:
+                QtWidgets.QMessageBox.information(
+                    self, "Group from saved sessions",
+                    "No saved session has a project name yet: type it in the Recording sheet "
+                    "(Recording… → Project) and Save Session for each recording.")
+                return
+            project, ok = QtWidgets.QInputDialog.getItem(
+                self, "Group from saved sessions",
+                "Every saved session of the project (Recording sheet → Project) makes the "
+                "group (Save as Excel… keeps it as a file):", names, 0, False)
+            if not ok or not project:
+                return
+        try:
+            sheets, added, skipped = project_sheets(project)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Group from saved sessions", str(exc))
+            return
+        if not added:
+            text = f"⚠  {project}: no saved session could be used"
+            if skipped:
+                text += "  ·  " + "; ".join(skipped)
+            self.say(text, ok=False)
+            return
+        self.path, self.name = "", project
+        self.show_sheets(sheets)
+        text = (f"✓  {project}: {len(added)} recording{'s' if len(added) != 1 else ''} from "
+                "the saved sessions (in memory: Save as Excel… to keep it)")
+        if skipped:
+            text += "  ·  left out: " + "; ".join(skipped)
+        self.say(text, ok=not skipped)
 
     def open_dialog(self) -> None:
         path, _f = QtWidgets.QFileDialog.getOpenFileName(
@@ -558,7 +620,7 @@ class GroupTab(QtWidgets.QScrollArea):
         self.show_result(res)
 
     def show_result(self, res: "Optional[gc.GroupResult]", error: str = "") -> None:
-        for b in (self.btn_stats, self.btn_fig):
+        for b in (self.btn_stats, self.btn_fig, self.btn_prism):
             b.setEnabled(res is not None)
         t = self.tbl_res
         t.clear()
@@ -679,4 +741,60 @@ class GroupTab(QtWidgets.QScrollArea):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Group figure", str(exc))
             return
+        finally:
+            import matplotlib.pyplot as plt
+            plt.close(fig)
         self.lbl_out.configure(text=f"✓  figure → {os.path.basename(path)}")
+
+    def _notes(self, res: "gc.GroupResult") -> "list[tuple[str, Any]]":
+        return ([("Group table", os.path.basename(self.path))] + list(res.settings)
+                + [("Groups", ", ".join(f"{g}" for g in res.groups)),
+                   ("Animals", res.n_animals)] + [("Note", n) for n in res.notes])
+
+    def prism_new(self, path: "Optional[str]" = None) -> None:
+        from ecg.io.prism_template import write_metric_pzfx
+        from ecg.ui.tab_group import _file_tag
+        res = self.res
+        if res is None:
+            return
+        if path is None:
+            path, _f = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Export to GraphPad Prism",
+                os.path.join(os.path.dirname(self.path),
+                             f"{self._base()}_{_file_tag(res.analysis)}.pzfx"),
+                "GraphPad Prism (*.pzfx);;All files (*)")
+        if not path:
+            return
+        try:
+            n = write_metric_pzfx(res.prism, path, notes=self._notes(res))
+        except Exception as exc:
+            log.exception("group tab Prism export")
+            QtWidgets.QMessageBox.critical(self, "Prism export", str(exc))
+            return
+        self.lbl_out.configure(text=f"✓  Prism: {n} tables → {os.path.basename(path)}")
+
+    def prism_fill(self, template: "Optional[str]" = None, out: "Optional[str]" = None) -> None:
+        from ecg.io.prism_template import PrismTemplateError, fill_template
+        res = self.res
+        if res is None:
+            return
+        cmp_tab = self.win.compare                  # the template asked as there
+        tpl = template or cmp_tab.ask_prism_template()
+        if not tpl:
+            return
+        out = out or cmp_tab.ask_filled_path(tpl, self._base())
+        if not out:
+            return
+        try:
+            report = fill_template(tpl, res.prism, out,
+                                   notes=self._notes(res) + [("Prism template",
+                                                              os.path.basename(tpl))])
+        except Exception as exc:
+            if not isinstance(exc, PrismTemplateError):
+                log.exception("group tab Prism template")
+            QtWidgets.QMessageBox.critical(self, "Prism template", str(exc))
+            return
+        self.lbl_out.configure(
+            text=(("⚠  " if report.warn else "✓  ") + f"Prism template {os.path.basename(tpl)}: "
+                  f"{report.summary()} → {os.path.basename(out)}"),
+            text_color="#E65100" if report.warn else None)

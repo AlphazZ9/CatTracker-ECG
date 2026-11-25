@@ -332,14 +332,15 @@ class CompareMoreMixin:
         prism_template.save_last_template(path, prism_template.PREFS_PATH)
         return path
 
-    def ask_filled_path(self, template: str) -> "Optional[str]":
+    def ask_filled_path(self, template: str, base: "Optional[str]" = None) -> "Optional[str]":
         """'<base>_<template>.pzfx' next to the template by default, never
         the template itself."""
         stem = os.path.splitext(os.path.basename(template))[0]
+        base = self._base_name() if base is None else base
         while True:
             path, _f = QtWidgets.QFileDialog.getSaveFileName(
                 self, "Save the filled Prism file (the template is not changed)",
-                os.path.join(os.path.dirname(template), f"{self._base_name()}_{stem}.pzfx"),
+                os.path.join(os.path.dirname(template), f"{base}_{stem}.pzfx"),
                 "GraphPad Prism (*.pzfx);;All files (*)")
             if not path:
                 return None
