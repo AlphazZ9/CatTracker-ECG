@@ -381,6 +381,11 @@ class FigureHost:
         cb = QtWidgets.QApplication.clipboard()
         cb.setText(cb.text() + str(text))
 
+    @property
+    def _arrhythmia_tsv(self) -> str:
+        """ECGApp._arrhythmia_tsv: the events as TSV (Copy for Excel)."""
+        return self.analysis.arrhythmia_tsv
+
     def _select_arrhythmia_event(self, idx: int) -> None:
         self.nav_ctrl.select_arrhythmia_event(idx)
 
