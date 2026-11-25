@@ -178,6 +178,11 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         row.addWidget(QtWidgets.QLabel("kp:"))
         self.sp_kp = _spin(float(p["kp"]), 0.0, 1000.0, 0.5, 2)
         row.addWidget(self.sp_kp)
+        self.btn_calibrate = QtWidgets.QPushButton("Calibrate ks/kp…")
+        self.btn_calibrate.setToolTip("Choose ks / kp on the cohort registry's event-locked rows "
+                                      "(the paper's values are rat values, not validated in mice)")
+        self.btn_calibrate.clicked.connect(self.open_calibration)
+        row.addWidget(self.btn_calibrate)
         self.chk_lfhf = QtWidgets.QCheckBox("LF/HF (SPWVD)")
         self.chk_lfhf.setChecked(bool(p["lf_hf"]))
         row.addWidget(self.chk_lfhf)
@@ -282,6 +287,17 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         ctl.apply_params(host.analysis.event_locked_params)
         ctl.invalidate(None)
         return page
+
+    def open_calibration(self) -> None:
+        """EventLockedController.open_calibration, with the Qt dialog."""
+        from ecg.qt.dialogs.calibration_dialog import CalibrationDialog
+        ctl = self.win.figures.event_ctrl
+        ks, kp = ctl.current_gains()
+        _fp, _sub, project = ctl._identity()
+        self.calibration = CalibrationDialog(self.win, ks=ks, kp=kp,
+                                             config=ctl.current_config(), project=project,
+                                             on_apply=ctl.apply_gains)
+        self.calibration.show()
 
     def _fill_event_rows(self, rows) -> None:
         """The compact per-event table (TimeCourseMixin._fill_event_rows)."""
