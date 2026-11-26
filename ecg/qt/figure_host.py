@@ -54,6 +54,8 @@ PLACEHOLDERS = {
     "arr_ribbon": "Click Classify events: the episodes appear here along the recording.",
     "arr_detail": "Select an event in the list to see the ECG around it.",
     "compare": "Set the segments above, then click Compare.",
+    "quality_time": "Click Analyze: each beat's correlation with the template, over time.",
+    "quality_hist": "Click Analyze to see the distribution.",
 }
 
 
@@ -528,8 +530,17 @@ class FigureHost:
 
     def __getattr__(self, name: str) -> Any:
         # Tk-only widgets (KPI tiles, buttons, the Detection bar...): no-ops.
+        # Each name is logged once, with where it was read: a Tk-era call that
+        # does nothing in Qt shows in the log instead of passing unseen.
         if name.startswith("__"):
             raise AttributeError(name)
+        seen = self.__dict__.setdefault("_missing_seen", set())
+        if name not in seen:
+            seen.add(name)
+            import sys
+            f = sys._getframe(1)
+            log.info("FigureHost: '%s' is not provided in Qt (read at %s:%d); no-op",
+                     name, f.f_code.co_filename.rsplit("/", 1)[-1], f.f_lineno)
         return _NULL
 
 
