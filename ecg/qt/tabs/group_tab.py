@@ -26,6 +26,7 @@ from ecg.io import group_compare as gc
 from ecg.io import group_data as gd
 from ecg.io.subject_name import normalise_sex
 from ecg.qt.figure_host import StatusLabel
+from ecg.qt.widgets.shell import autohide, fit_table_height
 
 if TYPE_CHECKING:
     from ecg.qt.main_window import MainWindow
@@ -107,7 +108,7 @@ class GroupTab(QtWidgets.QScrollArea):
         tl.addLayout(row)
         self.lbl_msg = StatusLabel("")
         self.lbl_msg.setWordWrap(True)
-        tl.addWidget(self.lbl_msg)
+        tl.addWidget(autohide(self.lbl_msg))
 
         # ── Animals ──
         al = card("Animals")
@@ -116,7 +117,9 @@ class GroupTab(QtWidgets.QScrollArea):
                                                     "Data · QC", ""])
         self.tbl_animals.verticalHeader().setVisible(False)
         self.tbl_animals.horizontalHeader().setStretchLastSection(False)
-        self.tbl_animals.setMinimumHeight(160)
+        self.tbl_animals.horizontalHeader().setSectionResizeMode(
+            4, QtWidgets.QHeaderView.ResizeMode.Stretch)           # File: the free width
+        fit_table_height(self.tbl_animals, min_rows=2)
         al.addWidget(self.tbl_animals)
         hint = QtWidgets.QLabel("Group: type a name (Control, CNO…) or pick one; Sex comes "
                                 "from the file name. Unticked animals are left out of every "
@@ -223,7 +226,7 @@ class GroupTab(QtWidgets.QScrollArea):
         frow.addWidget(self.cb_fm)
         fl.addLayout(frow)
         self.slot = window.figures.slot("group_tab", page, *FIG_SIZE)
-        self.slot.setMinimumHeight(460)
+        self.slot.setMinimumHeight(400)
         fl.addWidget(self.slot)
 
         # ── Results ──
@@ -231,7 +234,7 @@ class GroupTab(QtWidgets.QScrollArea):
         self.tbl_res = QtWidgets.QTableWidget(0, 0)
         self.tbl_res.verticalHeader().setVisible(False)
         self.tbl_res.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tbl_res.setMinimumHeight(240)
+        self.tbl_res.setVisible(False)
         rl.addWidget(self.tbl_res)
         self.lbl_notes = QtWidgets.QLabel("")
         self.lbl_notes.setWordWrap(True)
@@ -372,6 +375,7 @@ class GroupTab(QtWidgets.QScrollArea):
         t.setRowCount(0)
         an = self.animals
         if an is None or an.empty:
+            fit_table_height(t, min_rows=2)
             return
         groups = sorted({str(g) for g in an["group"] if str(g)}, key=str.casefold)
         for i, (_, r) in enumerate(an.iterrows()):
@@ -403,6 +407,8 @@ class GroupTab(QtWidgets.QScrollArea):
             rm.clicked.connect(lambda _c=False, k=key: self.remove_animal(k))
             t.setCellWidget(i, 6, rm)
         t.resizeColumnsToContents()
+        t.resizeRowsToContents()
+        fit_table_height(t, min_rows=2, max_px=420)
 
     def persist(self, what: str) -> bool:
         if not self.path:
@@ -629,10 +635,12 @@ class GroupTab(QtWidgets.QScrollArea):
         t = self.tbl_res
         t.clear()
         if res is None:
+            # No table, the reason in the notes line: a one-column header
+            # held the message, cut to its first letters.
             t.setRowCount(0)
-            t.setColumnCount(1)
-            t.setHorizontalHeaderLabels([error or "No result"])
-            self.lbl_notes.setText("")
+            t.setColumnCount(0)
+            t.setVisible(False)
+            self.lbl_notes.setText(error or "No result")
             self.cb_fm.setVisible(False)
             msg = error or "No result"
             self.slot.update(lambda fig: fig.text(0.5, 0.5, msg, ha="center", va="center",
@@ -665,6 +673,8 @@ class GroupTab(QtWidgets.QScrollArea):
                         item.setForeground(sig_color)
                     t.setItem(r, c, item)
         t.resizeColumnsToContents()
+        t.setVisible(True)
+        fit_table_height(t, max_px=460)
         self.lbl_notes.setText("\n".join(f"⚠  {n}" for n in res.notes))
         fm: "list[str]" = []
         if res.figure.get("kind") in ("paired", "dots"):
