@@ -274,27 +274,35 @@ below.
 
 ### Rhythm & HRV: tachogram and Poincaré
 
-<img src="screenshots/04_rhythm_hrv.png" width="800" alt="Rhythm &amp; HRV page, top: the key values (heart rate in red), heart rate over time, Poincaré with SD1 / SD2 and the multiscale entropy">
+<img src="screenshots/04_rhythm_hrv.png" width="800" alt="Rhythm &amp; HRV page, top: the key values (heart rate in red), the RR and heart-rate tachograms, Poincaré with SD1 / SD2 and the multiscale entropy">
 
-The line under the title gives the beats analysed and the mean heart rate; the key
-values follow, heart rate first. **Heart rate over time** shows the heart rate of
-every beat (a thin line) and its 9-beat running median (thick), or the RR intervals
-(**HR / RR**), with the annotations shaded and the flagged beats (sudden
-acceleration / deceleration) circled. Its scale leaves out the rare extreme beats
-(0.5th–99.5th percentile; the ones beyond are marked at the edge). Click a point and
-the Signal page shows that beat. **Flagged beats** shows or hides them; **Review ›**
-centres the next one on the Signal page. **Poincaré and entropy** sits beside it:
-the scatter of successive valid RR with its SD1 / SD2 ellipse, the three values,
-and the multiscale entropy curve. The exported figures (PDF, ZIP) keep their own
-layout.
+The page has four sections, as in the former interface: **Tachogram and
+Poincaré**, **Metrics and power spectrum**, **Non-linear details**, **RR
+distribution (valid intervals)**. The line under the title gives the beats
+analysed and the mean heart rate; the key values follow, heart rate first.
+
+**Tachogram and Poincaré** fills the window under the key values. On the left,
+the RR intervals (above) and the instantaneous heart rate (below) on one time
+axis: every beat as a thin line, its 9-beat running median thick, the
+annotations shaded and the flagged beats (sudden acceleration / deceleration)
+circled. Their scale leaves out the rare extreme beats (0.5th–99.5th
+percentile; the ones beyond are marked at the edge). Click a point and the
+Signal page shows that beat. **▲▼ Spike markers** shows or hides the flagged
+beats; **Review** centres the next one on the Signal page. On the right, the
+scatter of successive valid RR with its SD1 / SD2 ellipse, the three values,
+and the multiscale entropy curve. The exported figures (PDF, ZIP) keep their
+own layout.
 
 ### Rhythm & HRV: spectrum, RR distribution and HRV tables
 
-<img src="screenshots/05_rhythm_metrics.png" width="800" alt="Rhythm &amp; HRV tab: power spectral density, RR distribution and the HRV tables">
+<img src="screenshots/05_rhythm_metrics.png" width="800" alt="Rhythm &amp; HRV tab: the metric table beside the power spectral density">
 
-The **Power spectrum** card holds **Recompute** (Frequency HRV again on the
-current peaks, analysis window and RR bounds) and its status, above a Welch power
-spectral density plot with mouse-specific VLF/LF/HF band shading (not the human 0.04–0.15/0.15–0.4 Hz convention).
+**Metrics and power spectrum**: on the left the metric table gives each value
+with its unit and what it was computed on; **Show all NeuroKit metrics** adds
+the extra metrics (SDANN, TINN, HTI…). No protocol-specific reference-range
+status markers are shown. On the right, **Recompute frequency** (Frequency HRV
+again on the current peaks, analysis window and RR bounds) and its status, above
+a Welch power spectral density plot with mouse-specific VLF/LF/HF band shading (not the human 0.04–0.15/0.15–0.4 Hz convention).
 
 The plotted spectrum **is** the one the numbers come from: the valid RR
 intervals are resampled at 20 Hz (cubic spline on their true times), Welch's
@@ -314,22 +322,19 @@ HRV_Frequency sheets and Prism, and the PSD title flags it. In the raw
 `HRV_LFn (fraction of LF+HF)` (a fraction; ×100 gives the n.u. shown
 elsewhere), `HRV_LFpeak (Hz)`.
 
-Beside the spectrum, the distribution of the valid RR intervals. **Show the text
-tables** (bottom of the page) gives the raw time-domain, frequency-domain,
-non-linear and RR values side by side (right click a table: *Copy as table* for
-Excel). The Poincaré card has **Recompute** for the non-linear HRV and the
-**Entropy cap (RR)** field.
+**RR distribution (valid intervals)**, at the bottom: the RR statistics (count,
+mean, SD, quartiles, excluded; **Copy for Excel**) beside their histogram.
+**Show the text tables** (below it) gives the raw time-domain, frequency-domain
+and non-linear values side by side (right click a table: *Copy as table* for
+Excel).
 
 ### Rhythm & HRV: key values, metric table and asymmetry
 
-<img src="screenshots/06_rhythm_nonlinear.png" width="800" alt="Rhythm &amp; HRV tab: six key values, the metric table and RR asymmetry">
+<img src="screenshots/06_rhythm_nonlinear.png" width="800" alt="Rhythm &amp; HRV tab: non-linear details, RR asymmetry and the RR distribution">
 
-Six key values (heart rate, SDNN, RMSSD, pNN6, LF / HF, SD1 / SD2), each with what
-it rests on. Below them, the metric table gives each value with its unit and what
-it was computed on; **Show all metrics** adds the extra metrics (SDANN, TINN,
-HTI…). No protocol-specific reference-range status markers are shown. Beside it,
-RR asymmetry: the share of decelerations and accelerations (Porta, Guzik) and the
-ΔRR distribution.
+**Non-linear details**: **Recompute non-linear** and the **Entropy cap (RR)**
+field, the status and what each block rests on, then RR asymmetry: the share of
+decelerations and accelerations (Porta PI, Guzik GI) and the ΔRR distribution.
 
 Poincaré SD1/SD2, DFA α1/α2 and the asymmetry / fragmentation indices use
 **every valid beat of the analysis window**. Only the slow entropy block
@@ -922,7 +927,7 @@ cards. The tab goes in three steps; each carries a dot (green up to date, orange
 of date) and the step you are on is in bold.
 
 1. **Mean beat**, from Analyze.
-2. **Check landmarks on the template.** Open **Wave template…**: on the mean beat,
+2. **Check landmarks on the template.** Open **Landmarks…**: on the mean beat,
    drag a landmark's line to move the centre of its search window, a window edge to
    resize it; **Auto-calibrate**, **Refine from delineation** and template files are
    there too. The change goes to this recording's template when you apply it; the
@@ -1135,7 +1140,7 @@ line under the plots states which definitions the numbers use.
 **Wave template (per recording).** The search windows that guide the
 landmark detection belong to the recording. A newly opened recording starts
 from the saved default template, or the built-in mouse defaults when none
-was saved. Change it in **Wave template…** (Morphology & Intervals tab): drag lines or
+was saved. Change it in **Landmarks…** (Morphology & Intervals tab): drag lines or
 window edges, **Auto-calibrate** on the mean beat, **Refine from
 delineation** (centres the P/Q/S/T windows on this recording's measured
 landmarks, after a first Measure intervals run), **Load…** a template file,
@@ -1166,7 +1171,7 @@ report the IQR, as the range is dominated by delineation outliers. The
 text report, the Excel Cover sheet and the Prism notes carry the same
 "Interval definitions" and "QT variability" rows, and the PDF report a QT IQR
 row and a definitions footer. Check the landmarks on the mean beat (and
-correct the template with **Wave template…**) if the automatic placement looks
+correct the template with **Landmarks…**) if the automatic placement looks
 wrong before trusting the QT/QTc numbers. The **QTc formula** dropdown (shown
 when QT is reported) switches
 between (RR in ms):
@@ -1210,7 +1215,7 @@ The baseline is always the first N seconds of the analysis window. The mockup's
 second choice, "30 s before an annotation", is **not available**: it would be a new
 calculation, left out of this redesign, which changes no number.
 
-**Baseline (s)**, **Brady / tachy (%)**, and **Min beats** at
+**Baseline: first … s**, **ΔHR threshold (%)**, and **Min run (beats)** at
 the top control sensitivity — widen the baseline window or loosen the
 threshold if real events are being missed, or tighten them if normal
 variability is being over-flagged.

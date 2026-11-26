@@ -15,7 +15,7 @@ rolling-median N (ensemble_beats, default 32).
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 from PySide6 import QtCore, QtWidgets
@@ -46,8 +46,64 @@ class MorphologyTab(QtWidgets.QScrollArea):
         from ecg.qt.widgets.shell import page_header
         lay.addLayout(page_header('Morphology & intervals'))
 
-        bar = QtWidgets.QFrame(objectName="Card")
-        row = QtWidgets.QHBoxLayout(bar)
+        # The Tk arrangement: the three steps on top; the mean beat (left)
+        # beside what measures the intervals and their table (right); then
+        # the intervals per beat and the beat distributions.
+        steps = QtWidgets.QHBoxLayout()
+        self.step_labels = []
+        for _i in range(3):
+            lbl = QtWidgets.QLabel("")
+            steps.addWidget(lbl)
+            self.step_labels.append(lbl)
+        steps.addStretch(1)
+        lay.addLayout(steps)
+        from ecg.qt.widgets.stale_banner import StaleBanner
+        self.banner = StaleBanner(self, on_recompute=lambda: self.measure())
+        lay.addWidget(self.banner)
+
+        def card(title: str, widget: "Optional[QtWidgets.QWidget]" = None, min_h: int = 0,
+                 extra: "Optional[QtWidgets.QWidget]" = None) -> "tuple[QtWidgets.QFrame, QtWidgets.QVBoxLayout]":
+            f = QtWidgets.QFrame(objectName="Card")
+            fl = QtWidgets.QVBoxLayout(f)
+            fl.setContentsMargins(16, 12, 16, 12)
+            head = QtWidgets.QHBoxLayout()
+            t = QtWidgets.QLabel(title)
+            t.setProperty("role", "heading")
+            head.addWidget(t)
+            head.addStretch(1)
+            if extra is not None:
+                head.addWidget(extra)
+            fl.addLayout(head)
+            if widget is not None:
+                widget.setMinimumHeight(min_h)
+                fl.addWidget(widget, 1)
+            return f, fl
+
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(14)
+        lay.addLayout(body, 1)
+
+        # ── left: the mean beat and its landmarks ──
+        self.btn_template = QtWidgets.QPushButton("Landmarks…")
+        self.btn_template.setToolTip("The P / Q / S / T search windows of this recording, on "
+                                     "its mean beat")
+        self.btn_template.clicked.connect(self._edit_template)
+        # The mean beat on screen (PyQtGraph); the Matplotlib figure stays,
+        # hidden, for the exports.
+        from ecg.qt.widgets.beat_chart import BeatChart
+        self.beat_chart = BeatChart()
+        host.slot("beat", page, 12.0, 4.6).hide()
+        left, ll = card("Mean beat ± SD · landmarks", None, 0, self.btn_template)
+        hint = QtWidgets.QLabel("Landmarks…: move a search window on this mean beat")
+        hint.setProperty("muted", True)
+        ll.addWidget(hint)
+        self.beat_chart.setMinimumHeight(380)
+        ll.addWidget(self.beat_chart, 1)
+        body.addWidget(left, 1)
+
+        # ── right: measure, then the interval table ──
+        right, rl = card("Intervals")
+        row = QtWidgets.QHBoxLayout()
         self.cb_qtc = QtWidgets.QComboBox()
         for key, label in QTC_FORMULA_LABELS.items():
             self.cb_qtc.addItem(label, key)
@@ -66,42 +122,29 @@ class MorphologyTab(QtWidgets.QScrollArea):
                                     "obtained with different N.")
         self.sp_ensemble.valueChanged.connect(self._ensemble_changed)
         row.addWidget(self.sp_ensemble)
-        self.chk_permissive = QtWidgets.QCheckBox("Permissive bounds")
-        self.chk_permissive.setToolTip("Accept intervals up to twice the strict physiological "
-                                       "bounds")
-        row.addWidget(self.chk_permissive)
-        self.btn_template = QtWidgets.QPushButton("Wave template…")
-        self.btn_template.setToolTip("The P / Q / S / T search windows of this recording, on "
-                                     "its mean beat")
-        self.btn_template.clicked.connect(self._edit_template)
-        row.addWidget(self.btn_template)
+        row.addStretch(1)
+        rl.addLayout(row)
+        row2 = QtWidgets.QHBoxLayout()
         self.btn_measure = QtWidgets.QPushButton("Measure intervals")
         self.btn_measure.setProperty("action", True)
         self.btn_measure.setEnabled(False)
         self.btn_measure.clicked.connect(self.measure)
-        row.addWidget(self.btn_measure)
-        row.addStretch(1)
-        lay.addWidget(bar)
-        from ecg.qt.widgets.stale_banner import StaleBanner
-        self.banner = StaleBanner(self, on_recompute=lambda: self.measure())
-        lay.addWidget(self.banner)
+        row2.addWidget(self.btn_measure)
+        self.chk_permissive = QtWidgets.QCheckBox("Permissive bounds")
+        self.chk_permissive.setToolTip("Accept intervals up to twice the strict physiological "
+                                       "bounds")
+        row2.addWidget(self.chk_permissive)
+        row2.addStretch(1)
+        rl.addLayout(row2)
         host.lbl_ivl_status = StatusLabel(NEEDS_ANALYZE)
         host.lbl_ivl_status.setProperty("muted", True)
-        lay.addWidget(host.lbl_ivl_status)
-        # The three steps (TabMorphologyMixin's chips): mean beat, check the
-        # landmarks, measure every beat -- the current one highlighted.
-        steps = QtWidgets.QHBoxLayout()
-        self.step_labels = []
-        for _i in range(3):
-            lbl = QtWidgets.QLabel("")
-            steps.addWidget(lbl)
-            self.step_labels.append(lbl)
-        steps.addStretch(1)
-        lay.addLayout(steps)
+        host.lbl_ivl_status.setWordWrap(True)
+        rl.addWidget(host.lbl_ivl_status)
         # What the medians rest on, then one line per interval (median, IQR,
         # beats measured), as the Tk interval table.
         self.lbl_measured = QtWidgets.QLabel("")
-        lay.addWidget(self.lbl_measured)
+        self.lbl_measured.setWordWrap(True)
+        rl.addWidget(self.lbl_measured)
         self.tbl_ivl = QtWidgets.QTableWidget(0, 5)
         self.tbl_ivl.setHorizontalHeaderLabels(["Interval", "Definition", "Median", "IQR",
                                                 "Measured"])
@@ -110,40 +153,32 @@ class MorphologyTab(QtWidgets.QScrollArea):
         self.tbl_ivl.horizontalHeader().setStretchLastSection(True)
         self.tbl_ivl.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.tbl_ivl.setShowGrid(False)
-        lay.addWidget(self.tbl_ivl)
+        rl.addWidget(self.tbl_ivl)
         self._ivl_shown: object = False
-
-        def card(title: str, widget: QtWidgets.QWidget, min_h: int) -> QtWidgets.QFrame:
-            f = QtWidgets.QFrame(objectName="Card")
-            fl = QtWidgets.QVBoxLayout(f)
-            fl.addWidget(QtWidgets.QLabel(f"<b>{title}</b>"))
-            widget.setMinimumHeight(min_h)
-            fl.addWidget(widget, 1)
-            return f
-
-        # The mean beat on screen (PyQtGraph); the Matplotlib figure stays,
-        # hidden, for the exports.
-        from ecg.qt.widgets.beat_chart import BeatChart
-        self.beat_chart = BeatChart()
-        host.slot("beat", page, 12.0, 4.6).hide()
-        lay.addWidget(card("Mean beat and landmarks", self.beat_chart, 340), 1)
-        lay.addWidget(card("Intervals per beat", host.slot("intervals", page, 12.0, 5.4), 460))
         # The QTc-RR figure and its numbers in words (PlotController._plot_qtc_rr),
         # only while QT is reported.
         host.lbl_qtc_rr = None
         if QT_REPORTED:
-            lay.addWidget(card("QTc vs RR", host.slot("qtc_rr", page, 6.0, 2.0), 220))
+            qtc = host.slot("qtc_rr", page, 6.0, 2.0)
+            qtc.setMinimumHeight(220)
+            rl.addWidget(qtc, 1)
             host.lbl_qtc_rr = StatusLabel("")
             host.lbl_qtc_rr.setWordWrap(True)
             host.lbl_qtc_rr.setProperty("muted", True)
-            lay.addWidget(host.lbl_qtc_rr)
+            rl.addWidget(host.lbl_qtc_rr)
+        rl.addStretch(1)
+        body.addWidget(right, 1)
+
+        # ── below: every beat, and the distributions ──
+        lay.addWidget(card("Intervals per beat", host.slot("intervals", page, 12.0, 5.4),
+                           460)[0])
         from ecg.qt.widgets.dist_charts import BeatDistCharts
         self.dist_charts = BeatDistCharts()
         slot = host.slot("beat_dist", page, 12.0, 3.8)
         slot.hide()
         slot.on_clear = self.dist_charts.clear
         host._screen_charts["beat_dist"] = self.dist_charts.set_data
-        lay.addWidget(card("Beat distributions", self.dist_charts, 260))
+        lay.addWidget(card("Beat distributions", self.dist_charts, 260)[0])
 
     # ── parameters ──────────────────────────────────────────
     def _ensemble_changed(self, value: int) -> None:
