@@ -54,13 +54,9 @@ class DetectionTab(QtWidgets.QWidget):
         top.setSpacing(12)
         titles = QtWidgets.QVBoxLayout()
         titles.setSpacing(0)
-        title = QtWidgets.QLabel("Signal")
-        title.setProperty("role", "title")
-        titles.addWidget(title)
         self.lbl_summary = QtWidgets.QLabel("Open a recording, then detect its peaks.")
         self.lbl_summary.setProperty("muted", True)
-        titles.addWidget(self.lbl_summary)
-        top.addLayout(titles, 1)
+        self.lbl_summary.hide()                  # the context strip says it (as Tk)
         self.seg_window = Segmented([f"{w:g} s" for w in WINDOW_PRESETS_S], exclusive=False)
         self.seg_window.setToolTip("Length of the view")
         for b, w in zip(self.seg_window.buttons, WINDOW_PRESETS_S):
@@ -71,22 +67,19 @@ class DetectionTab(QtWidgets.QWidget):
         self.seg_trace.buttons[0].setChecked(True)
         for b in self.seg_trace.buttons:
             b.clicked.connect(lambda _c=False: self._show_trace())
-        top.addWidget(self.seg_trace, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
-        top.addWidget(self.seg_window, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
-        # The detection settings in a sheet under their button: the trace
-        # keeps the page's width. Detect peaks is also the header's button.
+        # The detection bar is on the page (as Tk); this button is kept for
+        # the search's "Detection settings" only.
         self.btn_detection = QtWidgets.QToolButton()
         self.btn_detection.setText("Detection…")
         self.btn_detection.setToolTip("Method, filtering and threshold of the R-peak detection")
         self.btn_detection.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         det_menu = QtWidgets.QMenu(self.btn_detection)
         self.btn_detection.setMenu(det_menu)
-        top.addWidget(self.btn_detection, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
-        lay.addLayout(top)
+        self.btn_detection.hide()
 
-        # ── detection: method, filtering, threshold, Detect peaks ──
-        bar = QtWidgets.QFrame()
-        bar.setMinimumWidth(640)
+        # ── detection bar (as Tk): method, threshold, RR bounds, filtering,
+        #    annotations, noisy regions ──
+        bar = QtWidgets.QFrame(objectName="Card")
         row = QtWidgets.QHBoxLayout(bar)
         row.setContentsMargins(14, 10, 14, 10)
         row.setSpacing(8)
@@ -128,16 +121,27 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_detect.setToolTip("Find the R peaks with the method and filtering above (Ctrl+D)")
         self.btn_detect.setEnabled(False)
         self.btn_detect.clicked.connect(self.detect)
-        row.addWidget(self.btn_detect)
+        self.btn_detect.hide()               # the header's Detect Peaks (as Tk)
+        row.addSpacing(6)
+        self.sp_minrr_bar, self.sp_maxrr_bar = QtWidgets.QDoubleSpinBox(), QtWidgets.QDoubleSpinBox()
+        for sp, label, tip in ((self.sp_minrr_bar, "Min RR (ms)", "Shortest RR interval kept"),
+                               (self.sp_maxrr_bar, "Max RR (ms)",
+                                "Longest RR interval used for HRV")):
+            lbl = QtWidgets.QLabel(label)
+            lbl.setProperty("muted", True)
+            row.addWidget(lbl)
+            sp.setRange(1.0, 10000.0)
+            sp.setDecimals(1)
+            sp.setToolTip(tip + " (also in Settings…)")
+            sp.setMaximumWidth(92)
+            row.addWidget(sp)
         self.btn_agreement = QtWidgets.QPushButton("Check agreement")
         self.btn_agreement.setEnabled(False)
         self.btn_agreement.setToolTip("Run the other detectors on the same filtered signal and "
                                       "circle the accepted beats none of them found")
         self.btn_agreement.clicked.connect(self.check_agreement)
-        row.addWidget(self.btn_agreement)
-        wa = QtWidgets.QWidgetAction(det_menu)
-        wa.setDefaultWidget(bar)
-        det_menu.addAction(wa)
+        lay.addWidget(bar)
+        self._bar_row = row
         # Read in the summary line and the status row rather than on the bar.
         self.lbl_peaks = QtWidgets.QLabel("Peaks: —")
         self.lbl_quality = QtWidgets.QLabel("Quality: —")
@@ -148,15 +152,17 @@ class DetectionTab(QtWidgets.QWidget):
         ecg_lay = QtWidgets.QVBoxLayout(ecg_card)
         ecg_lay.setContentsMargins(14, 10, 14, 6)
         ecg_lay.setSpacing(6)
-        tools = QtWidgets.QHBoxLayout()
+        nav = QtWidgets.QHBoxLayout()            # navigation: what is shown
+        nav.setSpacing(8)
+        tools = QtWidgets.QHBoxLayout()          # tools: what a click does
         tools.setSpacing(8)
-        head = QtWidgets.QLabel("ECG")
+        head = QtWidgets.QLabel("ECG signal")
         head.setProperty("role", "heading")
-        tools.addWidget(head)
+        nav.addWidget(head)
         self.lbl_view = QtWidgets.QLabel("")
         self.lbl_view.setProperty("muted", True)
-        tools.addWidget(self.lbl_view)
-        tools.addSpacing(10)
+        nav.addWidget(self.lbl_view)
+        nav.addSpacing(10)
         self.legend = QtWidgets.QHBoxLayout()
         self.legend.setSpacing(12)
         self._legend_icons = []
@@ -171,8 +177,10 @@ class DetectionTab(QtWidgets.QWidget):
             lbl.setProperty("muted", True)
             item.addWidget(lbl)
             self.legend.addLayout(item)
-        tools.addLayout(self.legend)
-        tools.addStretch(1)
+        nav.addStretch(1)
+        nav.addWidget(self.seg_trace)
+        nav.addWidget(self.seg_window)
+        self._nav_row = nav
         # Move / Edit peaks / Mark noise: one mode at a time.
         self.seg_tools = Segmented([], exclusive=False)
         self.btn_move = QtWidgets.QPushButton("Move")
@@ -222,6 +230,9 @@ class DetectionTab(QtWidgets.QWidget):
         more = QtWidgets.QMenu(self.btn_more)
         self.btn_more.setMenu(more)
         tools.addWidget(self.btn_more)
+        tools.addStretch(1)
+        tools.addLayout(self.legend)
+        ecg_lay.addLayout(nav)
         ecg_lay.addLayout(tools)
         self.lbl_edit = QtWidgets.QLabel("")
         self.lbl_edit.setProperty("muted", True)
@@ -232,7 +243,13 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot.span_drawn.connect(self._noise_drawn)
         self.plot.window_changed.connect(self._view_moved)
         ecg_lay.addWidget(self.plot, 1)
-        lay.addWidget(ecg_card, 1)
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(12)
+        left = QtWidgets.QVBoxLayout()
+        left.setSpacing(12)
+        left.addWidget(ecg_card, 1)
+        body.addLayout(left, 1)
+        lay.addLayout(body, 1)
 
         # The menu's entries: kept as buttons too (the same commands).
         self.btn_clear_edits = QtWidgets.QPushButton("Clear edits")
@@ -252,9 +269,12 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_noise.setToolTip("Stretches too noisy to trust: their RR intervals are left "
                                   "out of HR / HRV at the next Analyze")
         self.btn_noise.clicked.connect(lambda: self.open_periods("noise"))
-        for b in (self.btn_clear_edits, self.btn_review, self.btn_annotations, self.btn_noise):
-            b.setVisible(False)
-            b.setParent(self)
+        # On the detection bar (Annotations, Noisy regions), beside the tools
+        # (Clear edits) and in the quality panel (Review artifacts), as Tk;
+        # the More menu lists them too.
+        self._bar_row.addWidget(self.btn_annotations)
+        self._bar_row.addWidget(self.btn_noise)
+        tools.insertWidget(tools.indexOf(self.btn_undo), self.btn_clear_edits)
         self._more_actions = {}
         for key, btn in (("clear", self.btn_clear_edits), ("review", self.btn_review),
                          ("annotations", self.btn_annotations), ("noise", self.btn_noise)):
@@ -313,7 +333,8 @@ class DetectionTab(QtWidgets.QWidget):
         side.setLayout(figs)
         hr_lay.addWidget(side)
         hr_lay.addWidget(self.plot.over_view, 1)
-        lay.addWidget(hr_card)
+        left.addWidget(hr_card)
+        body.addWidget(self._build_quality_panel())
 
         # ── status: beats to check, the analysis window ──
         status = QtWidgets.QHBoxLayout()
@@ -321,42 +342,32 @@ class DetectionTab(QtWidgets.QWidget):
         # The quality as a button: its sheet holds the panel of the Tk
         # interface (template correlation, beats and time below 0.90,
         # artifact correction, the correlation over time and its histogram).
-        self.btn_quality = QtWidgets.QToolButton()
-        self.btn_quality.setProperty("flat", True)
-        self.btn_quality.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.btn_quality.setToolTip("Signal quality: how far the beats can be trusted")
-        self.btn_quality.setText("Quality —")
-        qmenu = QtWidgets.QMenu(self.btn_quality)
-        self.btn_quality.setMenu(qmenu)
-        qmenu.addAction(self._build_quality_sheet(qmenu))
-        status.addWidget(self.btn_quality)
+        self.btn_quality = QtWidgets.QToolButton(self)   # the score, read by tests
+        self.btn_quality.hide()
         status.addSpacing(14)
         self.lbl_agreement.setProperty("muted", True)
         status.addWidget(self.lbl_agreement)
         status.addSpacing(14)
         self.lbl_to_check = QtWidgets.QLabel("Beats to check")
         self.lbl_to_check.setProperty("muted", True)
-        status.addWidget(self.lbl_to_check)
+        self._nav_row.insertWidget(self._nav_row.count() - 2, self.lbl_to_check)
         for text, step, tip in (("‹", -1, "The previous beat flagged on the tachogram, centred"),
                                 ("›", +1, "The next beat flagged on the tachogram, centred")):
             b = QtWidgets.QPushButton(text)
             b.setToolTip(tip)
             b.setFixedWidth(34)
             b.clicked.connect(lambda _c=False, d=step: self.step_spike(d))
-            status.addWidget(b)
+            self._nav_row.insertWidget(self._nav_row.count() - 2, b)
         status.addSpacing(14)
         self.btn_review_link = QtWidgets.QPushButton("Review artifacts")
         self.btn_review_link.setProperty("link", True)
         self.btn_review_link.setToolTip(self.btn_review.toolTip())
         self.btn_review_link.clicked.connect(self.btn_review.click)
         self.btn_review_link.setEnabled(False)
-        status.addWidget(self.btn_review_link)
+        self.btn_review_link.hide()
         status.addStretch(1)
-        lbl = QtWidgets.QLabel("Analysis window:")
-        lbl.setProperty("muted", True)
-        status.addWidget(lbl)
-        self.lbl_window = QtWidgets.QLabel("")
-        status.addWidget(self.lbl_window)
+        self.lbl_window = QtWidgets.QLabel("")       # read in the context strip's place
+        self.lbl_window.hide()
         self.btn_window = QtWidgets.QToolButton()
         self.btn_window.setText("Change")
         self.btn_window.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -388,7 +399,7 @@ class DetectionTab(QtWidgets.QWidget):
         wa = QtWidgets.QWidgetAction(wmenu)
         wa.setDefaultWidget(wbox)
         wmenu.addAction(wa)
-        status.addWidget(self.btn_window)
+        self.btn_window.hide()
         lay.addLayout(status)
         self._update_undo_buttons()
         # The heart rate has its own card now: the strip is there on demand.
@@ -601,25 +612,23 @@ class DetectionTab(QtWidgets.QWidget):
         self.lbl_edit.setText(hint)
         self.lbl_edit.setVisible(bool(hint))
 
-    def _build_quality_sheet(self, menu: QtWidgets.QMenu) -> QtWidgets.QWidgetAction:
+    def _build_quality_panel(self) -> QtWidgets.QFrame:
         """The Signal quality sheet: four values (filled by the shared figure
         code through host._quality_vals) and two figures (slots
         quality_time, quality_hist), drawn when the sheet opens."""
         from ecg.qt.figure_host import StatusLabel
         host = self.win.figures
-        sheet = QtWidgets.QWidget()
-        sheet.setMinimumWidth(620)
+        sheet = QtWidgets.QFrame(objectName="Card")
+        sheet.setFixedWidth(330)
         lay = QtWidgets.QVBoxLayout(sheet)
         lay.setContentsMargins(16, 12, 16, 12)
-        head = QtWidgets.QHBoxLayout()
+        lay.setSpacing(8)
         title = QtWidgets.QLabel("Signal quality")
         title.setProperty("role", "heading")
-        head.addWidget(title)
-        head.addStretch(1)
+        lay.addWidget(title)
         self.lbl_quality_score = QtWidgets.QLabel("—")
-        self.lbl_quality_score.setProperty("role", "value")
-        head.addWidget(self.lbl_quality_score)
-        lay.addLayout(head)
+        self.lbl_quality_score.setProperty("role", "big")
+        lay.addWidget(self.lbl_quality_score)
         grid = QtWidgets.QGridLayout()
         host._quality_vals = {}
         for i, (key, name) in enumerate((("sq_corr", "Template correlation"),
@@ -635,20 +644,43 @@ class DetectionTab(QtWidgets.QWidget):
             grid.addWidget(val, (i // 2) * 2 + 1, i % 2)
             host._quality_vals[key] = val
         lay.addLayout(grid)
-        figs = QtWidgets.QHBoxLayout()
-        for name, w in (("quality_time", 3), ("quality_hist", 2)):
-            slot = host.slot(name, sheet, 4.0 if w == 3 else 2.6, 2.0)
-            slot.setMinimumHeight(170)
-            figs.addWidget(slot, w)
-        lay.addLayout(figs)
+        for name, label in (("quality_time", "Template correlation over time"),
+                            ("quality_hist", "Template correlation histogram")):
+            cap = QtWidgets.QLabel(label)
+            cap.setProperty("muted", True)
+            lay.addWidget(cap)
+            slot = host.slot(name, sheet, 3.2, 1.6)
+            slot.setMinimumHeight(150)
+            lay.addWidget(slot, 1)
+            lay.addSpacing(10)
         note = QtWidgets.QLabel("After Analyze: correlation of each beat with the recording's "
                                 "beat template (0.90 dotted).")
         note.setProperty("muted", True)
         note.setWordWrap(True)
-        lay.addWidget(note)
-        wa = QtWidgets.QWidgetAction(menu)
-        wa.setDefaultWidget(sheet)
-        return wa
+        note.hide()
+        btns = QtWidgets.QHBoxLayout()
+        self.btn_review.setText("Review artifacts…")
+        btns.addWidget(self.btn_review)
+        btns.addWidget(self.btn_agreement)
+        lay.addLayout(btns)
+        self.chk_autocorrect = QtWidgets.QCheckBox("Auto-correct artifacts on Analyze")
+        self.chk_autocorrect.setToolTip("The same switch as in Settings…")
+        lay.addWidget(self.chk_autocorrect)
+        return sheet
+
+    def link_settings(self, st) -> None:
+        """Min / Max RR on the bar and the auto-correct switch of the quality
+        panel are the Settings dialog's own values, kept in step both ways."""
+        pairs = ((self.sp_minrr_bar, st.sp_minrr), (self.sp_maxrr_bar, st.sp_maxrr))
+        for mine, theirs in pairs:
+            mine.setValue(theirs.value())
+            mine.valueChanged.connect(lambda v, t=theirs: t.value() != v and t.setValue(v))
+            theirs.valueChanged.connect(lambda v, m=mine: m.value() != v and m.setValue(v))
+        self.chk_autocorrect.setChecked(st.chk_artifact.isChecked())
+        self.chk_autocorrect.toggled.connect(
+            lambda on: st.chk_artifact.isChecked() != on and st.chk_artifact.setChecked(on))
+        st.chk_artifact.toggled.connect(
+            lambda on: self.chk_autocorrect.isChecked() != on and self.chk_autocorrect.setChecked(on))
 
     def refresh_to_check(self) -> None:
         """How many beats the tachogram flagged (after Analyze)."""
@@ -857,6 +889,8 @@ class DetectionTab(QtWidgets.QWidget):
         d = self.win.recording.detection
         self.btn_undo.setEnabled(bool(d.edit_undo))
         self.btn_redo.setEnabled(bool(d.edit_redo))
+        if hasattr(self.win, "btn_undo_top"):
+            self.win.refresh_primary()
 
     def _drop_results(self) -> None:
         """A peak change makes the analysis results stale: they are dropped
@@ -1136,7 +1170,8 @@ class DetectionTab(QtWidgets.QWidget):
                 else " · poor")
         self.lbl_quality.setText(f"Quality {q}/100{word}" if q is not None else "Quality —")
         self.btn_quality.setText(self.lbl_quality.text() + "  ▾")
-        self.lbl_quality_score.setText(f"{q} / 100{word}" if q is not None else "—")
+        self.lbl_quality_score.setText(f"{q}" if q is not None else "—")
+        self.lbl_quality_score.setToolTip(f"{q} / 100{word}" if q is not None else "")
         self.btn_review_link.setEnabled(self.btn_review.isEnabled())
         self.refresh_to_check()
         self._show_summary(n, q)
