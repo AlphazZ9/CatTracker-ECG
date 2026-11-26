@@ -101,6 +101,9 @@ class FigureSlot(MplCanvas):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._pending: "Optional[Callable]" = None
+        # What else shows this figure's data on screen and empties with it
+        # (the quality panel's PyQtGraph charts).
+        self.on_clear: "Optional[Callable[[], None]]" = None
 
     def update(self, draw_fn: Callable) -> None:          # noqa: A003 (CanvasSlot API)
         self._draw_fn = draw_fn
@@ -139,6 +142,8 @@ class FigureSlot(MplCanvas):
     def clear(self) -> None:
         self._pending = None
         super().clear()
+        if self.on_clear is not None:
+            self.on_clear()
 
     def showEvent(self, ev: QtGui.QShowEvent) -> None:
         super().showEvent(ev)
@@ -399,6 +404,7 @@ class FigureHost:
         self._window = window
         self.ui = UIState()
         self._slots: "dict[str, FigureSlot]" = _Slots()
+        self._screen_charts: "dict[str, Callable[[Any], None]]" = {}
         self._kpi: dict = {}
         self._generation = 0
         self._async_busy = False
@@ -427,6 +433,13 @@ class FigureHost:
         self.on_events_list: "Optional[Callable]" = None
         self.on_rhythm_table: "Optional[Callable]" = None
         self.txt_rhythm_metrics = None          # no Tk text box (see above)
+
+    def show_chart_data(self, name: str, data: Any) -> None:
+        """The data of a figure to its on-screen PyQtGraph chart, when a tab
+        registered one in _screen_charts (PlotController._on_screen)."""
+        handler = self._screen_charts.get(name)
+        if handler is not None:
+            handler(data)
 
     # The recording's state, always the window's current one.
     @property

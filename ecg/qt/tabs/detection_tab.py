@@ -644,15 +644,22 @@ class DetectionTab(QtWidgets.QWidget):
             grid.addWidget(val, (i // 2) * 2 + 1, i % 2)
             host._quality_vals[key] = val
         lay.addLayout(grid)
-        for name, label in (("quality_time", "Template correlation over time"),
-                            ("quality_hist", "Template correlation histogram")):
+        # The charts on screen (PyQtGraph); the Matplotlib figures of the same
+        # data are kept, hidden, for the exports (drawn when one reads them).
+        from ecg.qt.widgets.quality_charts import QualityCharts
+        self.quality_charts = QualityCharts(self)
+        host._screen_charts["quality"] = self.quality_charts.set_series
+        for name, label, chart in (
+                ("quality_time", "Template correlation over time", self.quality_charts.time),
+                ("quality_hist", "Template correlation histogram", self.quality_charts.hist)):
             cap = QtWidgets.QLabel(label)
             cap.setProperty("muted", True)
             lay.addWidget(cap)
             slot = host.slot(name, sheet, 3.2, 1.6)
-            slot.setMinimumHeight(150)
-            lay.addWidget(slot, 1)
-            lay.addSpacing(10)
+            slot.hide()
+            slot.on_clear = self.quality_charts.clear
+            lay.addWidget(chart, 1)
+            lay.addSpacing(6)
         note = QtWidgets.QLabel("After Analyze: correlation of each beat with the recording's "
                                 "beat template (0.90 dotted).")
         note.setProperty("muted", True)
@@ -1203,6 +1210,7 @@ class DetectionTab(QtWidgets.QWidget):
     def apply_palette(self, p) -> None:
         self._paint_legend(p)
         self.plot.apply_palette(p)
+        self.quality_charts.apply_palette(p)
         self._show_peaks() if self.win.recording.detection.rpeaks_ok is not None else None
 
 

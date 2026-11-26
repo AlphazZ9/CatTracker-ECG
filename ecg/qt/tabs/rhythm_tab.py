@@ -226,9 +226,16 @@ class RhythmTab(QtWidgets.QScrollArea):
         al = QtWidgets.QVBoxLayout(asym)
         al.setContentsMargins(0, 0, 0, 0)
         al.addWidget(host._rhythm_labels["asymmetry"])
-        al.addWidget(host.slot("asymmetry", page, 6.0, 3.0), 1)
-        al.addStretch(0)
-        grid.addWidget(card("RR asymmetry", asym, 380), 2, 1, QtCore.Qt.AlignmentFlag.AlignTop)
+        # On screen in PyQtGraph; the Matplotlib figure stays, hidden, for
+        # the exports (it took ~0.3 s to draw each time the tab was shown).
+        from ecg.qt.widgets.dist_charts import AsymmetryCharts
+        self.asym_charts = AsymmetryCharts()
+        slot = host.slot("asymmetry", page, 6.0, 3.0)
+        slot.hide()
+        slot.on_clear = self.asym_charts.clear
+        host._screen_charts["asymmetry"] = self.asym_charts.set_data
+        al.addWidget(self.asym_charts, 1)
+        grid.addWidget(card("RR asymmetry", asym, 300), 2, 1)
         host.on_rhythm_table = self.show_table
         self._table: "MetricTable | None" = None
         grid.setColumnStretch(0, 3)
@@ -312,6 +319,7 @@ class RhythmTab(QtWidgets.QScrollArea):
         self.win.detection.center_on(t)
 
     def apply_palette(self, p) -> None:
+        self.asym_charts.apply_palette(p)
         self.charts.apply_palette(p)
 
     def _text_toggled(self, on: bool) -> None:
