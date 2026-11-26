@@ -1465,6 +1465,14 @@ data for your strain and experimental conditions.
   project, notes), the detection bar (method, threshold), the Settings
   (filters, RR bounds, SG options), the auto-correction switch, the analysis
   window and the Compare segments setup.
+- **On screen and in the exports, the same data.** The charts of the
+  window (heart rate over time, Poincaré, spectrum, RR distribution, the
+  quality panel, RR asymmetry, beat distributions) are drawn by a faster
+  library than the figures of the exports (PDF, Figures ZIP): layout,
+  colours and axis ranges differ, the numbers do not — a test compares them
+  point by point. One deliberate difference: the exported Poincaré spreads
+  the points stacked by the sampling grid by at most half a sampling step
+  (said on the figure); the screen shows them unspread.
 
 ---
 
