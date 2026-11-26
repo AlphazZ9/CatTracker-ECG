@@ -395,6 +395,17 @@ def _use_qt_message_boxes() -> None:
     dialogs.install(QtMessageBox, QtFileDialog)
 
 
+class _NoButton:
+    """A run button the Qt window does not need: anything done to it
+    (configure, state…) does nothing."""
+
+    def __getattr__(self, name: str) -> Callable[..., None]:
+        return lambda *_a, **_k: None
+
+
+_NO_BUTTON = _NoButton()
+
+
 class FigureHost:
     """What PlotController / AnalysisController read on their "app"."""
 
@@ -405,6 +416,14 @@ class FigureHost:
         self.ui = UIState()
         self._slots: "dict[str, FigureSlot]" = _Slots()
         self._screen_charts: "dict[str, Callable[[Any], None]]" = {}
+        # cb_freq_band: no band-preset selector (Tk had none either), so
+        # get_freq_bands() keeps the Mouse Thireau bands.
+        self.cb_freq_band = None
+        # The run buttons the controllers hand to _start_async_result (which
+        # ignores them: Qt's jobs disable the actions). Not None: a None
+        # button means "no tab built" and stops the run.
+        self.btn_run_arrhythmia = _NO_BUTTON
+        self.btn_compute_epochs = _NO_BUTTON
         self._kpi: dict = {}
         self._generation = 0
         self._async_busy = False
@@ -433,6 +452,24 @@ class FigureHost:
         self.on_events_list: "Optional[Callable]" = None
         self.on_rhythm_table: "Optional[Callable]" = None
         self.txt_rhythm_metrics = None          # no Tk text box (see above)
+
+    def _refresh_morphology(self) -> None:
+        """PlotController.plot_intervals: the Morphology steps and table."""
+        morph = getattr(self._window, "morphology", None)
+        if morph is not None:
+            morph.refresh_banner()
+
+    def _sync_arr_edit_btn(self) -> None:
+        """The Events "Edit peaks here" button follows the mode (a new
+        classification or a restored session)."""
+        ev = getattr(self._window, "events", None)
+        btn = getattr(ev, "btn_edit", None)
+        if btn is not None:
+            btn.blockSignals(True)
+            on = bool(self.analysis.arr_edit_mode)
+            btn.setChecked(on)
+            btn.setText("Edit Mode ON" if on else "Edit peaks here")
+            btn.blockSignals(False)
 
     def show_chart_data(self, name: str, data: Any) -> None:
         """The data of a figure to its on-screen PyQtGraph chart, when a tab

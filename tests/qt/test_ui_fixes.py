@@ -164,3 +164,24 @@ def test_the_quality_and_distribution_charts_are_drawn_on_screen(window, qtbot):
     assert det.quality_charts._series is None
     window.figures.slot("asymmetry").clear()
     assert rh.asym_charts._data is None
+
+
+def test_no_controller_call_falls_into_the_void(window, qtbot, caplog):
+    """Every name the shared controllers read on a whole run (detect,
+    Analyze, every tab, Classify events) exists in Qt: none falls back to
+    FigureHost's silent no-op (audit G4)."""
+    import logging
+    caplog.set_level(logging.INFO, logger="ecg")
+    _detect(qtbot, window)
+    window.analyze()
+    qtbot.waitUntil(lambda: window.statusBar().currentMessage() == "Analysis done",
+                    timeout=120000)
+    for i in range(window.tabs.count()):
+        window.tabs.setCurrentIndex(i)
+        qtbot.wait(100)
+    window.events.btn_classify.click()
+    qtbot.waitUntil(lambda: window.recording.analysis.arrhythmia_run is not None,
+                    timeout=60000)
+    assert window.figures.lbl_arr_baseline.text().startswith("Baseline")
+    void = [r.getMessage() for r in caplog.records if "is not provided in Qt" in r.getMessage()]
+    assert void == []

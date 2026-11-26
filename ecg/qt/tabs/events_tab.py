@@ -76,6 +76,12 @@ class EventsTab(QtWidgets.QWidget):
         host.ent_arr_baseline = Value(self.sp_baseline.value)
         host.ent_arr_brady_pct = Value(self.sp_brady.value)
         host.ent_arr_min_beats = Value(lambda: int(self.sp_min_beats.value()))
+        # What the events rest on (the baseline's window and value, the
+        # AV-delay check): AnalysisController.refresh_events_head, as in Tk.
+        host.lbl_arr_baseline = StatusLabel(
+            host.analysis_ctrl.events_readout_text(window.recording.analysis.arrhythmia_run))
+        host.lbl_arr_baseline.setWordWrap(True)
+        lay.addWidget(host.lbl_arr_baseline)
         host.lbl_arrhythmia_status = StatusLabel(NEEDS_PEAKS)
         host.lbl_arrhythmia_status.setProperty("muted", True)
         host.lbl_arrhythmia_status.setWordWrap(True)
@@ -85,7 +91,7 @@ class EventsTab(QtWidgets.QWidget):
         lay.addWidget(self.banner)
 
         ribbon = host.slot("arr_ribbon", self, 12.0, 2.0)
-        ribbon.setMinimumHeight(170)
+        ribbon.setMinimumHeight(190)
         lay.addWidget(ribbon)
 
         split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
@@ -99,7 +105,29 @@ class EventsTab(QtWidgets.QWidget):
         header = self.table.horizontalHeader()      # every column readable, no side scroll
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
-        split.addWidget(self.table)
+        left = QtWidgets.QWidget()
+        ll = QtWidgets.QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(4)
+        # The list's title, the severity key and the premature-beat counts
+        # (refresh_events_head / refresh_premature_label), as in Tk.
+        host.lbl_arr_events_head = StatusLabel("EVENTS")
+        host.lbl_arr_events_head.setProperty("role", "section")
+        ll.addWidget(host.lbl_arr_events_head)
+        key = QtWidgets.QLabel("ALERT = pause / premature run (≥ 3) · WARNING = brady / tachy / "
+                               "AV-delay run, premature couplet · INFO = irregular run, "
+                               "isolated premature beat")
+        key.setProperty("muted", True)
+        key.setWordWrap(True)
+        ll.addWidget(key)
+        from ecg.qt.widgets.shell import autohide
+        host.lbl_arr_premature = autohide(StatusLabel(""))
+        host.lbl_arr_premature.setWordWrap(True)
+        from ecg.qt import theme
+        host.lbl_arr_premature.setStyleSheet(f"color: {theme.current().WARN_TEXT};")
+        ll.addWidget(host.lbl_arr_premature)
+        ll.addWidget(self.table, 1)
+        split.addWidget(left)
         right = QtWidgets.QWidget()
         rl = QtWidgets.QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)

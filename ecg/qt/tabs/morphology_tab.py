@@ -128,8 +128,15 @@ class MorphologyTab(QtWidgets.QScrollArea):
         host.slot("beat", page, 12.0, 4.6).hide()
         lay.addWidget(card("Mean beat and landmarks", self.beat_chart, 340), 1)
         lay.addWidget(card("Intervals per beat", host.slot("intervals", page, 12.0, 5.4), 460))
+        # The QTc-RR figure and its numbers in words (PlotController._plot_qtc_rr),
+        # only while QT is reported.
+        host.lbl_qtc_rr = None
         if QT_REPORTED:
             lay.addWidget(card("QTc vs RR", host.slot("qtc_rr", page, 6.0, 2.0), 220))
+            host.lbl_qtc_rr = StatusLabel("")
+            host.lbl_qtc_rr.setWordWrap(True)
+            host.lbl_qtc_rr.setProperty("muted", True)
+            lay.addWidget(host.lbl_qtc_rr)
         from ecg.qt.widgets.dist_charts import BeatDistCharts
         self.dist_charts = BeatDistCharts()
         slot = host.slot("beat_dist", page, 12.0, 3.8)
