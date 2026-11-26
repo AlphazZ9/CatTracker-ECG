@@ -185,3 +185,43 @@ def test_no_controller_call_falls_into_the_void(window, qtbot, caplog):
     assert window.figures.lbl_arr_baseline.text().startswith("Baseline")
     void = [r.getMessage() for r in caplog.records if "is not provided in Qt" in r.getMessage()]
     assert void == []
+
+
+def test_the_signal_is_on_screen_as_soon_as_the_file_is_opened(window, qtbot):
+    """Opening a file shows its raw signal (Tk's load_raw_only) before any
+    Detect Peaks; Detect then shows the filtered one."""
+    window.open_path(str(FIXTURE), check_session=False)
+    qtbot.waitUntil(lambda: window.recording.signal.raw is not None, timeout=30000)
+    det = window.detection
+    x, _y = det.plot.trace.getOriginalDataset()
+    assert x is not None and len(x) == len(window.recording.signal.raw)
+    assert det.seg_trace.buttons[1].isChecked()              # "Raw" is what is shown
+    assert window.recording.detection.rpeaks_ok is None
+    det.detect()
+    qtbot.waitUntil(lambda: window.recording.detection.rpeaks_ok is not None, timeout=60000)
+    assert det.seg_trace.buttons[0].isChecked()
+
+
+def test_the_trace_draws_what_is_in_view_only(window, qtbot):
+    """Clip-to-view and downsampling hold on the plots (PlotItem.addItem used
+    to switch them off): a 2 s view draws a few thousand points, not the
+    whole recording (an hour at 2 kHz froze every move for ~1 s)."""
+    _detect(qtbot, window)
+    plot = window.detection.plot
+    plot.set_window(10.0, 12.0)
+    qtbot.wait(100)
+    x, _y = plot.trace.getData()
+    assert len(x) < 0.05 * len(window.recording.signal.filtered)
+    assert plot.trace.opts["clipToView"] and plot.trace.opts["autoDownsample"]
+    assert plot.rr_curve.opts["clipToView"]
+
+
+def test_no_menu_bar_and_no_context_strip(window):
+    """More room for the charts: the commands are in the header (Open, ▾,
+    Save, Export, ⋯) and Ctrl+K; the analysis window is on the Signal page."""
+    assert not window.menuBar().isVisible()
+    assert not hasattr(window, "strip")
+    more = [a.text() for a in window.btn_more.menu().actions() if a.text()]
+    for name in ("Settings…", "ML detector…", "Light / dark mode", "About"):
+        assert name in more
+    assert window.detection.ed_win0.isVisibleTo(window.detection)

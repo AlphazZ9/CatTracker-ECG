@@ -61,7 +61,7 @@ class QualityCharts(QtCore.QObject):
         self.h_bars.setOpts(x=[], height=[], width=1.0)
         self.t_thr.hide()
         self.h_thr.hide()
-        self.time.say("Click Analyze: each beat's correlation with the template")
+        self.time.say("After Analyze")
         self.hist.say("")
 
     def set_series(self, q: dict) -> None:

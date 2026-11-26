@@ -94,9 +94,6 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         lay.addWidget(self._build_header())
-        from ecg.qt.widgets.context_strip import ContextStrip
-        self.strip = ContextStrip(self)
-        lay.addWidget(self.strip)
         body = QtWidgets.QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
@@ -159,7 +156,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session = QtSession(self)
         self.tabs.currentChanged.connect(self._page_changed)
         self.sidebar.select(TAB_DETECTION)
-        self.strip.attach_window_editor(self.detection)
         self.tabs.currentChanged.connect(
             lambda i: self.report.refresh() if self.tabs.widget(i) is self.report else None)
         self.tabs.currentChanged.connect(       # the group table may have changed
@@ -199,46 +195,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ── layout ──────────────────────────────────────────────
     def _build_menu(self) -> None:
-        mb = self.menuBar()
-        m = mb.addMenu("&File")
-        for text, key, fn in (("Open…", QtGui.QKeySequence.StandardKey.Open, self.open_dialog),
-                              ("Save Session", QtGui.QKeySequence.StandardKey.Save,
-                               lambda: self.session.save()),
-                              (None, None, None),
-                              ("Recent recordings…", None, self.open_recent),
-                              ("Recording (subject, project, notes)…", None,
-                               lambda: (self.recording_sheet.show(),
-                                        self.recording_sheet.raise_())),
-                              (None, None, None),
-                              ("Quit", QtGui.QKeySequence.StandardKey.Quit, self.close)):
-            if text is None:
-                m.addSeparator()
-                continue
-            act = m.addAction(text)
-            if key is not None:
-                act.setShortcut(key)
-            act.triggered.connect(fn)
-            if text == "Open…":
-                self.menu_recent = m.addMenu("Open Recent")
-                self.menu_recent.aboutToShow.connect(self._fill_recent_menu)
-        m.insertAction(m.actions()[-1], m.addSeparator())
-        clear = QtGui.QAction("Clear session cache…", self)
-        clear.triggered.connect(self.clear_session_cache)
-        m.insertAction(m.actions()[-2], clear)
-        v = mb.addMenu("&View")
-        v.addAction("Light / dark mode").triggered.connect(self.toggle_theme)
-        v.addAction("Text size…").triggered.connect(self.choose_text_size)
-        t = mb.addMenu("&Tools")
-        t.addAction("Settings…").triggered.connect(
-            lambda: (self.settings.show(), self.settings.raise_()))
-        t.addAction("ML detector…").triggered.connect(self.open_ml_dialog)
-        h = mb.addMenu("&Help")
-        act = h.addAction("Keyboard shortcuts")
-        act.setShortcut(QtGui.QKeySequence("F1"))
-        act.triggered.connect(self.show_shortcuts)
-        h.addAction("Open log folder").triggered.connect(self.open_log_folder)
-        h.addAction("About").triggered.connect(lambda: QtWidgets.QMessageBox.about(
-            self, "ECG Analysis", f"ECG Analysis {ecg.__version__}\nQt interface (PySide6)."))
+        """No menu bar (more room for the charts): its commands are in the
+        header -- Open, ▾ recent, Save Session, Export, ⋯ -- and in the
+        command search (Ctrl+K); its shortcuts stay."""
+        self.menuBar().hide()
+        # The recent files, filled when shown (also the header's ▾ menu).
+        self.menu_recent = QtWidgets.QMenu(self)
+        self.menu_recent.aboutToShow.connect(self._fill_recent_menu)
+        for key, fn in ((QtGui.QKeySequence.StandardKey.Open, self.open_dialog),
+                        (QtGui.QKeySequence.StandardKey.Save, lambda: self.session.save()),
+                        (QtGui.QKeySequence.StandardKey.Quit, self.close),
+                        (QtGui.QKeySequence("F1"), self.show_shortcuts)):
+            QtGui.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
+
+    def show_about(self) -> None:
+        QtWidgets.QMessageBox.about(
+            self, "ECG Analysis", f"ECG Analysis {ecg.__version__}\nQt interface (PySide6).")
 
     def _fill_recent_menu(self) -> None:
         """The last files opened (newest first), then the registry view."""
@@ -499,8 +471,9 @@ class MainWindow(QtWidgets.QMainWindow):
                          ("Text size…", self.choose_text_size), (None, None),
                          ("Recent recordings…", self.open_recent),
                          ("Clear session cache…", self.clear_session_cache), (None, None),
-                         ("Keyboard shortcuts", self.show_shortcuts),
-                         ("Open log folder", self.open_log_folder)):
+                         ("Keyboard shortcuts  F1", self.show_shortcuts),
+                         ("Open log folder", self.open_log_folder),
+                         ("About", self.show_about)):
             if text is None:
                 more.addSeparator()
                 continue
@@ -626,6 +599,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.recording_changed.emit()
         self.set_status(kept_note or f"Opened {Path(path).name} — click Detect Peaks",
                         warn=bool(kept_note))
+        self.detection.load_raw()                      # the signal on screen at once
         if check_session:
             self.session.check(str(path))
 
@@ -840,7 +814,6 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self.refresh_tab_states()
             self.refresh_saved()
-            self.strip.refresh()
         except Exception as exc:
             log.debug("tab states refresh failed: %s", exc, exc_info=True)
         w = self.tabs.currentWidget()

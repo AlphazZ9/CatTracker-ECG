@@ -148,7 +148,7 @@ pytest-qt) run headless, each in a profile folder of its own.
 - **Errors** (`ecg/qt/errors.py`):
   - A failing job, an error while showing a result, and any uncaught exception of the main thread or of a worker thread are logged with their traceback.
   - They are shown in a non-blocking dialog, one at a time; the window stays open.
-  - Log file: `~/.ecg_sessions/logs/ecg_qt.log` (rotated at 1 MB, 3 kept; Help > Open log folder).
+  - Log file: `~/.ecg_sessions/logs/ecg_qt.log` (rotated at 1 MB, 3 kept; ⋯ > Open log folder).
 - **Unsaved changes** (peaks, edits, results, regions) are offered for saving on Open and Quit. Running jobs are cancelled and waited for on exit.
 
 ## Scripting an analysis

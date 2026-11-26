@@ -13,6 +13,8 @@ the Tk interface). The tab writes the results into the window's Recording
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -332,7 +334,20 @@ class DetectionTab(QtWidgets.QWidget):
         side.setFixedWidth(190)
         side.setLayout(figs)
         hr_lay.addWidget(side)
-        hr_lay.addWidget(self.plot.over_view, 1)
+        # The analysis window above the whole-recording navigator: the part
+        # of the recording Analyze uses (was in the context strip).
+        nav_col = QtWidgets.QVBoxLayout()
+        nav_col.setSpacing(4)
+        wrow = QtWidgets.QHBoxLayout()
+        wrow.setSpacing(6)
+        wl = QtWidgets.QLabel("Analysis window")
+        wl.setProperty("muted", True)
+        wrow.addWidget(wl)
+        self._window_row = wrow
+        wrow.addStretch(1)
+        nav_col.addLayout(wrow)
+        nav_col.addWidget(self.plot.over_view, 1)
+        hr_lay.addLayout(nav_col, 1)
         left.addWidget(hr_card)
         body.addWidget(self._build_quality_panel())
 
@@ -400,6 +415,25 @@ class DetectionTab(QtWidgets.QWidget):
         wa.setDefaultWidget(wbox)
         wmenu.addAction(wa)
         self.btn_window.hide()
+        row = self._window_row
+        for w in (self.ed_win0, self.ed_win1):
+            w.setMaximumWidth(70)
+        row.insertWidget(1, self.ed_win0)
+        row.insertWidget(2, QtWidgets.QLabel("–"))
+        row.insertWidget(3, self.ed_win1)
+        row.insertWidget(4, QtWidgets.QLabel("s"))
+        b_apply = QtWidgets.QPushButton("Apply")
+        b_apply.setToolTip("Analyze on this part of the recording only")
+        b_apply.clicked.connect(self.apply_analysis_window)
+        b_full = QtWidgets.QPushButton("Full")
+        b_full.setToolTip("The whole signal")
+        b_full.clicked.connect(self.reset_analysis_window)
+        for i, b in enumerate((b_apply, b_full)):
+            b.setStyleSheet("padding: 2px 10px;")
+            row.insertWidget(5 + i, b)
+        self.lbl_window.show()
+        self.lbl_window.setProperty("muted", True)
+        row.addWidget(self.lbl_window)
         lay.addLayout(status)
         self._update_undo_buttons()
         # The heart rate has its own card now: the strip is there on demand.
@@ -499,6 +533,41 @@ class DetectionTab(QtWidgets.QWidget):
         self.win.run_job("Detect Peaks", load_and_detect, path, self.params(),
                          on_done=self._detected, on_end=_end)
 
+    def load_raw(self) -> None:
+        """When a file is opened: its signal on the trace, as read from the
+        file (SignalController.load_raw_only; Detect Peaks filters and
+        detects). Nothing is replaced if a signal arrived meanwhile (a
+        restored session, a detection)."""
+        path = self.win.recording.signal.filepath
+        if not path:
+            return
+        from ecg.services.detection_service import load_raw
+        self.win.run_job("Loading the signal", load_raw, path, self.params(),
+                         on_done=self._raw_loaded)
+
+    def _raw_loaded(self, bundle: dict) -> None:
+        rec = self.win.recording
+        s = rec.signal
+        if s.filtered is not None or rec.detection.rpeaks_ok is not None:
+            return
+        fs = bundle["fs"]
+        s.fs = fs
+        s.raw = bundle["signal_raw"]
+        s.raw_norm = bundle["signal_raw_norm"]
+        s.time = np.arange(len(s.raw)) / fs
+        s.crop = bundle.get("signal_crop")
+        s.markers = bundle.get("markers") or {}
+        s.channel = bundle.get("detected_ch")
+        s.inverted = False
+        self.seg_trace.buttons[1].setChecked(True)      # what is shown: the raw signal
+        self.seg_trace.buttons[0].setChecked(False)
+        self.plot.set_signal(s.raw_norm, fs, s.time)
+        self.plot.set_noise_regions(rec.analysis.noise_regions)
+        self.plot.set_annotations(rec.analysis.annotations)
+        self.win.update_file_label()
+        self.win.set_status(f"{Path(s.filepath).name}: {bundle['dur_s']:,.0f} s at {fs:g} Hz "
+                            "(raw signal) — click Detect Peaks")
+
     def confirm_redetect(self) -> bool:
         """A new detection starts from the detector's peaks: the peaks
         excluded and added by hand, and the Undo history, are dropped. Asked
@@ -555,6 +624,8 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_mark_noise.setEnabled(True)
         self.btn_review.setEnabled(True)
         self._update_undo_buttons()
+        self.seg_trace.buttons[0].setChecked(True)      # the filtered signal now
+        self.seg_trace.buttons[1].setChecked(False)
         self.plot.set_signal(s.filtered, fs, s.time)
         self.plot.set_noise_regions(rec.analysis.noise_regions)
         self.plot.set_annotations(rec.analysis.annotations)
@@ -703,6 +774,8 @@ class DetectionTab(QtWidgets.QWidget):
         raw = self.seg_trace.buttons[1].isChecked()
         self.seg_trace.buttons[0].setChecked(not raw)
         sig = s.raw_norm if raw and s.raw_norm is not None else s.filtered
+        if sig is None:                       # before Detect Peaks: only the raw one
+            sig = s.raw_norm
         if sig is None or s.fs is None:
             return
         t0, t1 = self.plot.window()
