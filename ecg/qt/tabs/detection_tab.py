@@ -318,8 +318,18 @@ class DetectionTab(QtWidgets.QWidget):
         # ── status: beats to check, the analysis window ──
         status = QtWidgets.QHBoxLayout()
         status.setSpacing(8)
-        self.lbl_quality.setProperty("muted", True)
-        status.addWidget(self.lbl_quality)
+        # The quality as a button: its sheet holds the panel of the Tk
+        # interface (template correlation, beats and time below 0.90,
+        # artifact correction, the correlation over time and its histogram).
+        self.btn_quality = QtWidgets.QToolButton()
+        self.btn_quality.setProperty("flat", True)
+        self.btn_quality.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_quality.setToolTip("Signal quality: how far the beats can be trusted")
+        self.btn_quality.setText("Quality —")
+        qmenu = QtWidgets.QMenu(self.btn_quality)
+        self.btn_quality.setMenu(qmenu)
+        qmenu.addAction(self._build_quality_sheet(qmenu))
+        status.addWidget(self.btn_quality)
         status.addSpacing(14)
         self.lbl_agreement.setProperty("muted", True)
         status.addWidget(self.lbl_agreement)
@@ -451,6 +461,11 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot.clear()
         self.lbl_peaks.setText("Peaks: —")
         self.lbl_quality.setText("Quality —")
+        self.btn_quality.setText("Quality —")
+        for v in self.win.figures._quality_vals.values():
+            v.setText("—")
+        for name in ("quality_time", "quality_hist"):
+            self.win.figures.slot(name).clear()
         self.btn_review_link.setEnabled(False)
         self.seg_trace.buttons[0].setChecked(True)
         self.seg_trace.buttons[1].setChecked(False)
@@ -585,6 +600,55 @@ class DetectionTab(QtWidgets.QWidget):
                 "Ctrl+Z / Ctrl+Y" if edit else "")
         self.lbl_edit.setText(hint)
         self.lbl_edit.setVisible(bool(hint))
+
+    def _build_quality_sheet(self, menu: QtWidgets.QMenu) -> QtWidgets.QWidgetAction:
+        """The Signal quality sheet: four values (filled by the shared figure
+        code through host._quality_vals) and two figures (slots
+        quality_time, quality_hist), drawn when the sheet opens."""
+        from ecg.qt.figure_host import StatusLabel
+        host = self.win.figures
+        sheet = QtWidgets.QWidget()
+        sheet.setMinimumWidth(620)
+        lay = QtWidgets.QVBoxLayout(sheet)
+        lay.setContentsMargins(16, 12, 16, 12)
+        head = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("Signal quality")
+        title.setProperty("role", "heading")
+        head.addWidget(title)
+        head.addStretch(1)
+        self.lbl_quality_score = QtWidgets.QLabel("—")
+        self.lbl_quality_score.setProperty("role", "value")
+        head.addWidget(self.lbl_quality_score)
+        lay.addLayout(head)
+        grid = QtWidgets.QGridLayout()
+        host._quality_vals = {}
+        for i, (key, name) in enumerate((("sq_corr", "Template correlation"),
+                                         ("sq_badbeats", "Beats below 0.90"),
+                                         ("sq_noisy_time", "Time below 0.90"),
+                                         ("sq_artifact", "Artifact correction"))):
+            lbl = QtWidgets.QLabel(name)
+            lbl.setProperty("muted", True)
+            val = StatusLabel("—")
+            val.setStyleSheet("font-weight: 600;")
+            val.setWordWrap(True)
+            grid.addWidget(lbl, (i // 2) * 2, i % 2)
+            grid.addWidget(val, (i // 2) * 2 + 1, i % 2)
+            host._quality_vals[key] = val
+        lay.addLayout(grid)
+        figs = QtWidgets.QHBoxLayout()
+        for name, w in (("quality_time", 3), ("quality_hist", 2)):
+            slot = host.slot(name, sheet, 4.0 if w == 3 else 2.6, 2.0)
+            slot.setMinimumHeight(170)
+            figs.addWidget(slot, w)
+        lay.addLayout(figs)
+        note = QtWidgets.QLabel("After Analyze: correlation of each beat with the recording's "
+                                "beat template (0.90 dotted).")
+        note.setProperty("muted", True)
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        wa = QtWidgets.QWidgetAction(menu)
+        wa.setDefaultWidget(sheet)
+        return wa
 
     def refresh_to_check(self) -> None:
         """How many beats the tachogram flagged (after Analyze)."""
@@ -1071,6 +1135,8 @@ class DetectionTab(QtWidgets.QWidget):
         word = ("" if q is None else " · good" if q >= 85 else " · fair" if q >= 60
                 else " · poor")
         self.lbl_quality.setText(f"Quality {q}/100{word}" if q is not None else "Quality —")
+        self.btn_quality.setText(self.lbl_quality.text() + "  ▾")
+        self.lbl_quality_score.setText(f"{q} / 100{word}" if q is not None else "—")
         self.btn_review_link.setEnabled(self.btn_review.isEnabled())
         self.refresh_to_check()
         self._show_summary(n, q)
