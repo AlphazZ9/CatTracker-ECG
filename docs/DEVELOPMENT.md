@@ -236,7 +236,7 @@ repository folder.
 
 The ready-to-run apps (Windows, macOS Apple Silicon, macOS Intel) are built by
 GitHub Actions from `packaging/ecg.spec` (PyInstaller) and published on the
-[Releases page](https://github.com/AlphazZ9/Tom-ECG-Analysis-App/releases/latest).
+[Releases page](https://github.com/AlphazZ9/CatTracker-ECG/releases/latest).
 How to publish a new version, and the first-launch warnings of these unsigned
 apps, are explained in [`packaging/README_BUILD.md`](../packaging/README_BUILD.md)
 (in French).

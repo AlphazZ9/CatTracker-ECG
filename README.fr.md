@@ -16,7 +16,7 @@ les mesures selon la souche et les conditions de votre étude.
 
 1. **Application prête à l'emploi (recommandé).** Téléchargez le zip de
    votre système sur la page
-   [Releases](https://github.com/AlphazZ9/Tom-ECG-Analysis-App/releases/latest)
+   [Releases](https://github.com/AlphazZ9/CatTracker-ECG/releases/latest)
    (Windows, macOS Apple Silicon ou macOS Intel ; macOS 14 ou plus récent
    pour l'app), décompressez-le et lancez l'application.
 2. **Ou le lanceur en un clic** (sans installer Python soi-même) :

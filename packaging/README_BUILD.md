@@ -47,7 +47,7 @@ les télécharger ; ils sont conservés 30 jours). Aucune Release n'est créée.
 
 ## Où les utilisateurs téléchargent
 
-<https://github.com/AlphazZ9/Tom-ECG-Analysis-App/releases/latest>
+<https://github.com/AlphazZ9/CatTracker-ECG/releases/latest>
 
 Prendre le zip correspondant à son système dans la rubrique **Assets**.
 
