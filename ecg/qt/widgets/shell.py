@@ -273,9 +273,7 @@ def page_header(title: str, subtitle: "Optional[QtWidgets.QLabel]" = None
     row.setSpacing(12)
     col = QtWidgets.QVBoxLayout()
     col.setSpacing(0)
-    lbl = QtWidgets.QLabel(title)
-    lbl.setProperty("role", "title")
-    col.addWidget(lbl)
+    # No big title: the tab along the top names the page (as Tk).
     if subtitle is not None:
         subtitle.setProperty("muted", True)
         subtitle.setWordWrap(True)

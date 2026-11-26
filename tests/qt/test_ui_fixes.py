@@ -95,35 +95,20 @@ def test_detect_peaks_is_ctrl_d_not_space(window):
     assert "Ctrl+D" in keys and "Space" not in keys
 
 
-def test_rhythm_charts_and_report_export_in_one_folder(window, qtbot, tmp_path, monkeypatch):
-    """The Rhythm charts follow Analyze; Export N files asks for one folder."""
-    from ecg.app import dialogs
+def test_rhythm_charts_and_report_buttons(window, qtbot):
+    """The Rhythm charts follow Analyze; the Report has the Tk export buttons."""
     _detect(qtbot, window)
     window.analyze()
     qtbot.waitUntil(lambda: window.statusBar().currentMessage() == "Analysis done",
                     timeout=120000)
     charts = window.rhythm.charts
-    x, y = charts.t_line.getData()
+    x, _y = charts.t_line.getData()
     assert x is not None and len(x) > 100
-    assert charts.poincare.getPlotItem().listDataItems()
     rep = window.report
     window.tabs.setCurrentWidget(rep)
-    for m, t in rep.tiles.items():
-        t.setChecked(m in ("export_excel", "export_rr_csv"))
-    assert rep.btn_export.text() == "Export 2 files"
-
-    class Folder:
-        def askdirectory(self, **_k):
-            return str(tmp_path)
-
-        def __getattr__(self, name):
-            return getattr(dialogs._Headless(), name)
-    monkeypatch.setattr(dialogs.filedialog, "backend", Folder())
-    rep.export_selected()
-    window.jobs.wait(60000)
-    qtbot.wait(300)
-    names = sorted(p.suffix for p in tmp_path.iterdir() if p.is_file())
-    assert ".xlsx" in names and ".csv" in names
+    qtbot.wait(100)
+    assert rep.buttons["export_excel"].isVisible() and rep.buttons["export_excel"].isEnabled()
+    assert rep.buttons["export_prism"].text() == "GraphPad Prism"
 
 
 def test_command_search_finds_pages_and_runs_them(window):

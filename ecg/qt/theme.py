@@ -173,6 +173,15 @@ def style_sheet(p: Palette, scale: float = 1.0) -> str:
     QFrame#Banner {{ background: {p.ACCENT_SOFT}; border: none; border-radius: 10px; }}
     QFrame#Warning {{ background: {p.WARN_BG}; border: none; border-radius: 10px; }}
     QFrame#Warning QLabel {{ background: transparent; color: {p.WARN_TEXT}; }}
+    QFrame#Strip {{ background: {p.SIDEBAR}; border: none; border-bottom: 1px solid {p.BORDER}; }}
+    QFrame#Strip QLabel {{ background: transparent; }}
+    QTabWidget#MainTabs::pane {{ border: none; border-top: 1px solid {p.BORDER}; }}
+    QTabWidget#MainTabs > QTabBar::tab {{ background: transparent; color: {p.MUTED};
+        border: none; border-bottom: 2px solid transparent; border-radius: 0;
+        padding: 10px 12px 8px 12px; margin: 0 1px; font-weight: 500; }}
+    QTabWidget#MainTabs > QTabBar::tab:selected {{ color: {p.ACCENT_TEXT};
+        border-bottom: 2px solid {p.ACCENT}; font-weight: 600; background: transparent; }}
+    QTabWidget#MainTabs > QTabBar::tab:hover {{ color: {p.TEXT}; }}
     QFrame#Chip {{ background: {p.SIDEBAR}; border: none; border-radius: 8px; }}
     QFrame#Chip:hover {{ background: {p.BORDER}; }}
     QFrame#Chip QLabel {{ background: transparent; }}
@@ -244,7 +253,7 @@ def style_sheet(p: Palette, scale: float = 1.0) -> str:
     QTabBar::tab:last {{ border-top-right-radius: 8px; border-bottom-right-radius: 8px; }}
     QTabBar::tab:selected {{ background: {p.CARD}; color: {p.TEXT}; font-weight: 600;
         border: 1px solid {p.BORDER}; border-radius: 7px; }}
-    QTabWidget#TimeCourse > QTabBar::tab {{ margin-top: 22px; margin-bottom: 6px; }}
+    QTabWidget#TimeCourse > QTabBar::tab {{ margin-top: 12px; margin-bottom: 6px; }}
 
     QComboBox, QLineEdit, QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTextEdit {{
         background: {p.CARD}; border: 1px solid {p.BORDER2}; border-radius: 7px;

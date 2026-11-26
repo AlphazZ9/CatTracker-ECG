@@ -52,10 +52,9 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         # The page's title beside its modes (the tab bar, drawn as a
         # segmented control by the style sheet).
         self.setObjectName("TimeCourse")
-        title = QtWidgets.QLabel("Time course")
-        title.setProperty("role", "title")
-        title.setContentsMargins(24, 12, 18, 4)
-        self.setCornerWidget(title, QtCore.Qt.Corner.TopLeftCorner)
+        spacer = QtWidgets.QWidget()                 # the modes start at the page margin
+        spacer.setFixedWidth(20)
+        self.setCornerWidget(spacer, QtCore.Qt.Corner.TopLeftCorner)
         self.win = window
         host = window.figures
         ctl = host.analysis_ctrl
@@ -242,8 +241,6 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host.ent_epoch = Field(self.sp_epoch)
         host.ent_overlap = Field(self.sp_overlap)
         host.txt_epochs = self._results(lay, host, "epochs")
-        self._sheetify(lay, [row, mrow], [host.lbl_epoch_info, host.lbl_epoch_count,
-                                          self.btn_epochs])
         return page
 
     def _sliding_page(self, host) -> QtWidgets.QWidget:
@@ -282,7 +279,6 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         lay.addLayout(lw)
         host.ent_roll_win = Field(self.sp_roll_win)
         host.ent_roll_step = Field(self.sp_roll_step)
-        self._sheetify(lay, [row, mrow, lw], [host.lbl_roll_status, self.btn_sliding])
         host.txt_rolling = self._results(lay, host, "rolling_hrv")
         return page
 
@@ -335,7 +331,6 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.btn_auto.setProperty("action", True)
         row.addWidget(self.btn_auto)
         lay.addLayout(row)
-        self._sheetify(lay, [row], [self.btn_calibrate, self.btn_auto])
         host.lbl_auto_status = StatusLabel("")
         host.lbl_auto_status.setProperty("muted", True)
         host.lbl_auto_status.setWordWrap(True)
@@ -382,7 +377,6 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         self.btn_evt.setProperty("action", True)
         row.addWidget(self.btn_evt)
         lay.addLayout(row)
-        self._sheetify(lay, [row], [self.btn_evt])
         host.lbl_evt_status = StatusLabel("")
         host.lbl_evt_status.setProperty("muted", True)
         host.lbl_evt_status.setWordWrap(True)
