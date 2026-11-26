@@ -670,4 +670,12 @@ def sync_figure_theme(is_dark: bool) -> None:
     # THEME itself (in memory only, never saved from here): some figures read
     # THEME.is_dark (e.g. the PSD band transparency).
     tk_theme.THEME.apply_preset("Dark" if is_dark else "Light")
+    # The surfaces and the text of the Qt palette: the Tk dark preset is
+    # bluish (#1B1F26), the Qt one neutral (#1C1C1E), and the figures sat on
+    # the cards as darker blue blocks. The data colours stay the preset's.
+    from ecg.qt import theme as qt_theme
+    p = qt_theme.DARK if is_dark else qt_theme.LIGHT
+    for key in ("BG", "PANEL", "CARD", "BORDER", "BORDER2", "TEXT", "MUTED", "LIGHT",
+                "HAIRLINE"):
+        tk_theme.THEME._colors[key] = getattr(p, key)
     tk_theme.apply_theme_config(tk_theme.THEME)

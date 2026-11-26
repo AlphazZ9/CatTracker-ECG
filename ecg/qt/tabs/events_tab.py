@@ -131,8 +131,7 @@ class EventsTab(QtWidgets.QWidget):
         from ecg.qt.widgets.shell import autohide
         host.lbl_arr_premature = autohide(StatusLabel(""))
         host.lbl_arr_premature.setWordWrap(True)
-        from ecg.qt import theme
-        host.lbl_arr_premature.setStyleSheet(f"color: {theme.current().WARN_TEXT};")
+        host.lbl_arr_premature.setProperty("warn", True)      # follows the theme
         ll.addWidget(host.lbl_arr_premature)
         ll.addWidget(self.table, 1)
         split.addWidget(left)
