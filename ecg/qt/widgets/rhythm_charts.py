@@ -121,10 +121,12 @@ class RhythmCharts(QtCore.QObject):
         self._spikes: "Optional[np.ndarray]" = None
         self._annotations: list = []
 
-        # Heart rate / RR over time.
+        # RR intervals (tacho_rr) above the instantaneous heart rate (tacho),
+        # one time axis, as the Tk tachogram.
         self.tacho = _Chart()
-        self.tacho.setMinimumHeight(180)
+        self.tacho.setMinimumHeight(140)
         self.tacho.setLabel("bottom", "Time", units="s")
+        self.tacho.setLabel("left", "HR (bpm)")
         self.tacho.showGrid(x=False, y=True, alpha=0.12)
         self.t_line = pg.PlotDataItem(connect="finite")        # every beat, thin
         self.t_trend = pg.PlotDataItem(connect="finite")       # its 9-beat running median
@@ -132,11 +134,31 @@ class RhythmCharts(QtCore.QObject):
         self.t_flag = pg.ScatterPlotItem(size=9, symbol="o")
         self.t_over = pg.ScatterPlotItem(size=8, symbol="t1")     # beyond the top
         self.t_under = pg.ScatterPlotItem(size=8, symbol="t")     # beyond the bottom
-        for item in (self.t_line, self.t_trend, self.t_excl, self.t_flag, self.t_over,
-                     self.t_under):
-            self.tacho.addItem(item)
-        self._t_regions: list = []
-        self.tacho.scene().sigMouseClicked.connect(self._tacho_clicked)
+        self.tacho_rr = _Chart()
+        self.tacho_rr.setMinimumHeight(120)
+        self.tacho_rr.setLabel("left", "RR (ms)")
+        self.tacho_rr.showGrid(x=False, y=True, alpha=0.12)
+        self.tacho_rr.setXLink(self.tacho)
+        self.tacho_rr.getAxis("bottom").setStyle(showValues=False)
+        self.r_line = pg.PlotDataItem(connect="finite")
+        self.r_trend = pg.PlotDataItem(connect="finite")
+        self.r_excl = pg.ScatterPlotItem(size=6, symbol="o")
+        self.r_flag = pg.ScatterPlotItem(size=9, symbol="o")
+        self.r_over = pg.ScatterPlotItem(size=8, symbol="t1")
+        self.r_under = pg.ScatterPlotItem(size=8, symbol="t")
+        # One lane per chart: (chart, line, trend, excluded, flagged, over,
+        # under, the unit drawn, the annotated-period items).
+        self._lanes = {
+            "HR": (self.tacho, self.t_line, self.t_trend, self.t_excl, self.t_flag,
+                   self.t_over, self.t_under, []),
+            "RR": (self.tacho_rr, self.r_line, self.r_trend, self.r_excl, self.r_flag,
+                   self.r_over, self.r_under, []),
+        }
+        for chart, *items, _regions in self._lanes.values():
+            for item in items:
+                chart.addItem(item)
+            chart.scene().sigMouseClicked.connect(
+                lambda ev, c=chart: self._tacho_clicked(ev, c))
 
         # Poincaré, square, and the entropy under it.
         self.poincare = _Chart()
@@ -193,8 +215,8 @@ class RhythmCharts(QtCore.QObject):
         self._draw_hist()
 
     def set_unit(self, unit: str) -> None:
+        """Kept for callers of the former HR / RR switch: both are drawn."""
         self.unit = "RR" if unit == "RR" else "HR"
-        self._draw_tacho()
 
     def _series(self):
         from ecg.core.analysis import rr_timeseries
@@ -205,55 +227,59 @@ class RhythmCharts(QtCore.QObject):
                 ts["HR_bpm"].to_numpy(float), ts["valid"].to_numpy(bool))
 
     def _draw_tacho(self) -> None:
-        p = theme.current()
-        for item in self._t_regions:
-            self.tacho.removeItem(item)
-        self._t_regions = []
+        """Both lanes: RR above, HR below (the HR one is the "tacho" chart)."""
         s = self._series() if self._results is not None else None
+        for unit in ("RR", "HR"):
+            self._draw_lane(unit, s)
+
+    def _draw_lane(self, unit: str, s) -> None:
+        p = theme.current()
+        chart, line_i, trend_i, excl_i, flag_i, over_i, under_i, regions = self._lanes[unit]
+        for item in regions:
+            chart.removeItem(item)
+        regions.clear()
         if s is None:
-            for item in (self.t_line, self.t_trend, self.t_excl, self.t_flag, self.t_over,
-                         self.t_under):
+            for item in (line_i, trend_i, excl_i, flag_i, over_i, under_i):
                 item.setData([], [])
-            self.tacho.say("Detect the peaks, then click Analyze: the heart rate of every "
-                           "beat appears here.")
+            chart.say("Detect the peaks, then click Analyze: every beat appears here."
+                      if unit == "HR" else "")
             return
-        self.tacho.say("")
+        chart.say("")
         t, rr, hr, valid = s
-        y = hr if self.unit == "HR" else rr
-        self.tacho.setLabel("left", "Heart rate (bpm)" if self.unit == "HR" else "RR (ms)")
+        y = hr if unit == "HR" else rr
         line = np.where(valid, y, np.nan)          # the line breaks around excluded ones
-        self.t_line.setData(t, line)
+        line_i.setData(t, line)
         from ecg.qt.widgets.ecg_plot import _running_median
         trend = np.full(len(y), np.nan)
         if valid.sum() >= 3:
             trend[valid] = _running_median(y[valid], 9)
-        self.t_trend.setData(t, trend)
-        self.t_excl.setData(t[~valid], y[~valid])
-        rng = robust_range(y[valid], min_span=20.0 if self.unit == "HR" else 4.0)
+        trend_i.setData(t, trend)
+        excl_i.setData(t[~valid], y[~valid])
+        rng = robust_range(y[valid], min_span=20.0 if unit == "HR" else 4.0)
         if rng is not None:
             lo, hi = rng
-            self.tacho.setYRange(lo, hi, padding=0)
+            chart.setYRange(lo, hi, padding=0)
             over, under = y > hi, y < lo
-            self.t_over.setData(t[over], np.full(int(over.sum()), hi - 0.02 * (hi - lo)))
-            self.t_under.setData(t[under], np.full(int(under.sum()), lo + 0.02 * (hi - lo)))
+            over_i.setData(t[over], np.full(int(over.sum()), hi - 0.02 * (hi - lo)))
+            under_i.setData(t[under], np.full(int(under.sum()), lo + 0.02 * (hi - lo)))
         if len(t):
-            self.tacho.setXRange(float(t[0]), float(t[-1]), padding=0.01)
+            chart.setXRange(float(t[0]), float(t[-1]), padding=0.01)
         if self._spikes is not None and len(self._spikes):
             idx = np.clip(np.searchsorted(t, self._spikes), 0, len(t) - 1)
             ys = y[idx]
             if rng is not None:
                 ys = np.clip(ys, rng[0], rng[1])
-            self.t_flag.setData(self._spikes, ys)
+            flag_i.setData(self._spikes, ys)
         else:
-            self.t_flag.setData([], [])
+            flag_i.setData([], [])
         for a in self._annotations:
             color = a.get("color") or p.MUTED
             region = pg.LinearRegionItem(values=(float(a["t_start"]), float(a["t_end"])),
                                          movable=False, brush=pg.mkBrush(_alpha(color, 40)),
                                          pen=pg.mkPen(None))
             region.setZValue(-20)
-            self.tacho.addItem(region)
-            self._t_regions.append(region)
+            chart.addItem(region)
+            regions.append(region)
 
     def _draw_poincare(self) -> None:
         r = self._results
@@ -368,17 +394,27 @@ class RhythmCharts(QtCore.QObject):
         self.hist.setYRange(0, max(1, int(counts.max())) * 1.08, padding=0)
 
     # ── interaction, look ───────────────────────────────────
-    def _tacho_clicked(self, ev) -> None:
+    def _tacho_clicked(self, ev, chart: "Optional[_Chart]" = None) -> None:
+        chart = chart or self.tacho
         if self._on_time is None or self._results is None:
             return
-        vb = self.tacho.getPlotItem().getViewBox()
+        vb = chart.getPlotItem().getViewBox()
         if not vb.sceneBoundingRect().contains(ev.scenePos()):
             return
         self._on_time(float(vb.mapSceneToView(ev.scenePos()).x()))
 
     def apply_palette(self, p: "theme.Palette") -> None:
-        for chart in (self.tacho, self.poincare, self.mse, self.psd, self.hist):
+        for chart in (self.tacho, self.tacho_rr, self.poincare, self.mse, self.psd, self.hist):
             chart.style(p)
+        self.r_line.setPen(pg.mkPen(_alpha(p.TEXT, 60), width=1))
+        self.r_trend.setPen(pg.mkPen(p.TEXT, width=2))
+        self.r_excl.setPen(pg.mkPen(p.MUTED, width=1.2))
+        self.r_excl.setBrush(pg.mkBrush(None))
+        self.r_flag.setPen(pg.mkPen(p.ACCENT, width=1.6))
+        self.r_flag.setBrush(pg.mkBrush(None))
+        for item in (self.r_over, self.r_under):
+            item.setPen(pg.mkPen(None))
+            item.setBrush(pg.mkBrush(p.MUTED))
         self.t_line.setPen(pg.mkPen(_alpha(p.ACCENT, 70), width=1))
         self.t_trend.setPen(pg.mkPen(p.ACCENT, width=2))
         self.t_excl.setPen(pg.mkPen(p.MUTED, width=1.2))

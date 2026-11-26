@@ -94,79 +94,53 @@ class RhythmTab(QtWidgets.QScrollArea):
         lay.addLayout(cards_row)
         for key in ("hr", "sdnn", "rmssd", "pnn6", "lf_hf", "sd1_sd2"):   # in this order
             host._rhythm_cards[key]
-        grid = QtWidgets.QGridLayout()
-        grid.setSpacing(14)
-        # The two chart rows share the free height of the page: the charts
-        # grow with the window rather than leaving a blank band below.
-        grid.setRowStretch(0, 3)
-        grid.setRowStretch(1, 2)
-        lay.addLayout(grid)
-        self._grid, self._cards_row = grid, cards_row
+        # The four sections of the Tk page, in its order: tachogram and
+        # Poincaré, metrics and spectrum, non-linear details, RR distribution.
+        self._cards_row = cards_row
+        from ecg.qt.widgets.rhythm_charts import RhythmCharts
+        self.charts = RhythmCharts(on_time_clicked=self._show_beat, parent=self)
+        # The charts on screen (PyQtGraph); the Matplotlib figures of the same
+        # results are kept, hidden, for the exports (drawn when one reads them).
+        for name in ("rr", "poincare", "psd", "rr_hist"):
+            host.slot(name, page, 6.0, 4.0).hide()
 
-        # Tachogram, with its flagged-beat controls.
-        spikes = QtWidgets.QWidget()
-        srow = QtWidgets.QHBoxLayout(spikes)
-        srow.setContentsMargins(0, 0, 0, 0)
-        self.btn_spikes = QtWidgets.QPushButton("Flagged beats")
-        self.btn_spikes.setCheckable(True)
-        self.btn_spikes.setChecked(bool(host.ui.show_spike_markers))
-        self.btn_spikes.setToolTip("Show / hide the flagged beats (▲ / ▼) of the tachogram: "
-                                   "the trace and the mean ± SD band stay")
-        self.btn_spikes.toggled.connect(self._spikes_toggled)
-        srow.addWidget(self.btn_spikes)
-        self.btn_review = QtWidgets.QPushButton("Review ›")
+        # ── 1 · Tachogram and Poincaré ──
+        tools = QtWidgets.QWidget()
+        trow = QtWidgets.QHBoxLayout(tools)
+        trow.setContentsMargins(0, 0, 0, 0)
+        self.lbl_flagged = QtWidgets.QLabel("")
+        self.lbl_flagged.setProperty("muted", True)
+        trow.addWidget(self.lbl_flagged)
+        self.btn_review = QtWidgets.QPushButton("Review")
         self.btn_review.setToolTip("The next flagged beat (▲ / ▼), centred in Signal; press "
                                    "again for the following one")
         self.btn_review.clicked.connect(lambda: window.detection.step_spike(+1))
-        srow.addWidget(self.btn_review)
-        # The charts on screen (PyQtGraph); the Matplotlib figures of the same
-        # results are kept, hidden, for the exports (drawn when one reads them).
-        from ecg.qt.widgets.rhythm_charts import RhythmCharts
-        from ecg.qt.widgets.shell import Segmented
-        self.charts = RhythmCharts(on_time_clicked=self._show_beat, parent=self)
-        for name in ("rr", "poincare", "psd", "rr_hist"):
-            host.slot(name, page, 6.0, 4.0).hide()
-        self.seg_unit = Segmented(["HR", "RR"])
-        self.seg_unit.buttons[0].setChecked(True)
-        for b in self.seg_unit.buttons:
-            b.clicked.connect(lambda _c=False, u=b.text(): self.charts.set_unit(u))
-        srow.insertWidget(0, self.seg_unit)
-        self.lbl_flagged = QtWidgets.QLabel("")
-        self.lbl_flagged.setProperty("muted", True)
-        srow.insertWidget(0, self.lbl_flagged)
-        grid.addWidget(card("Heart rate over time", self.charts.tacho, 0, spikes), 0, 0)
-
-        # Poincaré, with the non-linear recompute and the entropy cap.
-        nl = QtWidgets.QWidget()
-        nrow = QtWidgets.QHBoxLayout(nl)
-        nrow.setContentsMargins(0, 0, 0, 0)
-        nrow.addWidget(QtWidgets.QLabel("Entropy cap (RR)"))
-        # Runtime cap of the O(N²) entropy block only (SampEn, ApEn, MSE…):
-        # Poincaré and DFA always use every beat of the analysis window.
-        self.sp_entropy = QtWidgets.QSpinBox()
-        self.sp_entropy.setRange(0, 10_000_000)
-        self.sp_entropy.setValue(int(MouseECG.ENTROPY_MAX_BEATS))
-        self.sp_entropy.setToolTip("Valid RR intervals used by the entropy block, for "
-                                   "runtime (0 = no cap). SD1 / SD2 and DFA always use "
-                                   "every valid RR of the window. Takes effect at the "
-                                   "next Analyze or Recompute.")
-        nrow.addWidget(self.sp_entropy)
-        self.btn_nonlin = QtWidgets.QPushButton("Recompute")
-        self.btn_nonlin.setToolTip("Non-linear HRV again on the current peaks, window and RR "
-                                   "bounds")
-        self.btn_nonlin.clicked.connect(window.recompute_nonlinear)
-        nrow.addWidget(self.btn_nonlin)
-        host.ent_entropy_cap = Field(self.sp_entropy, text=True)
-        pc_box = QtWidgets.QWidget()
-        pcl = QtWidgets.QVBoxLayout(pc_box)
-        pcl.setContentsMargins(0, 0, 0, 0)
-        host.lbl_nonlin_status = StatusLabel("")
-        host.lbl_nonlin_status.setWordWrap(True)
-        pcl.addWidget(host.lbl_nonlin_status)
+        trow.addWidget(self.btn_review)
+        self.btn_spikes = QtWidgets.QPushButton("▲▼ Spike markers")
+        self.btn_spikes.setCheckable(True)
+        self.btn_spikes.setChecked(bool(host.ui.show_spike_markers))
+        self.btn_spikes.setToolTip("Show / hide the flagged beats (▲ / ▼) of the tachogram: "
+                                   "the trace and the running median stay")
+        self.btn_spikes.toggled.connect(self._spikes_toggled)
+        trow.addWidget(self.btn_spikes)
+        sec1 = QtWidgets.QWidget()
+        s1 = QtWidgets.QHBoxLayout(sec1)
+        s1.setContentsMargins(0, 0, 0, 0)
+        s1.setSpacing(18)
+        left = QtWidgets.QVBoxLayout()
+        left.setSpacing(4)
+        left.addWidget(self.charts.tacho_rr, 1)
+        left.addWidget(self.charts.tacho, 1)
+        hint = QtWidgets.QLabel("Click: that beat in Signal  ·  ▲ / ▼ beyond the scale  ·  "
+                                "hollow: excluded  ·  thick line: 9-beat running median")
+        hint.setProperty("muted", True)
+        hint.setWordWrap(True)
+        left.addWidget(hint)
+        s1.addLayout(left, 3)
+        right = QtWidgets.QVBoxLayout()
+        right.setSpacing(4)
         prow = QtWidgets.QHBoxLayout()
         prow.addWidget(self.charts.poincare, 3)
-        # Name and value on one line: stacked, the three took the height the
-        # chart rows need to fit the window.
         stats = QtWidgets.QGridLayout()
         stats.setVerticalSpacing(6)
         self.lbl_sd = {}
@@ -181,41 +155,33 @@ class RhythmTab(QtWidgets.QScrollArea):
             self.lbl_sd[key] = val
         stats.setRowStretch(3, 1)
         prow.addLayout(stats, 1)
-        pcl.addLayout(prow, 3)
-        pcl.addWidget(self.charts.mse, 1)
-        grid.addWidget(card("Poincaré and entropy", pc_box, 0, nl), 0, 1)
+        right.addLayout(prow, 3)
+        right.addWidget(self.charts.mse, 1)
+        pairs = QtWidgets.QLabel("Successive valid pairs only: no pair crosses an excluded "
+                                 "interval.")
+        pairs.setProperty("muted", True)
+        pairs.setWordWrap(True)
+        right.addWidget(pairs)
+        s1.addLayout(right, 2)
+        self.sec_tacho = card("Tachogram and Poincaré", sec1, 0, tools)
+        lay.addWidget(self.sec_tacho)
 
-        # Spectrum.
-        psd_box = QtWidgets.QWidget()
-        psd_lay = QtWidgets.QVBoxLayout(psd_box)
-        psd_lay.setContentsMargins(0, 0, 0, 0)
-        host.lbl_freq_status = StatusLabel("")
-        host.lbl_freq_status.setWordWrap(True)
-        psd_lay.addWidget(host.lbl_freq_status)
-        psd_lay.addWidget(self.charts.psd, 1)
-        self.btn_freq = QtWidgets.QPushButton("Recompute")
-        self.btn_freq.setToolTip("Frequency HRV again on the current peaks, analysis window and "
-                                 "RR bounds")
-        self.btn_freq.clicked.connect(window.recompute_freq)
-        grid.addWidget(card("Power spectrum", psd_box, 0, self.btn_freq), 1, 0)
-
-        grid.addWidget(card("RR distribution (valid intervals)", self.charts.hist, 0), 1, 1)
-
-        # The metric table (ecg.core.metric_table.rhythm_rows), with its basis:
-        # as tall as its rows, so the page is the only thing that scrolls.
-        table_box = QtWidgets.QWidget()
-        tl = QtWidgets.QVBoxLayout(table_box)
-        tl.setContentsMargins(0, 0, 0, 0)
+        # ── 2 · Metrics and power spectrum ──
         host._rhythm_labels = {k: StatusLabel("") for k in ("excluded", "nonlinear_basis",
                                                             "asymmetry")}
         for lbl in host._rhythm_labels.values():
             lbl.setProperty("muted", True)
             lbl.setWordWrap(True)
-        tl.addWidget(host._rhythm_labels["excluded"])
-        self.chk_all = QtWidgets.QCheckBox("Show all metrics")
+        self.chk_all = QtWidgets.QCheckBox("Show all NeuroKit metrics")
         self.chk_all.toggled.connect(self._show_all_toggled)
+        sec2 = QtWidgets.QWidget()
+        s2 = QtWidgets.QHBoxLayout(sec2)
+        s2.setContentsMargins(0, 0, 0, 0)
+        s2.setSpacing(18)
+        tl = QtWidgets.QVBoxLayout()
+        tl.addWidget(host._rhythm_labels["excluded"])
         self.table = QtWidgets.QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Metric", "Value", "Unit", "Basis"])
+        self.table.setHorizontalHeaderLabels(["Metric", "Value", "Unit", "Computed on"])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -223,13 +189,56 @@ class RhythmTab(QtWidgets.QScrollArea):
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(True)
         tl.addWidget(self.table)
-        tl.addWidget(host._rhythm_labels["nonlinear_basis"])
         tl.addStretch(1)
-        grid.addWidget(card("Metrics", table_box, 0, self.chk_all), 2, 0)
-        asym = QtWidgets.QWidget()
-        al = QtWidgets.QVBoxLayout(asym)
-        al.setContentsMargins(0, 0, 0, 0)
-        al.addWidget(host._rhythm_labels["asymmetry"])
+        s2.addLayout(tl, 1)
+        psd_col = QtWidgets.QVBoxLayout()
+        frow = QtWidgets.QHBoxLayout()
+        self.btn_freq = QtWidgets.QPushButton("Recompute frequency")
+        self.btn_freq.setToolTip("Frequency HRV again on the current peaks, analysis window and "
+                                 "RR bounds")
+        self.btn_freq.clicked.connect(window.recompute_freq)
+        frow.addWidget(self.btn_freq)
+        frow.addStretch(1)
+        psd_col.addLayout(frow)
+        host.lbl_freq_status = StatusLabel("")
+        host.lbl_freq_status.setWordWrap(True)
+        psd_col.addWidget(host.lbl_freq_status)
+        self.charts.psd.setMinimumHeight(260)
+        psd_col.addWidget(self.charts.psd, 1)
+        s2.addLayout(psd_col, 1)
+        lay.addWidget(card("Metrics and power spectrum", sec2, 0, self.chk_all))
+        host.on_rhythm_table = self.show_table
+        self._table: "MetricTable | None" = None
+
+        # ── 3 · Non-linear details ──
+        nl = QtWidgets.QWidget()
+        nrow = QtWidgets.QHBoxLayout(nl)
+        nrow.setContentsMargins(0, 0, 0, 0)
+        self.btn_nonlin = QtWidgets.QPushButton("Recompute non-linear")
+        self.btn_nonlin.setToolTip("Non-linear HRV again on the current peaks, window and RR "
+                                   "bounds")
+        self.btn_nonlin.clicked.connect(window.recompute_nonlinear)
+        nrow.addWidget(self.btn_nonlin)
+        nrow.addWidget(QtWidgets.QLabel("Entropy cap (RR):"))
+        # Runtime cap of the O(N²) entropy block only (SampEn, ApEn, MSE…):
+        # Poincaré and DFA always use every beat of the analysis window.
+        self.sp_entropy = QtWidgets.QSpinBox()
+        self.sp_entropy.setRange(0, 10_000_000)
+        self.sp_entropy.setValue(int(MouseECG.ENTROPY_MAX_BEATS))
+        self.sp_entropy.setToolTip("Valid RR intervals used by the entropy block, for "
+                                   "runtime (0 = no cap). SD1 / SD2 and DFA always use "
+                                   "every valid RR of the window. Takes effect at the "
+                                   "next Analyze or Recompute.")
+        nrow.addWidget(self.sp_entropy)
+        host.ent_entropy_cap = Field(self.sp_entropy, text=True)
+        sec3 = QtWidgets.QWidget()
+        s3 = QtWidgets.QVBoxLayout(sec3)
+        s3.setContentsMargins(0, 0, 0, 0)
+        host.lbl_nonlin_status = StatusLabel("")
+        host.lbl_nonlin_status.setWordWrap(True)
+        s3.addWidget(host.lbl_nonlin_status)
+        s3.addWidget(host._rhythm_labels["nonlinear_basis"])
+        s3.addWidget(host._rhythm_labels["asymmetry"])
         # On screen in PyQtGraph; the Matplotlib figure stays, hidden, for
         # the exports (it took ~0.3 s to draw each time the tab was shown).
         from ecg.qt.widgets.dist_charts import AsymmetryCharts
@@ -238,12 +247,26 @@ class RhythmTab(QtWidgets.QScrollArea):
         slot.hide()
         slot.on_clear = self.asym_charts.clear
         host._screen_charts["asymmetry"] = self.asym_charts.set_data
-        al.addWidget(self.asym_charts, 1)
-        grid.addWidget(card("RR asymmetry", asym, 300), 2, 1)
-        host.on_rhythm_table = self.show_table
-        self._table: "MetricTable | None" = None
-        grid.setColumnStretch(0, 3)
-        grid.setColumnStretch(1, 2)
+        self.asym_charts.setMinimumHeight(260)
+        s3.addWidget(self.asym_charts, 1)
+        lay.addWidget(card("Non-linear details", sec3, 0, nl))
+
+        # ── 4 · RR distribution (valid intervals) ──
+        sec4 = QtWidgets.QWidget()
+        s4 = QtWidgets.QHBoxLayout(sec4)
+        s4.setContentsMargins(0, 0, 0, 0)
+        s4.setSpacing(18)
+        host.txt_rr = TextBox()
+        host.txt_rr.setFixedWidth(260)
+        host.txt_rr.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        s4.addWidget(host.txt_rr)
+        self.charts.hist.setMinimumHeight(240)
+        s4.addWidget(self.charts.hist, 1)
+        self.btn_copy_rr = QtWidgets.QPushButton("Copy for Excel")
+        self.btn_copy_rr.setToolTip("The RR statistics as a table: paste them into Excel")
+        self.btn_copy_rr.clicked.connect(
+            lambda: QtWidgets.QApplication.clipboard().setText(host.txt_rr.tsv or ""))
+        lay.addWidget(card("RR distribution (valid intervals)", sec4, 0, self.btn_copy_rr))
 
         # The raw text tables (right click: copy as a table), on demand.
         self.btn_text = QtWidgets.QPushButton("Show the text tables")
@@ -254,7 +277,7 @@ class RhythmTab(QtWidgets.QScrollArea):
         raw_lay = QtWidgets.QHBoxLayout(raw)
         raw_lay.setContentsMargins(0, 0, 0, 0)
         for title, attr in (("HRV time domain", "txt_td"), ("Frequency domain", "txt_fd"),
-                            ("Non-linear", "txt_nl"), ("RR intervals", "txt_rr")):
+                            ("Non-linear", "txt_nl")):
             col = QtWidgets.QVBoxLayout()
             col.addWidget(QtWidgets.QLabel(title))
             box = TextBox()
@@ -277,17 +300,15 @@ class RhythmTab(QtWidgets.QScrollArea):
         self._fit_charts()
 
     def _fit_charts(self) -> None:
-        """The two chart rows fill the visible height under the key numbers
-        (3 : 2), so the charts fit the window whatever its size; the metric
-        table follows below, reached by scrolling."""
-        grid = getattr(self, "_grid", None)
-        if grid is None:
+        """The tachogram and Poincaré section fills the visible height under
+        the key numbers, so its charts fit the window whatever its size; the
+        other sections follow, reached by scrolling."""
+        sec = getattr(self, "sec_tacho", None)
+        if sec is None:
             return
         top = self._cards_row.geometry().bottom() + 14
-        avail = self.viewport().height() - top - grid.spacing() - 16
-        avail = max(avail, 2 * 230)
-        grid.setRowMinimumHeight(0, int(avail * 0.56))
-        grid.setRowMinimumHeight(1, int(avail * 0.44))
+        avail = self.viewport().height() - top - 20
+        sec.setMinimumHeight(max(avail, 420))
 
     def refresh_charts(self) -> None:
         """The charts from the current results (after each step of Analyze,

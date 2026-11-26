@@ -42,8 +42,20 @@ class EventsTab(QtWidgets.QWidget):
         from ecg.qt.widgets.shell import page_header
         lay.addLayout(page_header('Events'))
 
+        # The Tk arrangement: one card with Classify and its settings, what
+        # the events rest on and the ribbon; below, the list (left) and the
+        # selected event's ECG (right) with its controls underneath.
         bar = QtWidgets.QFrame(objectName="Card")
-        row = QtWidgets.QHBoxLayout(bar)
+        bar_lay = QtWidgets.QVBoxLayout(bar)
+        bar_lay.setContentsMargins(16, 12, 16, 12)
+        row = QtWidgets.QHBoxLayout()
+        bar_lay.addLayout(row)
+        self.btn_classify = QtWidgets.QPushButton("Classify events")
+        self.btn_classify.setProperty("action", True)
+        self.btn_classify.setEnabled(False)
+        self.btn_classify.clicked.connect(host.analysis_ctrl.run_arrhythmia_analysis)
+        row.addWidget(self.btn_classify)
+        row.addSpacing(8)
 
         def spin(label: str, value: float, lo: float, hi: float, tip: str) -> QtWidgets.QDoubleSpinBox:
             row.addWidget(QtWidgets.QLabel(label))
@@ -55,18 +67,14 @@ class EventsTab(QtWidgets.QWidget):
             row.addWidget(sp)
             return sp
 
-        self.sp_baseline = spin("Baseline (s)", 30, 5, 36000,
+        self.sp_baseline = spin("Baseline: first", 30, 5, 36000,
                                 "Window at the start of the analysed span that sets the "
                                 "recording's own baseline heart rate")
-        self.sp_brady = spin("Brady / tachy (%)", 20, 5, 60,
+        row.addWidget(QtWidgets.QLabel("s of the analysis window"))
+        self.sp_brady = spin("ΔHR threshold (%)", 20, 5, 60,
                              "Deviation from the baseline heart rate that counts")
-        self.sp_min_beats = spin("Min beats", 10, 3, 10000,
+        self.sp_min_beats = spin("Min run (beats)", 10, 3, 10000,
                                  "Shortest bradycardia / tachycardia episode, beats")
-        self.btn_classify = QtWidgets.QPushButton("Classify events")
-        self.btn_classify.setProperty("action", True)
-        self.btn_classify.setEnabled(False)
-        self.btn_classify.clicked.connect(host.analysis_ctrl.run_arrhythmia_analysis)
-        row.addWidget(self.btn_classify)
         row.addStretch(1)
         self.btn_copy = QtWidgets.QPushButton("Copy for Excel")
         self.btn_copy.setToolTip("The events as tab-separated text: paste them into Excel")
@@ -81,18 +89,18 @@ class EventsTab(QtWidgets.QWidget):
         host.lbl_arr_baseline = StatusLabel(
             host.analysis_ctrl.events_readout_text(window.recording.analysis.arrhythmia_run))
         host.lbl_arr_baseline.setWordWrap(True)
-        lay.addWidget(host.lbl_arr_baseline)
+        bar_lay.addWidget(host.lbl_arr_baseline)
         host.lbl_arrhythmia_status = StatusLabel(NEEDS_PEAKS)
         host.lbl_arrhythmia_status.setProperty("muted", True)
         host.lbl_arrhythmia_status.setWordWrap(True)
-        lay.addWidget(host.lbl_arrhythmia_status)
+        bar_lay.addWidget(host.lbl_arrhythmia_status)
         from ecg.qt.widgets.stale_banner import StaleBanner
         self.banner = StaleBanner(self)
         lay.addWidget(self.banner)
 
         ribbon = host.slot("arr_ribbon", self, 12.0, 2.0)
         ribbon.setMinimumHeight(190)
-        lay.addWidget(ribbon)
+        bar_lay.addWidget(ribbon)
 
         split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS))
@@ -105,9 +113,9 @@ class EventsTab(QtWidgets.QWidget):
         header = self.table.horizontalHeader()      # every column readable, no side scroll
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
-        left = QtWidgets.QWidget()
+        left = QtWidgets.QFrame(objectName="Card")
         ll = QtWidgets.QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setContentsMargins(14, 12, 14, 12)
         ll.setSpacing(4)
         # The list's title, the severity key and the premature-beat counts
         # (refresh_events_head / refresh_premature_label), as in Tk.
@@ -128,20 +136,19 @@ class EventsTab(QtWidgets.QWidget):
         ll.addWidget(host.lbl_arr_premature)
         ll.addWidget(self.table, 1)
         split.addWidget(left)
-        right = QtWidgets.QWidget()
+        right = QtWidgets.QFrame(objectName="Card")
         rl = QtWidgets.QVBoxLayout(right)
-        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setContentsMargins(14, 12, 14, 12)
         # The selected event on its own line, above its controls: on the same
         # line its full text set the width of the pane and squeezed the list.
         host.lbl_arr_event_title = StatusLabel("Select an event")
         host.lbl_arr_event_title.setWordWrap(True)
         rl.addWidget(host.lbl_arr_event_title)
         head = QtWidgets.QHBoxLayout()
-        head.addStretch(1)
         nav = host.nav_ctrl
         for text, tip, fn in (
-                ("◀ Previous", "The event before the one selected", lambda: self.step_event(-1)),
-                ("Next ▶", "The event after the one selected", lambda: self.step_event(+1))):
+                ("Previous", "The event before the one selected", lambda: self.step_event(-1)),
+                ("Next", "The event after the one selected", lambda: self.step_event(+1))):
             b = QtWidgets.QPushButton(text)
             b.setToolTip(tip)
             b.clicked.connect(fn)
@@ -153,24 +160,25 @@ class EventsTab(QtWidgets.QWidget):
                                  "one added by hand). Undo: Ctrl+Z.")
         self.btn_edit.toggled.connect(self._edit_toggled)
         head.addWidget(self.btn_edit)
-        for text, step in (("←", -1), ("→", +1)):
-            b = QtWidgets.QPushButton(text)
-            b.setToolTip("Pan the trace")
-            b.setMaximumWidth(36)
-            b.clicked.connect(lambda _c=False, d=step: nav.arr_navigate(d))
-            head.addWidget(b)
+        head.addStretch(1)
         head.addWidget(QtWidgets.QLabel("Window (s)"))
         self.sp_win = QtWidgets.QDoubleSpinBox()
         self.sp_win.setRange(0.1, 30.0)
         self.sp_win.setValue(3.0)
         self.sp_win.valueChanged.connect(self._window_changed)
         head.addWidget(self.sp_win)
-        rl.addLayout(head)
+        for text, step in (("◀", -1), ("▶", +1)):
+            b = QtWidgets.QPushButton(text)
+            b.setToolTip("Pan the trace")
+            b.setMaximumWidth(36)
+            b.clicked.connect(lambda _c=False, d=step: nav.arr_navigate(d))
+            head.addWidget(b)
         host.ent_arr_win = Value(self.sp_win.value)
         detail = host.slot("arr_detail", right, 9.0, 4.0)
-        detail.setMinimumHeight(360)
+        detail.setMinimumHeight(240)          # the page does not scroll: it must fit 900 px
         detail.canvas.mpl_connect("button_press_event", host.analysis_ctrl.on_arr_detail_click)
         rl.addWidget(detail, 1)
+        rl.addLayout(head)
         split.addWidget(right)
         split.setSizes([480, 900])
         # The list keeps ~a third of the width when the window is laid out
