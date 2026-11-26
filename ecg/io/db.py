@@ -678,8 +678,8 @@ def _jsonable(obj: Any) -> Any:
     if callable(tolist):
         try:
             return _jsonable(tolist())
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("tolist() failed, value kept as text: %s", e)
     return str(obj)
 
 

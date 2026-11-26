@@ -20,6 +20,7 @@ a view must not change a digit by moving here.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
@@ -34,6 +35,8 @@ from ecg.core.analysis import (
     successive_valid_pairs, LEGACY_SPECTRAL_TEXT,
 )
 from ecg.core.models import MouseECG, QT_REPORTED, reported_interval_columns
+
+log = logging.getLogger("ecg")
 
 MISSING = "—"
 
@@ -292,8 +295,8 @@ def _hr_rows(r: dict, rep: dict) -> "list[MetricRow]":
         add("rr.mean", "RR mean",
             float(np.nanmean(np.asarray(r["rr_ms"], dtype=float)[results_rr_valid(r)])),
             "ms", 0)
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("RR mean not computed: %s", e)
     for k, label, unit, dec in (
             ("n_intervals", "RR intervals", "intervals", 0),
             ("n_excluded", "RR excluded from HRV", "intervals", 0),

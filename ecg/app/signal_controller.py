@@ -840,8 +840,8 @@ class SignalController:
         if self.app.ui.hover_after_id is not None:
             try:
                 self.app.after_cancel(self.app.ui.hover_after_id)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("hover timer not cancelled: %s", e)
         self.app.detection.hover_samp       = None
         self.app.detection.hover_samp_near  = False
         self.app.ui.hover_after_id   = None
@@ -958,8 +958,8 @@ class SignalController:
             for w in self.app._arr_card_widgets:
                 try:
                     w.destroy()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("event card not destroyed: %s", e)
             self.app._arr_card_widgets.clear()
         self.app.analysis_ctrl.refresh_premature_label()
         self.app.analysis_ctrl.refresh_events_head()

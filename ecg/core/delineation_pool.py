@@ -140,8 +140,8 @@ def _release() -> None:
         for h in handles:
             try:
                 h.close()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("shared-memory handle not closed: %s", e)
     _ATTACHED.clear()
 
 
