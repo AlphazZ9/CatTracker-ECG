@@ -113,12 +113,12 @@ def test_rr_hr_quality_strip(qtbot, window):
     det.btn_strip.setChecked(True)
     assert window.figures.ui.rrhr_strip_visible and det.plot.strip[0].isVisible() is not False
     qtbot.waitUntil(lambda: d._beat_corr_for is d.rpeaks_ok, timeout=10000)
-    x, y = det.plot.rr_curve.getData()
+    x, y = det.plot.rr_curve.getOriginalDataset()     # getData: clipped to the view
     assert np.allclose(y, np.diff(d.rpeaks_ok) / s.fs * 1000.0)
     assert np.allclose(x, d.rpeaks_ok[1:] / s.fs)
     lo, hi = window.figures.analysis_ctrl.hrv_rr_bounds(quiet=True)
     ref = compute_beat_correlation(s.filtered, d.rpeaks_ok, s.fs, lo, hi)
-    _qx, qy = det.plot.q_curve.getData()
+    _qx, qy = det.plot.q_curve.getOriginalDataset()
     assert np.allclose(qy, ref["beat_corr"], equal_nan=True)
     det.btn_strip.setChecked(False)
     assert not window.figures.ui.rrhr_strip_visible

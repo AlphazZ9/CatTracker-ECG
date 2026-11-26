@@ -117,8 +117,10 @@ class EcgPlot(QtWidgets.QWidget):
         self.rr_curve, self.hr_curve, self.q_curve = (
             pg.PlotDataItem(symbol="o", symbolSize=3) for _ in range(3))
         for p, c in zip(self.strip, (self.rr_curve, self.hr_curve, self.q_curve)):
-            c.setClipToView(True)
             p.addItem(c)
+            # On the plot, not the curve: PlotItem.addItem gives each curve
+            # the plot's own (default: off) clip and downsampling settings.
+            p.setClipToView(True)
         self.q_line = pg.InfiniteLine(pos=0.90, angle=0, movable=False)  # the 0.90 corr. line
         self.strip[2].addItem(self.q_line)
         self._rr = None
@@ -139,16 +141,20 @@ class EcgPlot(QtWidgets.QWidget):
         for p in [self.detail, self.overview] + self.strip:
             p.getAxis("left").setWidth(AXIS_WIDTH_PX)
 
+        # Only what is in view, at most ~one point per pixel column (peak
+        # keeps the R waves). Set on the plots: PlotItem.addItem overwrites a
+        # curve's own clip / downsampling with the plot's (off by default),
+        # so the trace used to rebuild every sample of the recording on each
+        # move (an hour at 2 kHz: ~1 s per step).
         self.trace = pg.PlotDataItem(pen=pg.mkPen(width=1))
-        self.trace.setDownsampling(auto=True, method="peak")
-        self.trace.setClipToView(True)
         self.detail.addItem(self.trace)
+        self.detail.setClipToView(True)
+        self.detail.setDownsampling(auto=True, mode="peak")
         self.over_trace = pg.PlotDataItem(pen=pg.mkPen(width=1))
-        self.over_trace.setDownsampling(auto=True, method="peak")
         self.overview.addItem(self.over_trace)
         self.hr_over = pg.PlotDataItem(pen=pg.mkPen(width=1.5))
-        self.hr_over.setDownsampling(auto=True, method="peak")
         self.overview.addItem(self.hr_over)
+        self.overview.setDownsampling(auto=True, mode="peak")
         self._over_regions: list = []
 
         self.accepted = pg.ScatterPlotItem(size=7, symbol="o")

@@ -77,6 +77,9 @@ class _Chart(pg.PlotWidget):
         self.setMenuEnabled(False)
         self.hideButtons()
         self.getPlotItem().getViewBox().setMouseEnabled(x=False, y=False)
+        # At most ~one point per pixel column (peak keeps the extremes): an
+        # hour of mouse ECG is ~36 000 beats per tachogram line.
+        self.getPlotItem().setDownsampling(auto=True, mode="peak")
         self._placeholder = pg.TextItem("", anchor=(0.5, 0.5))
         self.addItem(self._placeholder, ignoreBounds=True)
         # Room above the plot: the top tick label was cut in half.
