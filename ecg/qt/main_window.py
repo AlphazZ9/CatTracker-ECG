@@ -274,8 +274,12 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addWidget(self.lbl_logo)
         title = QtWidgets.QLabel("ECG Analysis")
         title.setStyleSheet("font-weight: 600;")
-        title.setMinimumWidth(150)
         row.addWidget(title)
+        version = QtWidgets.QLabel(ecg.__version__)
+        version.setProperty("muted", True)
+        version.setToolTip(f"ECG Analysis {ecg.__version__}")
+        version.setMinimumWidth(60)
+        row.addWidget(version)
         self.chip_file = ClickableFrame(objectName="Chip")
         self.chip_file.setFixedHeight(34)
         self.chip_file.setToolTip("Subject ID, sex, project and notes of this recording")
@@ -959,7 +963,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def toggle_theme(self) -> None:
         app = QtWidgets.QApplication.instance()
-        p = theme.apply(app, theme.LIGHT.name if theme.current().is_dark else theme.DARK.name)
+        # Restyling every widget takes Qt a moment (most of a theme change):
+        # a busy cursor says so; the figures then come in one by one.
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            p = theme.apply(app, theme.LIGHT.name if theme.current().is_dark
+                            else theme.DARK.name)
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
         self.btn_theme.setText("Light mode" if p.is_dark else "Dark mode")
         sync_figure_theme(p.is_dark)
         self.apply_shell_palette(p)

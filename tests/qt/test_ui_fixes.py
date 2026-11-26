@@ -132,3 +132,29 @@ def test_command_search_finds_pages_and_runs_them(window):
     assert window._palette.list.count() == 1
     window._palette._run_current()
     assert window.tabs.currentWidget() is window.morphology
+
+
+def test_signal_quality_sheet_and_silent_host_attributes(window, qtbot, caplog):
+    """The Signal quality values of the Tk panel are filled after Analyze;
+    an attribute the shared code reads and Qt lacks is logged once."""
+    import logging
+    _detect(qtbot, window)
+    window.analyze()
+    qtbot.waitUntil(lambda: window.statusBar().currentMessage() == "Analysis done",
+                    timeout=120000)
+    vals = window.figures._quality_vals
+    assert vals["sq_corr"].text() not in ("", "—")
+    assert "/" in vals["sq_badbeats"].text()
+    assert window.detection.btn_quality.text().startswith("Quality ")
+    assert window.figures.slot("quality_hist").figure.axes
+    with caplog.at_level(logging.INFO, logger="ecg"):
+        window.figures.some_tk_only_widget
+        window.figures.some_tk_only_widget
+    hits = [r for r in caplog.records if "some_tk_only_widget" in r.getMessage()]
+    assert len(hits) == 1
+
+
+def test_the_header_shows_the_version(window):
+    import ecg
+    labels = [w.text() for w in window.findChildren(QtWidgets.QLabel)]
+    assert ecg.__version__ in labels
