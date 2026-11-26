@@ -175,6 +175,7 @@ def style_sheet(p: Palette, scale: float = 1.0) -> str:
     QFrame#Warning QLabel {{ background: transparent; color: {p.WARN_TEXT}; }}
     QFrame#Strip {{ background: {p.SIDEBAR}; border: none; border-bottom: 1px solid {p.BORDER}; }}
     QFrame#Strip QLabel {{ background: transparent; }}
+    QFrame#Rule {{ border: none; background: {p.ACCENT}; min-height: 1px; max-height: 1px; }}
     QTabWidget#MainTabs::pane {{ border: none; border-top: 1px solid {p.BORDER}; }}
     QTabWidget#MainTabs > QTabBar::tab {{ background: transparent; color: {p.MUTED};
         border: none; border-bottom: 2px solid transparent; border-radius: 0;

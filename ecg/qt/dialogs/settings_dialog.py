@@ -26,12 +26,59 @@ if TYPE_CHECKING:
 CLEAN_METHODS = ("neurokit", "pantompkins1985", "elgendi2010", "hamilton2002", "biosppy")
 
 
+LABEL_WIDTH = 290      # one label column for every section, as one form
+
+
+class _AlignedForm(QtWidgets.QFormLayout):
+    """A form whose labels share one width with the other sections'."""
+
+    def addRow(self, *args) -> None:                       # noqa: N802 (Qt name)
+        if len(args) == 2 and isinstance(args[0], str):
+            lbl = QtWidgets.QLabel(args[0])
+            lbl.setMinimumWidth(LABEL_WIDTH)
+            super().addRow(lbl, args[1])
+        elif len(args) == 1 and isinstance(args[0], QtWidgets.QWidget):
+            spacer = QtWidgets.QLabel("")
+            spacer.setMinimumWidth(LABEL_WIDTH)
+            super().addRow(spacer, args[0])
+        else:
+            super().addRow(*args)
+
+
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
         self.setWindowTitle("Recording settings")
         host = window.figures
-        form = QtWidgets.QFormLayout(self)
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setSpacing(6)
+
+        def section(title: str, note: str = "") -> QtWidgets.QFormLayout:
+            """A titled section with a rule under its title, as the Tk
+            Parameters dialog: Signal, Filters, Detection, Artifacts…"""
+            head = QtWidgets.QLabel(title)
+            head.setProperty("role", "heading")
+            outer.addSpacing(4)
+            outer.addWidget(head)
+            rule = QtWidgets.QFrame(objectName="Rule")
+            rule.setFrameShape(QtWidgets.QFrame.Shape.HLine)
+            outer.addWidget(rule)
+            if note:
+                lbl = QtWidgets.QLabel(note)
+                lbl.setProperty("muted", True)
+                lbl.setWordWrap(True)
+                outer.addWidget(lbl)
+            f = _AlignedForm()
+            f.setContentsMargins(8, 2, 0, 2)
+            outer.addLayout(f)
+            return f
+
+        def note_below(text: str) -> None:
+            lbl = QtWidgets.QLabel(text)
+            lbl.setProperty("muted", True)
+            lbl.setWordWrap(True)
+            lbl.setContentsMargins(8, 0, 0, 0)
+            outer.addWidget(lbl)
 
         def num(value: float, lo: float, hi: float, decimals: int = 1,
                 step: float = 1.0) -> QtWidgets.QDoubleSpinBox:
@@ -42,6 +89,7 @@ class SettingsDialog(QtWidgets.QDialog):
             sp.setValue(value)
             return sp
 
+        form = section("Signal")
         self.ed_channel = QtWidgets.QLineEdit("ECG")
         form.addRow("Channel", self.ed_channel)
         self.sp_fs = num(MouseECG.FS_DEFAULT, 1, 1_000_000, 0, 100)
@@ -50,7 +98,9 @@ class SettingsDialog(QtWidgets.QDialog):
         self.sp_t1 = num(0.0, 0, 1e7, 1)
         form.addRow("Crop: start (s, 0 = beginning)", self.sp_t0)
         form.addRow("Crop: end (s, 0 = end)", self.sp_t1)
-        form.addRow(QtWidgets.QLabel("<b>Filtering</b> (the Filtering box of Signal & Detection)"))
+
+        form = section("Filters", "Used when Filtering is ticked on the Signal & Detection "
+                                  "bar.")
         self.sp_lp = num(MouseECG.BP_LO_HZ, 0.01, 1000, 2, 0.5)
         self.sp_hp = num(MouseECG.BP_HI_HZ, 1, 10000, 1, 10)
         form.addRow("Band-pass low cut-off (Hz)", self.sp_lp)
@@ -60,28 +110,39 @@ class SettingsDialog(QtWidgets.QDialog):
         self.cb_clean = QtWidgets.QComboBox()
         self.cb_clean.addItems(CLEAN_METHODS)
         form.addRow("NeuroKit2 cleaning", self.cb_clean)
-        form.addRow(QtWidgets.QLabel("<b>Detection and HRV</b>"))
+        self.chk_invert = QtWidgets.QCheckBox("Invert signal polarity before detection")
+        form.addRow("", self.chk_invert)
+
+        form = section("Detection")
         self.sp_minrr = num(MouseECG.MIN_RR_MS, 1, 5000, 1)
         self.sp_maxrr = num(MouseECG.RR_MAX_MS, 1, 10000, 1)
-        form.addRow("Min R-R (ms)", self.sp_minrr)
+        form.addRow("Min R-R distance (ms)", self.sp_minrr)
         form.addRow("Max R-R for HRV (ms)", self.sp_maxrr)
-        self.chk_invert = QtWidgets.QCheckBox("Invert the signal before detection")
-        form.addRow("", self.chk_invert)
-        self.chk_artifact = QtWidgets.QCheckBox("Automatic artifact correction on Analyze")
-        form.addRow("", self.chk_artifact)
-        self.chk_epochs = QtWidgets.QCheckBox("Compute epochs after Analyze")
-        form.addRow("", self.chk_epochs)
-        form.addRow(QtWidgets.QLabel("<b>SG + Derivative</b>"))
-        self.sp_sg_win = num(20.0, 1, 200, 1)
         self.sp_sg_fs = num(10_000, 100, 100_000, 0, 1000)
+        self.sp_sg_win = num(20.0, 1, 200, 1)
+        form.addRow("SG target fs (Hz)", self.sp_sg_fs)
         form.addRow("SG window (ms)", self.sp_sg_win)
-        form.addRow("Resampling (Hz)", self.sp_sg_fs)
+        note_below("SG + Derivative: resample → Savitzky-Golay derivative → R detection. "
+                   "The method and the threshold are on the Signal & Detection bar.")
+
+        form = section("Artifacts")
+        self.chk_artifact = QtWidgets.QCheckBox("Auto-correct on Analyze (off by default)")
+        form.addRow(self.chk_artifact)
+        note_below("Off recommended: Review artifacts… (Signal quality panel) shows each "
+                   "correction before it is applied. Auto-correct removes ectopic / "
+                   "non-physiological beats without review.")
+
+        form = section("Time course")
+        self.chk_epochs = QtWidgets.QCheckBox("Compute epochs after Analyze")
+        form.addRow(self.chk_epochs)
+
+        outer.addSpacing(8)
         close = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
         close.rejected.connect(self.hide)
         reset = close.addButton("Reset to mouse ECG defaults",
                                 QtWidgets.QDialogButtonBox.ButtonRole.ResetRole)
         reset.clicked.connect(self.reset_defaults)
-        form.addRow(close)
+        outer.addWidget(close)
 
         self.win = window
         det = window.detection
