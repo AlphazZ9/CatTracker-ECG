@@ -187,6 +187,26 @@ def draw_qtc_rr(axr: Any, fit: dict, annotate: bool = True) -> None:
     axr.set_ylabel("QTc (ms)", fontsize=8)
 
 
+def quality_plot_series(r: dict, rpeaks_s: "Optional[np.ndarray]" = None) -> dict:
+    """What the quality panel plots, from the results *r*: the scored beats'
+    times and correlations (t, v), their rolling mean (win, roll_t, roll)
+    and every finite correlation (all, for the histogram)."""
+    t, v = beat_quality_times(r, rpeaks_s)
+    n_pts = len(v)
+    # Rolling mean over the aligned (time, corr) pairs, so the line has
+    # exactly one time per value.
+    win = min(50, max(10, n_pts // 20)) if n_pts >= 10 else 0
+    if win >= 2 and n_pts >= win:
+        roll = np.convolve(v, np.ones(win) / win, mode="valid")
+        roll_t = t[win - 1: win - 1 + len(roll)]
+    else:
+        roll = np.array([])
+        roll_t = np.array([])
+    bc_all = np.asarray(r.get("beat_corr", []), dtype=float)
+    return {"t": t, "v": v, "win": win, "roll": roll, "roll_t": roll_t,
+            "all": bc_all[np.isfinite(bc_all)]}
+
+
 class PlotController:
     def __init__(self, app: "ECGApp") -> None:
         self.app = app
@@ -2257,22 +2277,25 @@ class PlotController:
         self.app._slots["beat"].update(draw_template)
 
         if beat_corr is None or peak_amps is None:
+            self._on_screen("beat_dist", None)
             return
         mean_corr = float(np.nanmean(beat_corr))
 
         n_bad = int(np.sum(beat_corr < 0.90)) if beat_corr is not None else 0
+        # Every scored beat: beat_matrix is shrunk to the ghost traces.
+        n_scored = max(len(beat_corr), 1)
 
         def draw_distributions(fig):
             ax_amp, ax_corr = fig.subplots(1, 2)
             for ax in (ax_amp, ax_corr):
                 style_axes(ax)
-            ax_amp.hist(peak_amps, bins=min(50, max(10, n_beats // 4)),
+            ax_amp.hist(peak_amps, bins=min(50, max(10, n_scored // 4)),
                         color=BLUE, alpha=0.75, edgecolor="none")
             ax_amp.set_xlabel("R-peak amplitude (norm.)")
             ax_amp.set_ylabel("Count")
             ax_amp.set_title("R-peak amplitude", loc="left")
 
-            bins_corr = min(40, max(10, n_beats // 4))
+            bins_corr = min(40, max(10, n_scored // 4))
             ax_corr.hist(beat_corr, bins=bins_corr,
                          color=GREEN, alpha=0.75, edgecolor="none")
             ax_corr.axvline(mean_corr, color=RED, lw=1.5, ls="--",
@@ -2283,10 +2306,22 @@ class PlotController:
             ax_corr.set_ylabel("Count")
             title = f"Beat Morphology  ({n_bad} beats < 0.90)"
             ax_corr.set_title(title, loc="left",
-                              color=(ORANGE if n_bad > n_beats * 0.1 else PLOT["text"]))
+                              color=(ORANGE if n_bad > n_scored * 0.1 else PLOT["text"]))
             ax_corr.legend(framealpha=0)
 
+        self._on_screen("beat_dist", {"peak_amps": np.asarray(peak_amps, dtype=float),
+                                      "beat_corr": np.asarray(beat_corr, dtype=float),
+                                      "mean_corr": mean_corr, "n_bad": n_bad,
+                                      "n_beats": n_scored})
         self.app._slots["beat_dist"].update(draw_distributions)
+
+    def _on_screen(self, name: str, data: Any) -> None:
+        """The data of figure *name* to the on-screen charts of a toolkit that
+        draws its own (Qt: PyQtGraph), the figure itself staying for the
+        exports. None: nothing to show."""
+        show = getattr(type(self.app), "show_chart_data", None)
+        if show is not None:
+            show(self.app, name, data)
 
     def plot_quality_panel(self, r: dict, t: MetricTable) -> None:
         """The Signal & Detection tab's quality panel: the values from the
@@ -2317,19 +2352,10 @@ class PlotController:
             _wp = self.app._windowed_peaks()
             _rp = (_wp if _wp is not None else self.app.detection.rpeaks_ok
                    ).astype(float) / self.app.signal.fs
-        _bc_t, _bc_v = beat_quality_times(r, _rp)
-        n_pts = len(_bc_v)
-
-        # Rolling 50-beat mean over the aligned (time, corr) pairs, so
-        # the line has exactly one time per value.
-        _win = min(50, max(10, n_pts // 20)) if n_pts >= 10 else 0
-        if _win >= 2 and n_pts >= _win:
-            _kern = np.ones(_win) / _win
-            _roll = np.convolve(_bc_v, _kern, mode="valid")
-            _roll_t = _bc_t[_win - 1: _win - 1 + len(_roll)]
-        else:
-            _roll = np.array([])
-            _roll_t = np.array([])
+        q = quality_plot_series(r, _rp)
+        _bc_t, _bc_v = q["t"], q["v"]
+        _win, _roll, _roll_t = q["win"], q["roll"], q["roll_t"]
+        self._on_screen("quality", q)
 
         def _compact(ax) -> None:
             style_axes(ax)
@@ -2375,8 +2401,7 @@ class PlotController:
         if dst is not None:
             dst.update(draw_quality_time)
 
-        _bc_all = np.asarray(beat_corr, dtype=float)
-        _bc_all = _bc_all[np.isfinite(_bc_all)]
+        _bc_all = q["all"]
 
         def draw_quality_hist(fig):
             ax = fig.add_subplot(111)
@@ -2431,6 +2456,7 @@ class PlotController:
                         transform=ax.transAxes)
                 ax.set_axis_off()
 
+            self._on_screen("asymmetry", None)
             dst = self.app._slots.get("asymmetry")
             if dst is not None:
                 dst.update(draw_no_asymmetry)
@@ -2489,6 +2515,10 @@ class PlotController:
                 ax_hist.set_title("ΔRR Distribution", loc="left", fontsize=8)
                 ax_hist.legend(framealpha=0, fontsize=8)
 
+            self._on_screen("asymmetry", {
+                "n_dec": _n_dec, "n_acc": _n_acc, "n_off": _n_off, "n_zero": _n_zero,
+                "n_tot": _n_tot, "porta_pct": _porta_pct, "guzik_pct": _guzik_pct,
+                "drr": _drr_clip})
             dst = self.app._slots.get("asymmetry")
             if dst is not None:
                 dst.update(draw_asymmetry)

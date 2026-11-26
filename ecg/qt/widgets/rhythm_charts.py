@@ -46,6 +46,20 @@ def robust_range(values: np.ndarray, pad_frac: float = 0.08,
     return lo - pad, hi + pad
 
 
+def few_ticks(axis: "pg.AxisItem", lo: float, hi: float, n: int = 3) -> None:
+    """At most about *n* labelled ticks on *axis* for the range lo..hi (a
+    "nice" step: 1, 2 or 5 × 10^k): pyqtgraph's own spacing crowds the
+    labels of a chart only a few tens of pixels high."""
+    span = float(hi - lo)
+    if not np.isfinite(span) or span <= 0:
+        axis.setTickSpacing()                     # back to automatic
+        return
+    raw = span / max(n, 1)
+    mag = 10 ** np.floor(np.log10(raw))
+    step = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
+    axis.setTickSpacing(step, step)
+
+
 def _alpha(color: str, a: int) -> QtGui.QColor:
     c = QtGui.QColor(color)
     c.setAlpha(a)
@@ -62,6 +76,14 @@ class _Chart(pg.PlotWidget):
         self.getPlotItem().getViewBox().setMouseEnabled(x=False, y=False)
         self._placeholder = pg.TextItem("", anchor=(0.5, 0.5))
         self.addItem(self._placeholder, ignoreBounds=True)
+        # Room above the plot: the top tick label was cut in half.
+        self.getPlotItem().setContentsMargins(2, 8, 6, 2)
+
+    def sizeHint(self) -> QtCore.QSize:
+        # A modest wish: pyqtgraph asks for 600 px, which made every page of
+        # charts taller than the window. The layouts then give a chart the
+        # height there is (RhythmTab._fit_charts).
+        return QtCore.QSize(360, max(self.minimumHeight(), 100))
 
     def say(self, text: str) -> None:
         """A message in the middle of an empty chart."""
@@ -98,7 +120,7 @@ class RhythmCharts(QtCore.QObject):
 
         # Heart rate / RR over time.
         self.tacho = _Chart()
-        self.tacho.setFixedHeight(300)
+        self.tacho.setMinimumHeight(180)
         self.tacho.setLabel("bottom", "Time", units="s")
         self.tacho.showGrid(x=False, y=True, alpha=0.12)
         self.t_line = pg.PlotDataItem(connect="finite")        # every beat, thin
@@ -116,7 +138,7 @@ class RhythmCharts(QtCore.QObject):
         # Poincaré, square, and the entropy under it.
         self.poincare = _Chart()
         self.poincare.setAspectLocked(True)
-        self.poincare.setFixedHeight(230)
+        self.poincare.setMinimumHeight(95)
         self.poincare.setLabel("bottom", "RRₙ (ms)")
         self.poincare.setLabel("left", "RRₙ₊₁ (ms)")
         self.p_identity = pg.PlotDataItem()
@@ -125,7 +147,7 @@ class RhythmCharts(QtCore.QObject):
         for item in (self.p_identity, self.p_points, self.p_ellipse):
             self.poincare.addItem(item)
         self.mse = _Chart()
-        self.mse.setFixedHeight(110)
+        self.mse.setMinimumHeight(85)
         self.mse.setLabel("bottom", "Scale factor")
         self.mse.setLabel("left", "SampEn")
         self.m_line = pg.PlotDataItem(symbol="o", symbolSize=5)
@@ -134,7 +156,7 @@ class RhythmCharts(QtCore.QObject):
         # Power spectrum (log power), its bands shaded.
         self.psd = _Chart()
         self.psd.setLogMode(x=False, y=True)
-        self.psd.setFixedHeight(220)
+        self.psd.setMinimumHeight(150)
         self.psd.setLabel("bottom", "Frequency", units="Hz")
         self.psd.setLabel("left", "PSD (ms²/Hz)")
         self.s_line = pg.PlotDataItem()
@@ -143,7 +165,7 @@ class RhythmCharts(QtCore.QObject):
 
         # RR distribution of the valid intervals.
         self.hist = _Chart()
-        self.hist.setFixedHeight(220)
+        self.hist.setMinimumHeight(150)
         self.hist.setLabel("bottom", "RR (ms)")
         self.hist.setLabel("left", "Beats")
         self.h_bars = pg.BarGraphItem(x=[], height=[], width=1.0)
@@ -271,7 +293,10 @@ class RhythmCharts(QtCore.QObject):
         attrs = getattr(nl, "attrs", {}) if nl is not None else {}
         scales, values = attrs.get("mse_scales") or [], attrs.get("mse_values") or []
         if scales and values:
-            self.m_line.setData(np.asarray(scales, float), np.asarray(values, float))
+            vals = np.asarray(values, float)
+            self.m_line.setData(np.asarray(scales, float), vals)
+            if np.isfinite(vals).any():
+                few_ticks(self.mse.getAxis("left"), 0.0, float(np.nanmax(vals)), 2)
             self.mse.say("")
         else:
             self.m_line.setData([], [])

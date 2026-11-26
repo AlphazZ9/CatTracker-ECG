@@ -126,11 +126,17 @@ class MorphologyTab(QtWidgets.QScrollArea):
         from ecg.qt.widgets.beat_chart import BeatChart
         self.beat_chart = BeatChart()
         host.slot("beat", page, 12.0, 4.6).hide()
-        lay.addWidget(card("Mean beat and landmarks", self.beat_chart, 0))
+        lay.addWidget(card("Mean beat and landmarks", self.beat_chart, 340), 1)
         lay.addWidget(card("Intervals per beat", host.slot("intervals", page, 12.0, 5.4), 460))
         if QT_REPORTED:
             lay.addWidget(card("QTc vs RR", host.slot("qtc_rr", page, 6.0, 2.0), 220))
-        lay.addWidget(card("Beat distributions", host.slot("beat_dist", page, 12.0, 3.8), 340))
+        from ecg.qt.widgets.dist_charts import BeatDistCharts
+        self.dist_charts = BeatDistCharts()
+        slot = host.slot("beat_dist", page, 12.0, 3.8)
+        slot.hide()
+        slot.on_clear = self.dist_charts.clear
+        host._screen_charts["beat_dist"] = self.dist_charts.set_data
+        lay.addWidget(card("Beat distributions", self.dist_charts, 260))
 
     # ── parameters ──────────────────────────────────────────
     def _ensemble_changed(self, value: int) -> None:

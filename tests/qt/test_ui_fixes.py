@@ -44,15 +44,15 @@ def test_a_figure_of_a_hidden_tab_is_drawn_when_read(window):
 
 def test_a_figure_is_drawn_when_its_tab_is_shown(window, qtbot):
     calls = []
-    slot = window.figures.slot("asymmetry")            # on Rhythm & HRV
+    slot = window.figures.slot("intervals")            # on Morphology & Intervals
     slot.update(lambda fig: calls.append(fig.add_subplot()))
-    window.tabs.setCurrentWidget(window.rhythm)
+    window.tabs.setCurrentWidget(window.morphology)
     qtbot.waitUntil(lambda: len(calls) == 1, timeout=5000)
 
 
 def test_the_dark_theme_reaches_the_figures(window, qtbot):
-    window.tabs.setCurrentWidget(window.rhythm)
-    shown, hidden = window.figures.slot("asymmetry"), window.figures.slot("beat")
+    window.tabs.setCurrentWidget(window.morphology)
+    shown, hidden = window.figures.slot("intervals"), window.figures.slot("beat")
     for slot in (shown, hidden):
         slot.update(lambda fig: fig.add_subplot())
     window.toggle_theme()
@@ -143,3 +143,24 @@ def test_the_header_shows_the_version(window):
     import ecg
     labels = [w.text() for w in window.findChildren(QtWidgets.QLabel)]
     assert ecg.__version__ in labels
+
+
+def test_the_quality_and_distribution_charts_are_drawn_on_screen(window, qtbot):
+    """Quality panel, RR asymmetry and beat distributions: PyQtGraph on
+    screen, their Matplotlib figures kept hidden for the exports."""
+    _detect(qtbot, window)
+    window.analyze()
+    qtbot.waitUntil(lambda: window.statusBar().currentMessage() == "Analysis done",
+                    timeout=60000)
+    det, rh, mo = window.detection, window.rhythm, window.morphology
+    assert det.quality_charts._series is not None
+    assert len(det.quality_charts.t_points.data) > 100
+    assert rh.asym_charts._data is not None
+    assert mo.dist_charts._data is not None
+    for name in ("quality_time", "quality_hist", "asymmetry", "beat_dist"):
+        assert not window.figures.slot(name).isVisible()
+        assert window.figures.slot(name).figure.axes        # drawn when read (exports)
+    window.figures.slot("quality_time").clear()             # results dropped: emptied too
+    assert det.quality_charts._series is None
+    window.figures.slot("asymmetry").clear()
+    assert rh.asym_charts._data is None
