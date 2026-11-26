@@ -105,7 +105,7 @@ class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
         self.setWidget(page)
         lay.setContentsMargins(24, 16, 24, 16)
         lay.setSpacing(12)
-        from ecg.qt.widgets.shell import page_header
+        from ecg.qt.widgets.shell import autohide, page_header
         lay.addLayout(page_header('Compare segments'))
         self.segs: "list[dict]" = []
         self.ref: Any = 0
@@ -118,8 +118,16 @@ class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
         self.rows = QtWidgets.QTableWidget(0, 3)
         self.rows.setHorizontalHeaderLabels(["Label", "Start (s)", "End (s)"])
         self.rows.verticalHeader().setVisible(False)
-        self.rows.horizontalHeader().setStretchLastSection(True)
-        self.rows.setMaximumHeight(220)
+        hh = self.rows.horizontalHeader()
+        hh.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        for c in (1, 2):
+            hh.setSectionResizeMode(c, QtWidgets.QHeaderView.ResizeMode.Fixed)
+            self.rows.setColumnWidth(c, 140)
+        # As tall as its rows (fit_rows): a fixed 220 px box left a blank
+        # band under the usual two segments.
+        model = self.rows.model()
+        for sig in (model.rowsInserted, model.rowsRemoved, model.modelReset):
+            sig.connect(self._fit_rows)          # a method: dropped with the page
         cl.addWidget(self.rows)
         bar = QtWidgets.QHBoxLayout()
         self.btn_add = QtWidgets.QPushButton("Add segment")
@@ -174,18 +182,23 @@ class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
         rl.addLayout(ref_row)
         self.lbl_cmp = QtWidgets.QLabel("")
         self.lbl_cmp.setWordWrap(True)
-        rl.addWidget(self.lbl_cmp)
+        rl.addWidget(autohide(self.lbl_cmp))
         self.lbl_flags = QtWidgets.QLabel("")
         self.lbl_flags.setWordWrap(True)
-        rl.addWidget(self.lbl_flags)
+        rl.addWidget(autohide(self.lbl_flags))
         self.table = QtWidgets.QTableWidget(0, 0)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setMinimumHeight(420)
-        rl.addWidget(self.table)
-        self.plot = host.slot("compare", page, 12.0, 4.4)
-        self.plot.setMinimumHeight(420)
-        rl.addWidget(self.plot)
+        # The table and the figure side by side, sharing the height of the
+        # card (they were stacked: two 420 px blocks, mostly empty).
+        self.table.setMinimumHeight(360)
+        self.plot = host.slot("compare", page, 8.0, 4.4)
+        self.plot.setMinimumHeight(360)
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(12)
+        body.addWidget(self.table, 2)
+        body.addWidget(self.plot, 3)
+        rl.addLayout(body, 1)
         ex = QtWidgets.QHBoxLayout()
         self.btn_excel = QtWidgets.QPushButton("Export Excel / CSV…")
         self.btn_excel.clicked.connect(self.export_excel)
@@ -201,11 +214,19 @@ class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
         self.lbl_exp.setWordWrap(True)
         ex.addWidget(self.lbl_exp, 1)
         rl.addLayout(ex)
-        lay.addWidget(res)
+        lay.addWidget(res, 1)
         self._build_group_card(lay)
-        lay.addStretch(1)
+        self._fit_rows()
 
     # ── segments ────────────────────────────────────────────
+    def _fit_rows(self, *_args) -> None:
+        """The segment table as tall as its rows (at least two)."""
+        t = self.rows
+        row_h = t.verticalHeader().defaultSectionSize()
+        n = max(t.rowCount(), 2)
+        t.setFixedHeight(t.horizontalHeader().sizeHint().height()
+                         + n * row_h + 2 * t.frameWidth() + 2)
+
     def _duration(self) -> float:
         s = self.win.recording.signal
         return float(len(s.filtered)) / s.fs if s.filtered is not None and s.fs else 0.0

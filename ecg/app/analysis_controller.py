@@ -520,8 +520,8 @@ class AnalysisController:
             for name, vlf, lf, hf in MouseECG.FREQ_BAND_PRESETS:
                 if name == sel:
                     return vlf, lf, hf
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("frequency band preset not read: %s", e)
         return (0.0, 0.4), (0.4, 1.5), (1.5, 5.0)
 
     def run_arrhythmia_analysis(self) -> None:

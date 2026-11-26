@@ -443,8 +443,8 @@ class PlotController:
             for artist in cache["cursor_artists"]:
                 try:
                     artist.remove()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("cursor artist not removed: %s", e)
             cache["cursor_artists"] = self._draw_overview_cursor(ax, t_start, t_end)
             slot.canvas.draw_idle()
             return
@@ -2092,8 +2092,8 @@ class PlotController:
                         body.set_alpha(0.25)
                         body.set_edgecolor(color)
                         body.set_linewidth(0.8)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("violin body not styled: %s", e)
                 # Box on top of violin
                 ax.boxplot(finite, positions=[0], widths=0.18, patch_artist=True,
                            boxprops=dict(facecolor=color, alpha=0.35, linewidth=0.8),

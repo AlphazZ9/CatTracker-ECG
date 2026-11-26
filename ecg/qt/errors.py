@@ -116,8 +116,8 @@ def install_excepthook(reporter: ErrorReporter) -> None:
         try:
             reporter.report_exception(f"Unexpected error in {getattr(args.thread, 'name', '?')}",
                                       args.exc_type, args.exc_value, args.exc_traceback)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("error report failed: %s", e)
 
     sys.excepthook = _hook
     threading.excepthook = _thread_hook

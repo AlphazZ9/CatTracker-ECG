@@ -17,7 +17,7 @@ strain and experimental conditions.
 ## Download / Get started
 
 1. **Download the app (recommended, nothing to install).** Go to the
-   [latest release](https://github.com/AlphazZ9/Tom-ECG-Analysis-App/releases/latest)
+   [latest release](https://github.com/AlphazZ9/CatTracker-ECG/releases/latest)
    and take, under **Assets**, the zip for your computer: Windows, macOS
    Apple Silicon (M1, M2, M3…) or macOS Intel. Extract it and open
    *Tom ECG Analysis*. The Mac app needs macOS 14 (Sonoma) or later.

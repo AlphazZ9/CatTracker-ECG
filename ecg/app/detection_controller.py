@@ -316,8 +316,8 @@ class DetectionController:
                 try:
                     self.app.btn_free_placement.configure(
                         text="Free Placement", **toggle_style(False))
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("free-placement button not reset: %s", e)
         if self.app.signal.filtered is not None:
             self.app._draw_detail(self.app.ui.nav_pos)
 
@@ -376,8 +376,8 @@ class DetectionController:
             drag["span"].set_x(a)
             drag["span"].set_width(b - a)
             drag["ax"].figure.canvas.draw_idle()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("drag span not updated: %s", e)
         return True
 
     def on_detail_release(self, event) -> None:
@@ -388,8 +388,8 @@ class DetectionController:
         if drag["span"] is not None:
             try:
                 drag["span"].remove()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("drag span not removed: %s", e)
         t1 = float(event.xdata) if event.xdata is not None else drag["t0"]
         a, b = sorted((drag["t0"], t1))
         if self.app.signal.fs and self.app.signal.filtered is not None:

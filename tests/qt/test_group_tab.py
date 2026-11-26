@@ -22,7 +22,8 @@ def test_add_open_recording_and_analyses(qtbot, tmp_path, monkeypatch):
     qtbot.addWidget(w)
     w.resize(1400, 900)
     w.show()
-    assert w.group.tbl_res.horizontalHeaderItem(0).text() == "Open a group table"
+    assert w.group.lbl_notes.text() == "Open a group table"   # no table, the reason below
+    assert w.group.tbl_res.isHidden()
     w.open_path(str(FIXTURE), check_session=False)
     w.detection.cb_method.setCurrentIndex(0)
     w.detection.detect()

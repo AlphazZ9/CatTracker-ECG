@@ -19,6 +19,7 @@ beyond are drawn at the edge as small triangles.
 """
 from __future__ import annotations
 
+import logging
 from typing import Callable, Optional
 
 import numpy as np
@@ -26,6 +27,8 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ecg.qt import theme
+
+log = logging.getLogger("ecg")
 
 ROBUST_PCT = (0.5, 99.5)
 
@@ -280,8 +283,8 @@ class RhythmCharts(QtCore.QObject):
         try:
             sd1 = float(nl["HRV_SD1"].values[0])
             sd2 = float(nl["HRV_SD2"].values[0])
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("SD1 / SD2 not in the non-linear table: %s", e)
         if np.isfinite(sd1) and np.isfinite(sd2):
             c = float(np.mean(rr[valid]))
             th = np.linspace(0, 2 * np.pi, 120)

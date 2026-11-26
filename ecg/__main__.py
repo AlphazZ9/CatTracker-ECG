@@ -28,7 +28,7 @@ def _set_windows_app_id() -> None:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
             "TomECG.Analysis")
-    except Exception:
+    except (AttributeError, OSError):     # not Windows, or no shell32: nothing to set
         pass
 
 

@@ -103,9 +103,13 @@ class EventsTab(QtWidgets.QWidget):
         right = QtWidgets.QWidget()
         rl = QtWidgets.QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
-        head = QtWidgets.QHBoxLayout()
+        # The selected event on its own line, above its controls: on the same
+        # line its full text set the width of the pane and squeezed the list.
         host.lbl_arr_event_title = StatusLabel("Select an event")
-        head.addWidget(host.lbl_arr_event_title, 1)
+        host.lbl_arr_event_title.setWordWrap(True)
+        rl.addWidget(host.lbl_arr_event_title)
+        head = QtWidgets.QHBoxLayout()
+        head.addStretch(1)
         nav = host.nav_ctrl
         for text, tip, fn in (
                 ("◀ Previous", "The event before the one selected", lambda: self.step_event(-1)),
@@ -141,6 +145,10 @@ class EventsTab(QtWidgets.QWidget):
         rl.addWidget(detail, 1)
         split.addWidget(right)
         split.setSizes([480, 900])
+        # The list keeps ~a third of the width when the window is laid out
+        # (the sizes above alone left it ~340 px, its Start column cut).
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 2)
         lay.addWidget(split, 1)
         host.on_events_list = self.show_events
         # What AnalysisController.on_arr_detail_click calls on the app (Tk's

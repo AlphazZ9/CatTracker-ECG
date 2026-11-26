@@ -367,3 +367,36 @@ class CommandPalette(QtWidgets.QDialog):
         self.hide()
         if callable(fn):
             fn()
+
+
+def fit_table_height(table: QtWidgets.QTableWidget, min_rows: int = 1,
+                     max_px: "Optional[int]" = None) -> None:
+    """*table* as tall as its rows (at least *min_rows*, at most *max_px*,
+    beyond which it scrolls): no blank box under a short table."""
+    row_h = (table.rowHeight(0) if table.rowCount()
+             else table.verticalHeader().defaultSectionSize())
+    rows = sum(table.rowHeight(r) for r in range(table.rowCount()))
+    rows = max(rows, min_rows * row_h)
+    h = rows + 2 * table.frameWidth() + 2
+    if table.horizontalHeader().isVisible():
+        h += table.horizontalHeader().sizeHint().height()
+    if table.horizontalScrollBar().isVisible() or table.horizontalScrollBarPolicy() == \
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOn:
+        h += table.horizontalScrollBar().sizeHint().height()
+    if max_px is not None:
+        h = min(h, max_px)
+    table.setFixedHeight(h)
+
+
+def autohide(label: QtWidgets.QLabel) -> QtWidgets.QLabel:
+    """*label* shown only while it has text: an empty message line kept its
+    height and left a gap in the card."""
+    set_text = label.setText
+
+    def _set(text: str) -> None:
+        set_text(text)
+        label.setVisible(bool(text))
+
+    label.setText = _set                      # every caller goes through Python
+    label.setVisible(bool(label.text()))
+    return label
