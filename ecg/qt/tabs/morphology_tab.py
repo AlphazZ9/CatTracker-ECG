@@ -126,7 +126,7 @@ class MorphologyTab(QtWidgets.QScrollArea):
         from ecg.qt.widgets.beat_chart import BeatChart
         self.beat_chart = BeatChart()
         host.slot("beat", page, 12.0, 4.6).hide()
-        lay.addWidget(card("Mean beat and landmarks", self.beat_chart, 0))
+        lay.addWidget(card("Mean beat and landmarks", self.beat_chart, 340), 1)
         lay.addWidget(card("Intervals per beat", host.slot("intervals", page, 12.0, 5.4), 460))
         if QT_REPORTED:
             lay.addWidget(card("QTc vs RR", host.slot("qtc_rr", page, 6.0, 2.0), 220))

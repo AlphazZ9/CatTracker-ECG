@@ -122,7 +122,8 @@ class EcgPlot(QtWidgets.QWidget):
         # Grid: the time lines of the trace only. A grid is drawn across the
         # whole plot with transparency on every repaint; on all five plots it
         # took more than half of the time of a move of the view.
-        self.detail.showGrid(x=True, y=False, alpha=0.15)
+        # No grid: drawing it on every move was a third of the time of a
+        # drag (the time ticks and the window presets carry the scale).
         for p in (self.detail, self.overview):
             p.setMenuEnabled(False)
         self.detail.setLabel("bottom", "Time", units="s")
@@ -483,9 +484,11 @@ class EcgPlot(QtWidgets.QWidget):
                 plot.getAxis(ax).setPen(pg.mkPen(p.MUTED))
                 plot.getAxis(ax).setTextPen(pg.mkPen(p.MUTED))
         self.over_view.setBackground(p.PANEL)
-        self.trace.setPen(pg.mkPen(p.plot_signal, width=1.2))
+        # Pens one pixel wide: a wider pen is drawn segment by segment and
+        # made every move of the view three to four times slower.
+        self.trace.setPen(pg.mkPen(p.plot_signal, width=1))
         self.over_trace.setPen(pg.mkPen(p.LIGHT, width=1))
-        self.hr_over.setPen(pg.mkPen(p.ACCENT, width=1.5))
+        self.hr_over.setPen(pg.mkPen(p.ACCENT, width=1))
         # R peaks in red; a peak excluded by hand is a cross in ink, one added
         # by hand a triangle in blue.
         self.accepted.setBrush(pg.mkBrush(p.plot_rpeak))
@@ -504,7 +507,7 @@ class EcgPlot(QtWidgets.QWidget):
                 plot.getAxis(ax).setTextPen(pg.mkPen(p.MUTED))
         for c, col in ((self.rr_curve, p.MUTED), (self.hr_curve, p.ACCENT),
                        (self.q_curve, p.GREEN)):
-            c.setPen(pg.mkPen(col, width=1.2))
+            c.setPen(pg.mkPen(col, width=1))
             c.setSymbolBrush(pg.mkBrush(col))
             c.setSymbolPen(pg.mkPen(None))
         self.q_line.setPen(pg.mkPen(p.MUTED, width=0.8, style=QtCore.Qt.PenStyle.DashLine))

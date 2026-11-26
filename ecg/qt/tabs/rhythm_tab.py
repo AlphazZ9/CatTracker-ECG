@@ -96,7 +96,12 @@ class RhythmTab(QtWidgets.QScrollArea):
             host._rhythm_cards[key]
         grid = QtWidgets.QGridLayout()
         grid.setSpacing(14)
+        # The two chart rows share the free height of the page: the charts
+        # grow with the window rather than leaving a blank band below.
+        grid.setRowStretch(0, 3)
+        grid.setRowStretch(1, 2)
         lay.addLayout(grid)
+        self._grid, self._cards_row = grid, cards_row
 
         # Tachogram, with its flagged-beat controls.
         spikes = QtWidgets.QWidget()
@@ -129,8 +134,7 @@ class RhythmTab(QtWidgets.QScrollArea):
         self.lbl_flagged = QtWidgets.QLabel("")
         self.lbl_flagged.setProperty("muted", True)
         srow.insertWidget(0, self.lbl_flagged)
-        grid.addWidget(card("Heart rate over time", self.charts.tacho, 0, spikes), 0, 0,
-                       QtCore.Qt.AlignmentFlag.AlignTop)
+        grid.addWidget(card("Heart rate over time", self.charts.tacho, 0, spikes), 0, 0)
 
         # Poincaré, with the non-linear recompute and the entropy cap.
         nl = QtWidgets.QWidget()
@@ -252,6 +256,27 @@ class RhythmTab(QtWidgets.QScrollArea):
         self.btn_text.toggled.connect(self._text_toggled)
         lay.addWidget(self.text_card)
         lay.addStretch(1)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._fit_charts()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        self._fit_charts()
+
+    def _fit_charts(self) -> None:
+        """The two chart rows fill the visible height under the key numbers
+        (3 : 2), so the charts fit the window whatever its size; the metric
+        table follows below, reached by scrolling."""
+        grid = getattr(self, "_grid", None)
+        if grid is None:
+            return
+        top = self._cards_row.geometry().bottom() + 14
+        avail = self.viewport().height() - top - grid.spacing() - 16
+        avail = max(avail, 2 * 230)
+        grid.setRowMinimumHeight(0, int(avail * 0.56))
+        grid.setRowMinimumHeight(1, int(avail * 0.44))
 
     def refresh_charts(self) -> None:
         """The charts from the current results (after each step of Analyze,

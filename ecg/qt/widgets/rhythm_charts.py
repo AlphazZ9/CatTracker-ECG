@@ -63,6 +63,12 @@ class _Chart(pg.PlotWidget):
         self._placeholder = pg.TextItem("", anchor=(0.5, 0.5))
         self.addItem(self._placeholder, ignoreBounds=True)
 
+    def sizeHint(self) -> QtCore.QSize:
+        # A modest wish: pyqtgraph asks for 600 px, which made every page of
+        # charts taller than the window. The layouts then give a chart the
+        # height there is (RhythmTab._fit_charts).
+        return QtCore.QSize(360, max(self.minimumHeight(), 100))
+
     def say(self, text: str) -> None:
         """A message in the middle of an empty chart."""
         self._placeholder.setText(text)
@@ -98,7 +104,7 @@ class RhythmCharts(QtCore.QObject):
 
         # Heart rate / RR over time.
         self.tacho = _Chart()
-        self.tacho.setFixedHeight(300)
+        self.tacho.setMinimumHeight(180)
         self.tacho.setLabel("bottom", "Time", units="s")
         self.tacho.showGrid(x=False, y=True, alpha=0.12)
         self.t_line = pg.PlotDataItem(connect="finite")        # every beat, thin
@@ -116,7 +122,7 @@ class RhythmCharts(QtCore.QObject):
         # Poincaré, square, and the entropy under it.
         self.poincare = _Chart()
         self.poincare.setAspectLocked(True)
-        self.poincare.setFixedHeight(230)
+        self.poincare.setMinimumHeight(150)
         self.poincare.setLabel("bottom", "RRₙ (ms)")
         self.poincare.setLabel("left", "RRₙ₊₁ (ms)")
         self.p_identity = pg.PlotDataItem()
@@ -125,7 +131,7 @@ class RhythmCharts(QtCore.QObject):
         for item in (self.p_identity, self.p_points, self.p_ellipse):
             self.poincare.addItem(item)
         self.mse = _Chart()
-        self.mse.setFixedHeight(110)
+        self.mse.setMinimumHeight(70)
         self.mse.setLabel("bottom", "Scale factor")
         self.mse.setLabel("left", "SampEn")
         self.m_line = pg.PlotDataItem(symbol="o", symbolSize=5)
@@ -134,7 +140,7 @@ class RhythmCharts(QtCore.QObject):
         # Power spectrum (log power), its bands shaded.
         self.psd = _Chart()
         self.psd.setLogMode(x=False, y=True)
-        self.psd.setFixedHeight(220)
+        self.psd.setMinimumHeight(150)
         self.psd.setLabel("bottom", "Frequency", units="Hz")
         self.psd.setLabel("left", "PSD (ms²/Hz)")
         self.s_line = pg.PlotDataItem()
@@ -143,7 +149,7 @@ class RhythmCharts(QtCore.QObject):
 
         # RR distribution of the valid intervals.
         self.hist = _Chart()
-        self.hist.setFixedHeight(220)
+        self.hist.setMinimumHeight(150)
         self.hist.setLabel("bottom", "RR (ms)")
         self.hist.setLabel("left", "Beats")
         self.h_bars = pg.BarGraphItem(x=[], height=[], width=1.0)

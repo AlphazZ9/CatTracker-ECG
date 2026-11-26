@@ -46,7 +46,7 @@ def label_rows(centers: "list[float]", gap: float = LABEL_GAP_MS) -> "list[int]"
 class BeatChart(_Chart):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setFixedHeight(360)
+        self.setMinimumHeight(300)
         self.setLabel("bottom", "Time from the R peak (ms)")
         self.setLabel("left", "Amplitude (norm.)")
         self._items: list = []
