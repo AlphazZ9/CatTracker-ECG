@@ -94,15 +94,20 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         lay.addWidget(self._build_header())
+        from ecg.qt.widgets.context_strip import ContextStrip
+        self.strip = ContextStrip(self)
+        lay.addWidget(self.strip)
         body = QtWidgets.QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
         lay.addLayout(body, 1)
-        # The pages are a tab widget whose tab bar is hidden: the navigation
-        # column on the left chooses the page (and shows each one's state).
-        self.tabs = QtWidgets.QTabWidget()
+        # The pages are tabs along the top, as in the Tk interface, each with
+        # its state dot (up to date / out of date / not computed).
+        self.tabs = QtWidgets.QTabWidget(objectName="MainTabs")
         self.tabs.setDocumentMode(True)
-        self.tabs.tabBar().hide()
+        self.tabs.tabBar().setExpanding(False)
+        self.tabs.tabBar().setDrawBase(False)
+        self.tabs.tabBar().setUsesScrollButtons(False)
         self.tab_widgets: "dict[str, QtWidgets.QWidget]" = {}
         for name in TAB_ORDER:
             if name == TAB_DETECTION:
@@ -125,9 +130,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 raise ValueError(f"no tab named {name!r}")
             self.tab_widgets[name] = w
             self.tabs.addTab(w, name.replace("&", "&&"))   # "&" alone marks a shortcut
-        self.sidebar = self._build_sidebar()
-        body.addWidget(self.sidebar)
+        self.sidebar = self._build_sidebar()        # kept for its state dots, not shown
+        self.sidebar.hide()
         body.addWidget(self.tabs, 1)
+        self._legend = self._build_tab_legend()
+        self.tabs.setCornerWidget(self._legend, QtCore.Qt.Corner.TopRightCorner)
         self.setCentralWidget(central)
         self.setStatusBar(QtWidgets.QStatusBar())
         self.statusBar().setSizeGripEnabled(False)
@@ -146,11 +153,13 @@ class MainWindow(QtWidgets.QMainWindow):
         from ecg.qt.dialogs.settings_dialog import SettingsDialog
         from ecg.qt.session import QtSession
         self.settings = SettingsDialog(self)
+        self.detection.link_settings(self.settings)
         from ecg.qt.dialogs.recording_dialog import RecordingDialog
         self.recording_sheet = RecordingDialog(self)
         self.session = QtSession(self)
         self.tabs.currentChanged.connect(self._page_changed)
         self.sidebar.select(TAB_DETECTION)
+        self.strip.attach_window_editor(self.detection)
         self.tabs.currentChanged.connect(
             lambda i: self.report.refresh() if self.tabs.widget(i) is self.report else None)
         self.tabs.currentChanged.connect(       # the group table may have changed
@@ -162,6 +171,7 @@ class MainWindow(QtWidgets.QMainWindow):
             TIME_COURSE_MODES.index(mode) if mode in TIME_COURSE_MODES else 0)
 
         self._build_menu()
+        self._build_header_menus()
         # The out-of-date banners follow the state on a tick, as Tk's shell
         # tick: only the tab shown is looked at (cheap: freshness.status).
         self._tab_state_shown: "dict[str, tuple]" = {}
@@ -294,36 +304,61 @@ class MainWindow(QtWidgets.QMainWindow):
         chip.addWidget(self.lbl_chip_arrow)
         row.addWidget(self.chip_file)
         row.addStretch(1)
-        self.btn_search = QtWidgets.QPushButton(
-            "Search      " + ("⌘K" if sys.platform == "darwin" else "Ctrl+K"))
-        self.btn_search.setProperty("chip", True)
-        self.btn_search.setMinimumWidth(200)
-        self.btn_search.setStyleSheet("text-align: left; padding: 6px 12px;")
-        self.btn_search.setToolTip("Search every command and page")
-        self.btn_search.clicked.connect(self.open_palette)
-        row.addWidget(self.btn_search)
+        # The actions of the Tk header, in its order: Open (and its recent
+        # files), Detect Peaks, Analyze all, Save Session, Export…, Undo,
+        # Redo and the ⋯ menu.
         self.lbl_saved = QtWidgets.QLabel("")
         self.lbl_saved.setProperty("muted", True)
         row.addWidget(self.lbl_saved)
-        self.btn_open = QtWidgets.QPushButton("Open…")
+        self.btn_open = QtWidgets.QPushButton("Open")
         self.btn_open.setToolTip("Open a recording (Ctrl+O)")
         self.btn_open.clicked.connect(self.open_dialog)
         row.addWidget(self.btn_open)
-        self.btn_save = QtWidgets.QPushButton("Save")
+        self.btn_recent = QtWidgets.QToolButton()
+        self.btn_recent.setText("▾")
+        self.btn_recent.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
+        self.btn_recent.setToolTip("Recent recordings")
+        self.btn_recent.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        row.addWidget(self.btn_recent)
+        self.btn_detect_top = QtWidgets.QPushButton("Detect Peaks")
+        self.btn_detect_top.setToolTip("Find the R peaks with the method and threshold of the "
+                                       "detection bar (Ctrl+D)")
+        self.btn_detect_top.clicked.connect(lambda: self.detection.detect())
+        row.addWidget(self.btn_detect_top)
+        self.btn_analyze = QtWidgets.QPushButton("Analyze all")
+        self.btn_analyze.setProperty("primary", True)
+        self.btn_analyze.clicked.connect(self.analyze)
+        row.addWidget(self.btn_analyze)
+        self.btn_save = QtWidgets.QPushButton("Save Session")
         self.btn_save.setToolTip("Save the peaks, edits, results and settings of this recording; "
                                  "they are offered again when the file is reopened (Ctrl+S)")
         self.btn_save.setEnabled(False)
         self.btn_save.clicked.connect(lambda: self.session.save())
         row.addWidget(self.btn_save)
-        self.btn_settings = QtWidgets.QPushButton("Settings…")
-        self.btn_settings.setToolTip("Channel, crop, filters, RR bounds, artifact correction")
+        self.btn_export = QtWidgets.QToolButton()
+        self.btn_export.setText("Export…")
+        self.btn_export.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        row.addWidget(self.btn_export)
+        self.btn_undo_top = QtWidgets.QPushButton("↶ Undo")
+        self.btn_undo_top.setToolTip("Undo the last peak edit (Ctrl+Z)")
+        self.btn_undo_top.clicked.connect(lambda: self.detection.undo())
+        row.addWidget(self.btn_undo_top)
+        self.btn_redo_top = QtWidgets.QPushButton("↷ Redo")
+        self.btn_redo_top.setToolTip("Redo (Ctrl+Y)")
+        self.btn_redo_top.clicked.connect(lambda: self.detection.redo())
+        row.addWidget(self.btn_redo_top)
+        self.btn_more = QtWidgets.QToolButton()
+        self.btn_more.setText("⋯")
+        self.btn_more.setToolTip("Recording, settings, ML detector, view, help")
+        self.btn_more.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_more.setStyleSheet("padding: 5px 12px;")
+        row.addWidget(self.btn_more)
+        self.btn_settings = QtWidgets.QPushButton("Settings…", self)
         self.btn_settings.clicked.connect(lambda: (self.settings.show(), self.settings.raise_()))
-        row.addWidget(self.btn_settings)
-        self.btn_analyze = QtWidgets.QPushButton("Analyze")
-        self.btn_analyze.setProperty("primary", True)
-        self.btn_analyze.setMinimumWidth(120)
-        self.btn_analyze.clicked.connect(self._primary_clicked)
-        row.addWidget(self.btn_analyze)
+        self.btn_settings.hide()
+        self.btn_search = QtWidgets.QPushButton("Search", self)
+        self.btn_search.clicked.connect(self.open_palette)
+        self.btn_search.hide()
         self._analyzing = False
         # Rarely used: reached from the menus, not the header.
         self.btn_recording = QtWidgets.QPushButton("Recording…", self)
@@ -385,8 +420,8 @@ class MainWindow(QtWidgets.QMainWindow):
             ("Detect peaks", "Ctrl+D", self._shortcut_detect),
             ("Analyze", "Ctrl+R", self._shortcut_analyze),
             ("Save session", "Ctrl+S", lambda: self.session.save()),
-            ("Detection settings…", "Signal", lambda: (
-                self.tabs.setCurrentWidget(self.detection), self.detection.btn_detection.click())),
+            ("Detection settings", "Signal", lambda: (
+                self.tabs.setCurrentWidget(self.detection), self.detection.cb_method.setFocus())),
             ("Check agreement", "Signal", self.detection.check_agreement),
             ("Review artifacts…", "Signal", self.detection.btn_review.click),
             ("Annotations…", "Signal", self.detection.btn_annotations.click),
@@ -421,6 +456,64 @@ class MainWindow(QtWidgets.QMainWindow):
             self._palette = CommandPalette(self, self.palette_commands)
         self._palette.open_over(self.btn_search)
 
+    def _build_tab_legend(self) -> QtWidgets.QWidget:
+        """The legend of the tab dots, at the right of the tab bar (as Tk)."""
+        box = QtWidgets.QWidget()
+        row = QtWidgets.QHBoxLayout(box)
+        row.setContentsMargins(0, 0, 16, 0)
+        row.setSpacing(6)
+        self._legend_dots_top = []
+        for text in ("up to date", "out of date", "not computed"):
+            dot = QtWidgets.QLabel()
+            self._legend_dots_top.append(dot)
+            row.addWidget(dot)
+            lbl = QtWidgets.QLabel(text)
+            lbl.setProperty("muted", True)
+            row.addWidget(lbl)
+            row.addSpacing(6)
+        return box
+
+    def _build_header_menus(self) -> None:
+        """The header's menus: recent files, Export…, and ⋯."""
+        recent = QtWidgets.QMenu(self.btn_recent)
+        recent.aboutToShow.connect(lambda: self._fill_recent_into(recent))
+        self.btn_recent.setMenu(recent)
+        ex = self.figures.export_ctrl
+        export = QtWidgets.QMenu(self.btn_export)
+        for text, fn in (("Excel…", ex.export_excel), ("PDF report…", ex.export_pdf_report),
+                         ("Figures (ZIP)…", ex.export_zip), ("GraphPad Prism…", ex.export_prism),
+                         ("RR series (CSV)…", ex.export_rr_csv),
+                         ("Events (PDF)…", ex.export_arrhythmia_pdf), (None, None),
+                         ("Report & exports page", lambda: self.tabs.setCurrentWidget(self.report))):
+            if text is None:
+                export.addSeparator()
+                continue
+            export.addAction(text).triggered.connect(lambda _c=False, f=fn: f())
+        self.btn_export.setMenu(export)
+        more = QtWidgets.QMenu(self.btn_more)
+        for text, fn in (("Recording (subject, project, notes)…", self.show_recording_sheet),
+                         ("Settings…", lambda: (self.settings.show(), self.settings.raise_())),
+                         ("ML detector…", self.open_ml_dialog), (None, None),
+                         ("Search commands…  Ctrl+K", self.open_palette),
+                         ("Light / dark mode", self.toggle_theme),
+                         ("Text size…", self.choose_text_size), (None, None),
+                         ("Recent recordings…", self.open_recent),
+                         ("Clear session cache…", self.clear_session_cache), (None, None),
+                         ("Keyboard shortcuts", self.show_shortcuts),
+                         ("Open log folder", self.open_log_folder)):
+            if text is None:
+                more.addSeparator()
+                continue
+            more.addAction(text).triggered.connect(lambda _c=False, f=fn: f())
+        self.btn_more.setMenu(more)
+
+    def _fill_recent_into(self, menu: QtWidgets.QMenu) -> None:
+        self.menu_recent, kept = menu, self.menu_recent
+        try:
+            self._fill_recent_menu()
+        finally:
+            self.menu_recent = kept
+
     def _page_changed(self, index: int) -> None:
         w = self.tabs.widget(index)
         for key, page in self.tab_widgets.items():
@@ -443,39 +536,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_logo.setPixmap(logo_pixmap(p.ACCENT))
         self.lbl_chip_arrow.setPixmap(icon_pixmap("chevron_down", p.MUTED, 12, 2.4))
         self.sidebar.apply_palette(p)
-        for dot, color in zip(self._legend_dots, (p.GREEN, p.ORANGE, None)):
-            dot.setPixmap(dot_pixmap(color, p.LIGHT))
+        for dots in (self._legend_dots, getattr(self, "_legend_dots_top", [])):
+            for dot, color in zip(dots, (p.GREEN, p.ORANGE, None)):
+                dot.setPixmap(dot_pixmap(color, p.LIGHT))
         self._tab_state_shown.clear()
 
     # ── the primary action ─────────────────────────────────
     def refresh_primary(self) -> None:
-        """The header's one primary button: Open… with no recording, then
-        Detect peaks, then Analyze once there are peaks."""
+        """Detect Peaks with a recording, Analyze all with peaks (as Tk);
+        Undo / Redo as the edits allow."""
         rec = self.recording
-        has_file = bool(rec.signal.filepath)
         rp = rec.detection.rpeaks_ok
-        if not has_file:
-            text, on, tip = "Open…", True, "Open a recording (Ctrl+O)"
-        elif rp is None:
-            text = "Detect peaks"
-            on = self.detection.btn_detect.isEnabled()
-            tip = "Find the R peaks of this recording (Ctrl+D)"
-        else:
-            text, on = "Analyze", (len(rp) >= 5 and not self._analyzing)
-            tip = ("RR / HR, time-domain HRV and beat template, then frequency and non-linear "
-                   "HRV (Ctrl+R)")
-        self.btn_analyze.setText(text)
-        self.btn_analyze.setEnabled(on)
-        self.btn_analyze.setToolTip(tip)
-
-    def _primary_clicked(self) -> None:
-        text = self.btn_analyze.text()
-        if text == "Open…":
-            self.open_dialog()
-        elif text == "Detect peaks":
-            self.detection.detect()
-        else:
-            self.analyze()
+        self.btn_detect_top.setEnabled(bool(rec.signal.filepath)
+                                       and self.detection.btn_detect.isEnabled())
+        self.btn_analyze.setEnabled(rp is not None and len(rp) >= 5 and not self._analyzing)
+        d = rec.detection
+        self.btn_undo_top.setEnabled(bool(d.edit_undo))
+        self.btn_redo_top.setEnabled(bool(d.edit_redo))
 
     def refresh_saved(self) -> None:
         """Saved / not saved, in the header."""
@@ -763,6 +840,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self.refresh_tab_states()
             self.refresh_saved()
+            self.strip.refresh()
         except Exception as exc:
             log.debug("tab states refresh failed: %s", exc, exc_info=True)
         w = self.tabs.currentWidget()
@@ -933,7 +1011,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.detection.detect()
 
     def _shortcut_analyze(self) -> None:
-        if self.btn_analyze.isEnabled() and self.btn_analyze.text() == "Analyze":
+        if self.btn_analyze.isEnabled():
             self.analyze()
 
     def _shortcut_edit(self, redo: bool) -> None:
