@@ -46,6 +46,20 @@ def robust_range(values: np.ndarray, pad_frac: float = 0.08,
     return lo - pad, hi + pad
 
 
+def few_ticks(axis: "pg.AxisItem", lo: float, hi: float, n: int = 3) -> None:
+    """At most about *n* labelled ticks on *axis* for the range lo..hi (a
+    "nice" step: 1, 2 or 5 × 10^k): pyqtgraph's own spacing crowds the
+    labels of a chart only a few tens of pixels high."""
+    span = float(hi - lo)
+    if not np.isfinite(span) or span <= 0:
+        axis.setTickSpacing()                     # back to automatic
+        return
+    raw = span / max(n, 1)
+    mag = 10 ** np.floor(np.log10(raw))
+    step = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
+    axis.setTickSpacing(step, step)
+
+
 def _alpha(color: str, a: int) -> QtGui.QColor:
     c = QtGui.QColor(color)
     c.setAlpha(a)
@@ -62,6 +76,8 @@ class _Chart(pg.PlotWidget):
         self.getPlotItem().getViewBox().setMouseEnabled(x=False, y=False)
         self._placeholder = pg.TextItem("", anchor=(0.5, 0.5))
         self.addItem(self._placeholder, ignoreBounds=True)
+        # Room above the plot: the top tick label was cut in half.
+        self.getPlotItem().setContentsMargins(2, 8, 6, 2)
 
     def sizeHint(self) -> QtCore.QSize:
         # A modest wish: pyqtgraph asks for 600 px, which made every page of
@@ -122,7 +138,7 @@ class RhythmCharts(QtCore.QObject):
         # Poincaré, square, and the entropy under it.
         self.poincare = _Chart()
         self.poincare.setAspectLocked(True)
-        self.poincare.setMinimumHeight(150)
+        self.poincare.setMinimumHeight(95)
         self.poincare.setLabel("bottom", "RRₙ (ms)")
         self.poincare.setLabel("left", "RRₙ₊₁ (ms)")
         self.p_identity = pg.PlotDataItem()
@@ -131,7 +147,7 @@ class RhythmCharts(QtCore.QObject):
         for item in (self.p_identity, self.p_points, self.p_ellipse):
             self.poincare.addItem(item)
         self.mse = _Chart()
-        self.mse.setMinimumHeight(70)
+        self.mse.setMinimumHeight(85)
         self.mse.setLabel("bottom", "Scale factor")
         self.mse.setLabel("left", "SampEn")
         self.m_line = pg.PlotDataItem(symbol="o", symbolSize=5)
@@ -277,7 +293,10 @@ class RhythmCharts(QtCore.QObject):
         attrs = getattr(nl, "attrs", {}) if nl is not None else {}
         scales, values = attrs.get("mse_scales") or [], attrs.get("mse_values") or []
         if scales and values:
-            self.m_line.setData(np.asarray(scales, float), np.asarray(values, float))
+            vals = np.asarray(values, float)
+            self.m_line.setData(np.asarray(scales, float), vals)
+            if np.isfinite(vals).any():
+                few_ticks(self.mse.getAxis("left"), 0.0, float(np.nanmax(vals)), 2)
             self.mse.say("")
         else:
             self.m_line.setData([], [])

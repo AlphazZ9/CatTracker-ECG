@@ -165,17 +165,21 @@ class RhythmTab(QtWidgets.QScrollArea):
         pcl.addWidget(host.lbl_nonlin_status)
         prow = QtWidgets.QHBoxLayout()
         prow.addWidget(self.charts.poincare, 3)
-        stats = QtWidgets.QVBoxLayout()
+        # Name and value on one line: stacked, the three took the height the
+        # chart rows need to fit the window.
+        stats = QtWidgets.QGridLayout()
+        stats.setVerticalSpacing(6)
         self.lbl_sd = {}
-        for key, label in (("sd1", "SD1"), ("sd2", "SD2"), ("ratio", "SD1 / SD2")):
+        for i, (key, label) in enumerate((("sd1", "SD1"), ("sd2", "SD2"),
+                                          ("ratio", "SD1 / SD2"))):
             name = QtWidgets.QLabel(label)
             name.setProperty("muted", True)
             val = QtWidgets.QLabel("—")
-            val.setProperty("role", "value")
-            stats.addWidget(name)
-            stats.addWidget(val)
+            val.setStyleSheet("font-weight: 600;")
+            stats.addWidget(name, i, 0)
+            stats.addWidget(val, i, 1)
             self.lbl_sd[key] = val
-        stats.addStretch(1)
+        stats.setRowStretch(3, 1)
         prow.addLayout(stats, 1)
         pcl.addLayout(prow, 3)
         pcl.addWidget(self.charts.mse, 1)

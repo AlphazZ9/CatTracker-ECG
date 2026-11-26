@@ -2282,18 +2282,20 @@ class PlotController:
         mean_corr = float(np.nanmean(beat_corr))
 
         n_bad = int(np.sum(beat_corr < 0.90)) if beat_corr is not None else 0
+        # Every scored beat: beat_matrix is shrunk to the ghost traces.
+        n_scored = max(len(beat_corr), 1)
 
         def draw_distributions(fig):
             ax_amp, ax_corr = fig.subplots(1, 2)
             for ax in (ax_amp, ax_corr):
                 style_axes(ax)
-            ax_amp.hist(peak_amps, bins=min(50, max(10, n_beats // 4)),
+            ax_amp.hist(peak_amps, bins=min(50, max(10, n_scored // 4)),
                         color=BLUE, alpha=0.75, edgecolor="none")
             ax_amp.set_xlabel("R-peak amplitude (norm.)")
             ax_amp.set_ylabel("Count")
             ax_amp.set_title("R-peak amplitude", loc="left")
 
-            bins_corr = min(40, max(10, n_beats // 4))
+            bins_corr = min(40, max(10, n_scored // 4))
             ax_corr.hist(beat_corr, bins=bins_corr,
                          color=GREEN, alpha=0.75, edgecolor="none")
             ax_corr.axvline(mean_corr, color=RED, lw=1.5, ls="--",
@@ -2304,13 +2306,13 @@ class PlotController:
             ax_corr.set_ylabel("Count")
             title = f"Beat Morphology  ({n_bad} beats < 0.90)"
             ax_corr.set_title(title, loc="left",
-                              color=(ORANGE if n_bad > n_beats * 0.1 else PLOT["text"]))
+                              color=(ORANGE if n_bad > n_scored * 0.1 else PLOT["text"]))
             ax_corr.legend(framealpha=0)
 
         self._on_screen("beat_dist", {"peak_amps": np.asarray(peak_amps, dtype=float),
                                       "beat_corr": np.asarray(beat_corr, dtype=float),
                                       "mean_corr": mean_corr, "n_bad": n_bad,
-                                      "n_beats": n_beats})
+                                      "n_beats": n_scored})
         self.app._slots["beat_dist"].update(draw_distributions)
 
     def _on_screen(self, name: str, data: Any) -> None:

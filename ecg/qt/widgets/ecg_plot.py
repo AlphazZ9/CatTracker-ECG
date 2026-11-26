@@ -26,6 +26,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ecg.qt import theme
+from ecg.qt.widgets.rhythm_charts import few_ticks
 
 # Two seconds: about 16 beats of a mouse at 500 bpm, each QRS readable (ten
 # seconds packed some 85 beats into the view).
@@ -98,14 +99,16 @@ class EcgPlot(QtWidgets.QWidget):
         # share it instead of repeating it, which also spares three axes to
         # repaint on every move of the view.
         self.strip = []
-        for r, label in ((1, "RR (ms)"), (2, "HR (bpm)"), (3, "Quality")):
+        # Short titles, small: a lane is ~60 px high and the full ones ran
+        # into each other.
+        for r, label in ((1, "RR ms"), (2, "HR bpm"), (3, "Corr.")):
             p = self.view.addPlot(row=r, col=0)
             p.setXLink(self.detail)
             p.setMouseEnabled(x=False, y=False)
             p.setMenuEnabled(False)
-            p.setLabel("left", label)
+            p.setLabel("left", label, **{"font-size": "8pt"})
             p.hideAxis("bottom")
-            p.getAxis("left").setTickDensity(0.6)
+            p.getAxis("left").setTickDensity(0.35)
             p.hideButtons()
             p.setMinimumHeight(STRIP_MIN_PX)
             p.setMaximumHeight(STRIP_MAX_PX)
@@ -309,6 +312,7 @@ class EcgPlot(QtWidgets.QWidget):
             half = float(np.max(np.abs(v - c))) or max(abs(c) * 0.05, 1.0)
             half *= 1.08
             p.setYRange(c - half, c + half, padding=0)
+            few_ticks(p.getAxis("left"), c - half, c + half, 2)
         # Quality (template correlation, up to 1): from a little under the
         # lowest beat in view, at most 0.85, so the 0.90 line and the beats
         # near 1 are both readable.

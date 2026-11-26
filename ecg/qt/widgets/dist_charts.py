@@ -179,8 +179,7 @@ class BeatDistCharts(_Pair):
         d = self._data
         if d is None:
             return
-        # Every scored beat (n_beats counts the ghost traces only).
-        n = max(len(d["beat_corr"]), 1)
+        n = d["n_beats"]                           # every scored beat
         amps = d["peak_amps"][np.isfinite(d["peak_amps"])]
         corr = d["beat_corr"][np.isfinite(d["beat_corr"])]
         self.left.say("")
