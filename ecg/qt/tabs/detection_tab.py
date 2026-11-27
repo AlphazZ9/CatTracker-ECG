@@ -243,6 +243,11 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot = EcgPlot()
         self.plot.time_clicked.connect(self._clicked)
         self.plot.span_drawn.connect(self._noise_drawn)
+        # The readouts of the view (span, presets, heart rate in view) follow
+        # it at most every 80 ms: a label's new text re-lays the window out,
+        # and that on every step of a drag made moving the view jerky.
+        self._view_timer = QtCore.QTimer(self, singleShot=True, interval=80)
+        self._view_timer.timeout.connect(self._view_readouts)
         self.plot.window_changed.connect(self._view_moved)
         ecg_lay.addWidget(self.plot, 1)
         body = QtWidgets.QHBoxLayout()
@@ -306,8 +311,10 @@ class DetectionTab(QtWidgets.QWidget):
         # ── heart rate: the number, and the whole recording as navigator ──
         hr_card = QtWidgets.QFrame(objectName="Card")
         hr_lay = QtWidgets.QHBoxLayout(hr_card)
-        hr_lay.setContentsMargins(16, 10, 14, 8)
-        hr_lay.setSpacing(18)
+        # Compact: the trace above is what the page is for; the navigator
+        # takes the width, the number a narrow column.
+        hr_lay.setContentsMargins(14, 6, 12, 6)
+        hr_lay.setSpacing(12)
         figs = QtWidgets.QVBoxLayout()
         figs.setSpacing(2)
         head = QtWidgets.QLabel("Heart rate")
@@ -317,6 +324,7 @@ class DetectionTab(QtWidgets.QWidget):
         big.setSpacing(6)
         self.lbl_hr = QtWidgets.QLabel("—")
         self.lbl_hr.setProperty("role", "big")
+        self.lbl_hr.setStyleSheet("font-size: 26pt;")
         big.addWidget(self.lbl_hr, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         unit = QtWidgets.QLabel("bpm")
         unit.setProperty("role", "unit")
@@ -331,7 +339,7 @@ class DetectionTab(QtWidgets.QWidget):
         figs.addWidget(self.lbl_hr_whole)
         figs.addStretch(1)
         side = QtWidgets.QWidget()
-        side.setFixedWidth(190)
+        side.setFixedWidth(150)
         side.setLayout(figs)
         hr_lay.addWidget(side)
         # The analysis window above the whole-recording navigator: the part
@@ -823,9 +831,14 @@ class DetectionTab(QtWidgets.QWidget):
         start = max(0.0, min(self._end() - width, t0))
         self.plot.set_window(start, start + width)
 
-    def _view_moved(self, t0: float, t1: float) -> None:
+    def _view_moved(self, _t0: float = 0.0, _t1: float = 0.0) -> None:
+        if not self._view_timer.isActive():
+            self._view_timer.start()
+
+    def _view_readouts(self) -> None:
         """The view's time span, its length among the presets, and the heart
         rate of the beats in view."""
+        t0, t1 = self.plot.window()
         self.lbl_view.setText(f"{t0:.2f} – {t1:.2f} s")
         width = t1 - t0
         for b, w in zip(self.seg_window.buttons, WINDOW_PRESETS_S):
@@ -840,15 +853,15 @@ class DetectionTab(QtWidgets.QWidget):
         else:
             med, lo, hi = stats
             self.lbl_hr.setText(f"{med:.0f}")
-            self.lbl_hr_range.setText(f"in view · {lo:.0f} – {hi:.0f} bpm")
+            self.lbl_hr_range.setText(f"in view {lo:.0f}–{hi:.0f}")
         hr = (self.win.recording.analysis.results or {}).get("hr") or {}
         mean = hr.get("mean")
         if mean is not None and np.isfinite(mean):
-            self.lbl_hr_whole.setText(f"Recording: {mean:.0f} bpm")
+            self.lbl_hr_whole.setText(f"Recording {mean:.0f}")
             self.lbl_hr_whole.setToolTip("Mean heart rate of the analysis window (Analyze)")
         else:
             m = self.plot.mean_hr()
-            self.lbl_hr_whole.setText(f"Recording: ≈ {m:.0f} bpm" if m else "")
+            self.lbl_hr_whole.setText(f"Recording ≈ {m:.0f}" if m else "")
             self.lbl_hr_whole.setToolTip("Mean of the beat-to-beat heart rate; Analyze gives "
                                          "the value on the valid intervals")
 

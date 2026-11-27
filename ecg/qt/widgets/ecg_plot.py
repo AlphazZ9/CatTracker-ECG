@@ -36,7 +36,7 @@ AXIS_WIDTH_PX = 52          # every lane's value axis: their time axes line up
 TRACE_MIN_HEIGHT_PX = 170   # the trace keeps this much; the strip gives way first
 FIT_DELAY_MS = 40           # vertical fits while panning: at most ~25 per second
 COMPACT_HEIGHT_PX = 460     # below this, the strip drops its Quality lane
-OVERVIEW_HEIGHT_PX = 120
+OVERVIEW_HEIGHT_PX = 96
 STRIP_MIN_PX, STRIP_MAX_PX = 56, 90   # each RR / HR / Quality lane
 HR_SMOOTH_BEATS = 9                   # the overview's heart rate: a running median
 
@@ -203,14 +203,35 @@ class EcgPlot(QtWidgets.QWidget):
                   excluded: "Optional[np.ndarray]" = None,
                   added: "Optional[np.ndarray]" = None) -> None:
         """Mark the peaks (sample indices) on the detail trace."""
+        self._peak_data = {}
         for item, peaks in ((self.accepted, accepted), (self.rejected, rejected),
                             (self.excluded, excluded), (self.added, added)):
             if self._signal is None or peaks is None or len(peaks) == 0:
-                item.setData([], [])
+                self._peak_data[item] = (np.empty(0), np.empty(0))
                 continue
-            idx = np.asarray(peaks, dtype=np.int64)
+            idx = np.sort(np.asarray(peaks, dtype=np.int64))
             idx = idx[(idx >= 0) & (idx < len(self._signal))]
-            item.setData(idx / self._fs, self._signal[idx])
+            self._peak_data[item] = (idx / self._fs, self._signal[idx])
+        self._clip_peaks(force=True)
+
+    def _clip_peaks(self, force: bool = False) -> None:
+        """Give each marker layer only the peaks around the view (one window
+        width on each side): a scatter is not clipped to the view, and an
+        hour of beats (~36 000) was masked and painted on every move. Redone
+        only when the view leaves that span."""
+        data = getattr(self, "_peak_data", None)
+        if not data:
+            return
+        t0, t1 = self.window()
+        lo, hi = getattr(self, "_peak_span", (0.0, -1.0))
+        if not force and lo <= t0 and t1 <= hi:
+            return
+        span = max(t1 - t0, 1e-6)
+        a, b = t0 - span, t1 + span
+        for item, (x, y) in data.items():
+            i0, i1 = np.searchsorted(x, a), np.searchsorted(x, b)
+            item.setData(x[i0:i1], y[i0:i1])
+        self._peak_span = (a, b)
 
     def set_strip_visible(self, on: bool) -> None:
         """Show / hide the RR / HR / Quality lanes."""
@@ -282,6 +303,7 @@ class EcgPlot(QtWidgets.QWidget):
                 lo, hi = (float(v) for v in np.percentile(hr, [1, 99]))
                 pad = max(0.08 * (hi - lo), 5.0)
                 self.overview.setYRange(lo - pad, hi + pad, padding=0)
+                few_ticks(axis, lo - pad, hi + pad, 2)      # a short chart: 2-3 labels
         elif self._signal is not None and len(self._signal):
             self.overview.enableAutoRange(axis="y")
 
@@ -423,6 +445,7 @@ class EcgPlot(QtWidgets.QWidget):
         self._syncing = False
 
     def _detail_moved(self, *_a) -> None:
+        self._clip_peaks()
         t0, t1 = self.window()
         if not self._syncing:
             self._syncing = True

@@ -163,3 +163,42 @@ def test_tab_states_follow_the_freshness(qtbot, analysed):
     det._clicked(float(d.rpeaks_ok[30] / w.recording.signal.fs), "left")
     w.refresh_tab_states()
     assert not w.tabs.tabToolTip(i).startswith(f"{TAB_HRV}: up to date")
+
+
+def test_the_tachograms_zoom_and_come_back(qtbot):
+    """Ctrl + wheel zooms the time of both tachograms (one axis), Reset zoom
+    brings every chart back to its drawn view; a plain wheel is left to the
+    page (it scrolls)."""
+    import numpy as np
+    from PySide6 import QtCore, QtGui
+    from ecg.qt.widgets.rhythm_charts import RhythmCharts
+    charts = RhythmCharts()
+    for c in (charts.tacho, charts.tacho_rr):
+        qtbot.addWidget(c)
+        c.resize(600, 200)
+        c.show()
+    rng = np.random.default_rng(0)
+    rr = 115 + rng.normal(0, 3, 600)
+    charts.set_results({"rr_ms": rr, "rr_t_s": np.cumsum(rr) / 1000.0,
+                        "rr_valid": np.ones(len(rr), bool)})
+    home = charts.tacho.getPlotItem().getViewBox().viewRange()[0]
+
+    def wheel(chart, ctrl: bool) -> None:
+        pos = QtCore.QPointF(300, 100)
+        mods = (QtCore.Qt.KeyboardModifier.ControlModifier if ctrl
+                else QtCore.Qt.KeyboardModifier.NoModifier)
+        ev = QtGui.QWheelEvent(pos, chart.mapToGlobal(pos.toPoint()).toPointF(),
+                               QtCore.QPoint(0, 0), QtCore.QPoint(0, 120),
+                               QtCore.Qt.MouseButton.NoButton, mods,
+                               QtCore.Qt.ScrollPhase.NoScrollPhase, False)
+        chart.wheelEvent(ev)
+
+    wheel(charts.tacho, ctrl=False)
+    assert charts.tacho.getPlotItem().getViewBox().viewRange()[0] == home
+    wheel(charts.tacho, ctrl=True)
+    zoomed = charts.tacho.getPlotItem().getViewBox().viewRange()[0]
+    assert zoomed[1] - zoomed[0] < home[1] - home[0]
+    # the RR lane follows (one time axis)
+    assert np.allclose(charts.tacho_rr.getPlotItem().getViewBox().viewRange()[0], zoomed)
+    charts.reset_zoom()
+    assert np.allclose(charts.tacho.getPlotItem().getViewBox().viewRange()[0], home)

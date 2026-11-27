@@ -69,11 +69,35 @@ def _alpha(color: str, a: int) -> QtGui.QColor:
     return c
 
 
+class _ZoomBox(pg.ViewBox):
+    """The view of a zoomable chart: Ctrl + wheel zooms (on the plot the time
+    axis only when *time_only*, on an axis that axis), a drag pans."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.time_only = False
+
+    def wheelEvent(self, ev, axis=None):  # noqa: N802 (Qt name)
+        if axis is None and self.time_only:
+            axis = 0
+        super().wheelEvent(ev, axis)
+
+    def mouseDragEvent(self, ev, axis=None):  # noqa: N802 (Qt name)
+        if axis is None and self.time_only:
+            axis = 0
+        super().mouseDragEvent(ev, axis)
+
+
 class _Chart(pg.PlotWidget):
-    """A plot with the app's look: no menu, no buttons, quiet axes."""
+    """A plot with the app's look: no menu, no buttons, quiet axes. Fixed
+    unless enable_zoom() (then Ctrl + wheel zooms, a drag pans, go_home()
+    brings back the view the data was drawn with)."""
 
     def __init__(self, parent: "Optional[QtWidgets.QWidget]" = None) -> None:
-        super().__init__(parent)
+        self._box = _ZoomBox()
+        super().__init__(parent, viewBox=self._box)
+        self._zoom = False
+        self._home: "Optional[list]" = None
         self.setMenuEnabled(False)
         self.hideButtons()
         self.getPlotItem().getViewBox().setMouseEnabled(x=False, y=False)
@@ -84,6 +108,33 @@ class _Chart(pg.PlotWidget):
         self.addItem(self._placeholder, ignoreBounds=True)
         # Room above the plot: the top tick label was cut in half.
         self.getPlotItem().setContentsMargins(2, 8, 6, 2)
+
+    # ── zoom ────────────────────────────────────────────────
+    def enable_zoom(self, time_only: bool = False) -> None:
+        """Ctrl + wheel zooms (on the plot: time only if *time_only*; on an
+        axis: that axis), a drag pans. Plain wheel still scrolls the page."""
+        self._zoom = True
+        self._box.time_only = time_only
+        self._box.setMouseEnabled(x=True, y=True)
+        self.setToolTip("Ctrl + wheel: zoom (over the left axis: vertical) · drag: move · "
+                        "Reset zoom: the whole chart")
+
+    def wheelEvent(self, ev: QtGui.QWheelEvent) -> None:  # noqa: N802 (Qt name)
+        ctrl = bool(ev.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
+        if self._zoom and ctrl:
+            super().wheelEvent(ev)
+            ev.accept()
+        else:
+            ev.ignore()                     # the page scrolls
+
+    def set_home(self) -> None:
+        """The view just drawn is the one Reset zoom comes back to."""
+        self._home = self._box.viewRange()
+
+    def go_home(self) -> None:
+        if self._home is not None:
+            (x0, x1), (y0, y1) = self._home
+            self._box.setRange(xRange=(x0, x1), yRange=(y0, y1), padding=0)
 
     def sizeHint(self) -> QtCore.QSize:
         # A modest wish: pyqtgraph asks for 600 px, which made every page of
@@ -199,7 +250,18 @@ class RhythmCharts(QtCore.QObject):
         self.h_bars = pg.BarGraphItem(x=[], height=[], width=1.0)
         self.hist.addItem(self.h_bars)
 
+        for chart in (self.tacho, self.tacho_rr):
+            chart.enable_zoom(time_only=True)
+        for chart in (self.poincare, self.mse, self.psd, self.hist):
+            chart.enable_zoom()
+
         self.apply_palette(theme.current())
+
+    def reset_zoom(self) -> None:
+        """Every chart back to the view it was drawn with."""
+        for chart in (self.tacho, self.tacho_rr, self.poincare, self.mse, self.psd,
+                      self.hist):
+            chart.go_home()
 
     # ── data ────────────────────────────────────────────────
     def set_results(self, results: "Optional[dict]", spikes: "Optional[np.ndarray]" = None,
@@ -216,6 +278,9 @@ class RhythmCharts(QtCore.QObject):
         self._draw_poincare()
         self._draw_psd()
         self._draw_hist()
+        for chart in (self.tacho, self.tacho_rr, self.poincare, self.mse, self.psd,
+                      self.hist):
+            chart.set_home()                  # what Reset zoom comes back to
 
     def set_unit(self, unit: str) -> None:
         """Kept for callers of the former HR / RR switch: both are drawn."""

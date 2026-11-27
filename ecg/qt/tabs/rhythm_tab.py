@@ -123,6 +123,11 @@ class RhythmTab(QtWidgets.QScrollArea):
                                    "the trace and the running median stay")
         self.btn_spikes.toggled.connect(self._spikes_toggled)
         trow.addWidget(self.btn_spikes)
+        self.btn_reset_zoom = QtWidgets.QPushButton("Reset zoom")
+        self.btn_reset_zoom.setToolTip("Every chart of the page back to its whole view "
+                                       "(Ctrl + wheel zooms, a drag moves)")
+        self.btn_reset_zoom.clicked.connect(lambda: self.charts.reset_zoom())
+        trow.addWidget(self.btn_reset_zoom)
         sec1 = QtWidgets.QWidget()
         s1 = QtWidgets.QHBoxLayout(sec1)
         s1.setContentsMargins(0, 0, 0, 0)
@@ -131,8 +136,9 @@ class RhythmTab(QtWidgets.QScrollArea):
         left.setSpacing(4)
         left.addWidget(self.charts.tacho_rr, 1)
         left.addWidget(self.charts.tacho, 1)
-        hint = QtWidgets.QLabel("Click: that beat in Signal  ·  ▲ / ▼ beyond the scale  ·  "
-                                "hollow: excluded  ·  thick line: 9-beat running median")
+        hint = QtWidgets.QLabel("Click: that beat in Signal  ·  Ctrl + wheel: zoom time "
+                                "(over the axis: vertical)  ·  drag: move  ·  ▲ / ▼ beyond "
+                                "the scale  ·  hollow: excluded  ·  thick: 9-beat median")
         hint.setProperty("muted", True)
         hint.setWordWrap(True)
         left.addWidget(hint)
