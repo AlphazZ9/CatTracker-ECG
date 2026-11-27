@@ -183,7 +183,6 @@ class RhythmCharts(QtCore.QObject):
         self.tacho.setMinimumHeight(140)
         self.tacho.setLabel("bottom", "Time", units="s")
         self.tacho.setLabel("left", "HR (bpm)")
-        self.tacho.showGrid(x=False, y=True, alpha=0.12)
         self.t_line = pg.PlotDataItem(connect="finite")        # every beat, thin
         self.t_trend = pg.PlotDataItem(connect="finite")       # its 9-beat running median
         self.t_excl = pg.ScatterPlotItem(size=6, symbol="o")
@@ -193,7 +192,6 @@ class RhythmCharts(QtCore.QObject):
         self.tacho_rr = _Chart()
         self.tacho_rr.setMinimumHeight(120)
         self.tacho_rr.setLabel("left", "RR (ms)")
-        self.tacho_rr.showGrid(x=False, y=True, alpha=0.12)
         self.tacho_rr.setXLink(self.tacho)
         self.tacho_rr.getAxis("bottom").setStyle(showValues=False)
         self.r_line = pg.PlotDataItem(connect="finite")
@@ -523,7 +521,10 @@ class RhythmCharts(QtCore.QObject):
         for chart in (self.tacho, self.tacho_rr, self.poincare, self.mse, self.psd, self.hist):
             chart.style(p)
         self.r_line.setPen(pg.mkPen(_alpha(p.TEXT, 60), width=1))
-        self.r_trend.setPen(pg.mkPen(p.TEXT, width=2))
+        # 1 px pens and no grid on the tachograms: a wider pen is drawn segment
+        # by segment and a translucent grid on every frame -- with ~72 000
+        # beats (2 h) each step of a zoom took ~110 ms.
+        self.r_trend.setPen(pg.mkPen(p.TEXT, width=1))
         self.r_excl.setPen(pg.mkPen(p.MUTED, width=1.2))
         self.r_excl.setBrush(pg.mkBrush(None))
         self.r_flag.setPen(pg.mkPen(p.ACCENT, width=1.6))
@@ -532,7 +533,7 @@ class RhythmCharts(QtCore.QObject):
             item.setPen(pg.mkPen(None))
             item.setBrush(pg.mkBrush(p.MUTED))
         self.t_line.setPen(pg.mkPen(_alpha(p.ACCENT, 70), width=1))
-        self.t_trend.setPen(pg.mkPen(p.ACCENT, width=2))
+        self.t_trend.setPen(pg.mkPen(p.ACCENT, width=1))
         self.t_excl.setPen(pg.mkPen(p.MUTED, width=1.2))
         self.t_excl.setBrush(pg.mkBrush(None))
         self.t_flag.setPen(pg.mkPen(p.TEXT, width=1.6))
