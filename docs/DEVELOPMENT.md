@@ -177,6 +177,14 @@ own numbers.
   recordings, kept outside the repository, with
   `python tools/golden_master.py check <files.mat> --ref <folder>`. See
   [validation.md](validation.md) (in French) before changing a number.
+- The speed-ups of `ecg/core` give the numbers of the code they replace:
+  NeuroKit's entropy count and DFA windows (`fast_entropy.py`,
+  `fast_dfa.py`, each checked against NeuroKit when it is installed), the
+  parallel delineation (`delineation_pool.py`), the Savitzky-Golay
+  smoothing of the delineation (`filtering.savgol_smooth`) and the batched
+  per-beat quantities of Detect and Events (`detection.py`).
+  `tests/core/test_speedups.py` compares each one to the original; keep it
+  that way when optimising, and run the golden master on long recordings.
 - The window (`ecg/qt/main_window.py`) and its tabs delegate the work to the
   controllers of `ecg/app/*_controller.py` — see each controller's docstring
   for its area of responsibility.
