@@ -203,6 +203,9 @@ def style_sheet(p: Palette, scale: float = 1.0) -> str:
     QPushButton:pressed, QToolButton:pressed {{ background: {p.BORDER}; }}
     QPushButton:checked {{ background: {p.ACCENT_SOFT}; color: {p.ACCENT_TEXT};
         border-color: {p.ACCENT}; }}
+    QToolBar {{ border: none; background: transparent; spacing: 4px; }}
+    QToolBar QToolButton {{ padding: 3px 6px; border-radius: 6px; }}
+    QToolButton:checked {{ background: {p.ACCENT_SOFT}; border-color: {p.ACCENT}; }}
     QPushButton:disabled, QToolButton:disabled {{ color: {p.LIGHT}; border-color: {p.BORDER}; }}
     QPushButton[primary="true"] {{ background: {p.ACCENT}; color: white; border: none;
         font-weight: 600; padding: 6px 16px; }}
