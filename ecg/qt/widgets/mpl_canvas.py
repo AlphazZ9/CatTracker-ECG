@@ -51,13 +51,15 @@ class _Canvas(FigureCanvasQTAgg):
         super().resizeEvent(QtGui.QResizeEvent(self.size(), old or self.size()))
 
     wheel_zoom = False      # MplCanvas.enable_wheel_yzoom
+    wheel_always = False    # the figure takes the plain wheel (a page that does not scroll)
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:  # noqa: N802 (Qt name)
         """The wheel scrolls the page the figure is on (matplotlib's handler
         kept every wheel event, so a page did not scroll over a figure);
-        Ctrl + wheel goes to the figure when it zooms."""
+        Ctrl + wheel goes to the figure when it zooms, the plain wheel too
+        when it takes it (wheel_always)."""
         ctrl = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
-        if self.wheel_zoom and ctrl:
+        if self.wheel_always or (self.wheel_zoom and ctrl):
             super().wheelEvent(event)
             event.accept()
         else:

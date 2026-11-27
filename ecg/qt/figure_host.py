@@ -548,14 +548,29 @@ class FigureHost:
     def _set_progress(self, pct: int, msg: str) -> None:
         self._window.set_progress(int(pct), msg)
 
-    def after(self, ms: int, fn: "Optional[Callable]" = None) -> None:
+    def after(self, ms: int, fn: "Optional[Callable]" = None) -> "Optional[QtCore.QTimer]":
+        """Tk's after: *fn* in *ms* ms on the main thread; the id returned
+        cancels it (after_cancel), so the controllers' debounces (a burst of
+        wheel ticks: one redraw) work as in Tk."""
         if fn is None:
-            return
+            return None
         app = QtCore.QCoreApplication.instance()
         if app is not None and QtCore.QThread.currentThread() is not app.thread():
             self._main_caller.call.emit(fn)        # from a worker thread: queued
-        else:
-            QtCore.QTimer.singleShot(int(ms), fn)
+            return None
+        parent = self._window if isinstance(self._window, QtCore.QObject) else None
+        timer = QtCore.QTimer(parent)
+        timer.setSingleShot(True)
+        pending = self.__dict__.setdefault("_pending_timers", set())
+        pending.add(timer)                          # alive until run or cancelled
+
+        def run() -> None:
+            pending.discard(timer)
+            timer.deleteLater()
+            fn()
+        timer.timeout.connect(run)
+        timer.start(int(ms))
+        return timer
 
     def _start_async_result(self, button: Any, busy_label: str, worker: Callable[[], Any],
                             on_done: Callable[[Any], None]) -> None:
@@ -574,7 +589,13 @@ class FigureHost:
             QtCore.QTimer.singleShot(0, fn)
 
     def after_cancel(self, _id: Any) -> None:
-        pass
+        if isinstance(_id, QtCore.QTimer):
+            self.__dict__.setdefault("_pending_timers", set()).discard(_id)
+            try:
+                _id.stop()
+                _id.deleteLater()
+            except RuntimeError:                   # already run and gone
+                pass
 
     def __getattr__(self, name: str) -> Any:
         # Tk-only widgets (KPI tiles, buttons, the Detection bar...): no-ops.
