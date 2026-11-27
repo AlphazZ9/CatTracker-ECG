@@ -188,7 +188,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         ("Ctrl+Shift+E", lambda: self.figures.export_ctrl.export_rr_csv()),
                         ("Ctrl+M", lambda: self.tabs.setCurrentWidget(self.compare)),
                         ("Left", lambda: self._shortcut_pan(-1)),
-                        ("Right", lambda: self._shortcut_pan(+1))):
+                        ("Right", lambda: self._shortcut_pan(+1)),
+                        ("PgUp", lambda: self._shortcut_page(-1)),
+                        ("PgDown", lambda: self._shortcut_page(+1))):
             QtGui.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
         self.apply_shell_palette(theme.current())
         self.refresh_primary()
@@ -997,6 +999,11 @@ class MainWindow(QtWidgets.QMainWindow):
                             warn=True)
             return
         (self.detection.redo if redo else self.detection.undo)()
+
+    def _shortcut_page(self, direction: int) -> None:
+        """PgUp / PgDn on the Signal page: one view back / on."""
+        if self.tabs.currentWidget() is self.detection:
+            self.detection.page(direction)
 
     def _shortcut_pan(self, direction: int) -> None:
         """← / →: move the Signal & Detection view by 70 % of its width."""

@@ -155,8 +155,6 @@ class FigureSlot(MplCanvas):
     def _show_placeholder(self, force: bool = False) -> None:
         self.clear()
 
-    def enable_wheel_yzoom(self) -> None:                 # Qt: the toolbar-free canvas
-        pass
 
 
 class TextBox(QtWidgets.QPlainTextEdit):

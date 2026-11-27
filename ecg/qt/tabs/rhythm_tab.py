@@ -98,7 +98,8 @@ class RhythmTab(QtWidgets.QScrollArea):
         # Poincaré, metrics and spectrum, non-linear details, RR distribution.
         self._cards_row = cards_row
         from ecg.qt.widgets.rhythm_charts import RhythmCharts
-        self.charts = RhythmCharts(on_time_clicked=self._show_beat, parent=self)
+        self.charts = RhythmCharts(on_time_clicked=self._show_beat, parent=self,
+                                   on_next_flagged=lambda: window.detection.step_spike(+1))
         # The charts on screen (PyQtGraph); the Matplotlib figures of the same
         # results are kept, hidden, for the exports (drawn when one reads them).
         for name in ("rr", "poincare", "psd", "rr_hist"):
@@ -136,7 +137,8 @@ class RhythmTab(QtWidgets.QScrollArea):
         left.setSpacing(4)
         left.addWidget(self.charts.tacho_rr, 1)
         left.addWidget(self.charts.tacho, 1)
-        hint = QtWidgets.QLabel("Click: that beat in Signal  ·  Ctrl + wheel: zoom time "
+        hint = QtWidgets.QLabel("Click: that beat in Signal  ·  right click: the next flagged "
+                                "beat  ·  Ctrl + wheel: zoom time "
                                 "(over the axis: vertical)  ·  drag: move  ·  ▲ / ▼ beyond "
                                 "the scale  ·  hollow: excluded  ·  thick: 9-beat median")
         hint.setProperty("muted", True)

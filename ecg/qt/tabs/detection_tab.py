@@ -164,6 +164,19 @@ class DetectionTab(QtWidgets.QWidget):
         self.lbl_view = QtWidgets.QLabel("")
         self.lbl_view.setProperty("muted", True)
         nav.addWidget(self.lbl_view)
+        # Tk's ⏮ ◀ ▶ ⏭: the start, one view back / on, the end (the keyboard's
+        # ← → move by part of a view).
+        for text, tip, fn in (
+                ("⏮", "The start of the recording", lambda: self.go_to(0.0)),
+                ("◀", "One view back (PgUp)", lambda: self.page(-1)),
+                ("▶", "One view on (PgDn)", lambda: self.page(+1)),
+                ("⏭", "The end of the recording", lambda: self.go_to(self._end()))):
+            b = QtWidgets.QPushButton(text)
+            b.setToolTip(tip)
+            b.setFixedWidth(30)
+            b.setStyleSheet("padding: 2px 0;")
+            b.clicked.connect(fn)
+            nav.addWidget(b)
         nav.addSpacing(10)
         self.legend = QtWidgets.QHBoxLayout()
         self.legend.setSpacing(12)
@@ -1065,6 +1078,11 @@ class DetectionTab(QtWidgets.QWidget):
     def _end(self) -> float:
         time = self.win.recording.signal.time
         return float(time[-1]) if time is not None and len(time) else 0.0
+
+    def page(self, direction: int) -> None:
+        """One view width back (-1) or on (+1)."""
+        t0, t1 = self.plot.window()
+        self.go_to(t0 + direction * (t1 - t0))
 
     def go_to(self, t: float) -> None:
         """NavigationController.nav_goto: the view starts at *t* (kept inside

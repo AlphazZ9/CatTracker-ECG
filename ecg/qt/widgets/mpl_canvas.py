@@ -50,6 +50,19 @@ class _Canvas(FigureCanvasQTAgg):
         old, self._resize_from = self._resize_from, None
         super().resizeEvent(QtGui.QResizeEvent(self.size(), old or self.size()))
 
+    wheel_zoom = False      # MplCanvas.enable_wheel_yzoom
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:  # noqa: N802 (Qt name)
+        """The wheel scrolls the page the figure is on (matplotlib's handler
+        kept every wheel event, so a page did not scroll over a figure);
+        Ctrl + wheel goes to the figure when it zooms."""
+        ctrl = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
+        if self.wheel_zoom and ctrl:
+            super().wheelEvent(event)
+            event.accept()
+        else:
+            event.ignore()
+
 
 class MplCanvas(QtWidgets.QWidget):
     """One Matplotlib Figure, drawn by a replaceable ``draw_fn(fig)``."""
@@ -71,11 +84,51 @@ class MplCanvas(QtWidgets.QWidget):
         self._placeholder.setWordWrap(True)
         self._placeholder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setObjectName("Placeholder")
+        # The canvas (and its toolbar, add_toolbar) or the placeholder.
+        self._page = QtWidgets.QWidget()
+        self._page_lay = QtWidgets.QVBoxLayout(self._page)
+        self._page_lay.setContentsMargins(0, 0, 0, 0)
+        self._page_lay.setSpacing(0)
+        self._page_lay.addWidget(self.canvas, 1)
+        self.toolbar = None
         self._stack = QtWidgets.QStackedLayout(self)
         self._stack.setContentsMargins(0, 0, 0, 0)
-        self._stack.addWidget(self.canvas)
+        self._stack.addWidget(self._page)
         self._stack.addWidget(self._placeholder)
         self._draw_fn: "Optional[Callable[[Figure], None]]" = None
+
+    def add_toolbar(self) -> None:
+        """Matplotlib's toolbar above the figure, as Tk had on some figures:
+        back to the whole view, previous / next view, move, zoom to a box,
+        save the image."""
+        if self.toolbar is not None:
+            return
+        from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
+        tb = NavigationToolbar2QT(self.canvas, self._page, coordinates=True)
+        tb.setIconSize(QtCore.QSize(16, 16))
+        for act in list(tb.actions()):
+            if act.text() in ("Subplots", "Customize"):     # layout dialogs: not needed
+                tb.removeAction(act)
+        self._page_lay.insertWidget(0, tb)
+        self.toolbar = tb
+
+    def enable_wheel_yzoom(self) -> None:
+        """Ctrl + wheel over a panel zooms its vertical axis around the
+        pointer (Tk's wheel zoom; the toolbar's Home brings the drawn view
+        back). A plain wheel still scrolls the page."""
+        self.canvas.wheel_zoom = True
+
+        def on_scroll(ev) -> None:
+            ax = ev.inaxes
+            if ax is None or ev.ydata is None:
+                return
+            lo, hi = ax.get_ylim()
+            f = 0.8 if ev.button == "up" else 1 / 0.8
+            y = float(ev.ydata)
+            ax.set_ylim(y - (y - lo) * f, y + (hi - y) * f)
+            self.canvas.draw_idle()
+
+        self.canvas.mpl_connect("scroll_event", on_scroll)
 
     @property
     def figure(self) -> Figure:
@@ -88,7 +141,7 @@ class MplCanvas(QtWidgets.QWidget):
 
     def _sync_placeholder(self) -> None:
         empty = self._draw_fn is None and bool(self._placeholder.text())
-        self._stack.setCurrentWidget(self._placeholder if empty else self.canvas)
+        self._stack.setCurrentWidget(self._placeholder if empty else self._page)
 
     def update_figure(self, draw_fn: "Callable[[Figure], None]") -> None:
         """Replace the figure's content by what *draw_fn(fig)* draws."""

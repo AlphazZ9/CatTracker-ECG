@@ -225,3 +225,33 @@ def test_no_menu_bar_and_no_context_strip(window):
     for name in ("Settings…", "ML detector…", "Light / dark mode", "About"):
         assert name in more
     assert window.detection.ed_win0.isVisibleTo(window.detection)
+
+
+def test_figures_scroll_the_page_and_keep_tk_toolbars(window):
+    """A plain wheel over a Matplotlib figure goes to the page (it used to
+    stop there); Autonomic, Event-locked and Compare have Tk's toolbar."""
+    from PySide6 import QtCore, QtGui
+    for name in ("autonomic", "event_locked", "compare"):
+        assert window.figures.slot(name).toolbar is not None, name
+    canvas = window.figures.slot("epochs").canvas
+    pos = QtCore.QPointF(10, 10)
+    ev = QtGui.QWheelEvent(pos, pos, QtCore.QPoint(0, 0), QtCore.QPoint(0, 120),
+                           QtCore.Qt.MouseButton.NoButton,
+                           QtCore.Qt.KeyboardModifier.NoModifier,
+                           QtCore.Qt.ScrollPhase.NoScrollPhase, False)
+    ev.accept()
+    canvas.wheelEvent(ev)
+    assert not ev.isAccepted()
+
+
+def test_signal_page_navigation_buttons(window, qtbot):
+    """⏮ ◀ ▶ ⏭ (Tk's): start, one view back / on, end."""
+    _detect(qtbot, window)
+    det = window.detection
+    det.plot.set_window(20.0, 22.0)
+    det.page(+1)
+    assert abs(det.plot.window()[0] - 22.0) < 1e-6
+    det.page(-1)
+    assert abs(det.plot.window()[0] - 20.0) < 1e-6
+    det.go_to(det._end())
+    assert abs(det.plot.window()[1] - det._end()) < 1e-6

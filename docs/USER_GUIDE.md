@@ -247,6 +247,18 @@ the raw signal otherwise (both normalised to the median R height, so the
 threshold reads the same). Green dots are accepted peaks; annotations are
 shaded in their colour with their label, noisy regions in grey.
 
+Moving along the recording: the wheel zooms the time around the pointer, a
+drag moves it, **1 s / 2 s / 5 s / 10 s** set the width; **⏮ ◀ ▶ ⏭** go to the
+start, one view back, one view on and the end (also **PgUp / PgDn**), **← / →**
+move by part of a view, and the heart-rate navigator under the trace shows
+the whole recording: drag its band to go anywhere. **More › Go to (s)** jumps
+to a time.
+
+The figures of Time course › Autonomic and Event-locked, and of Compare
+segments, have Matplotlib's toolbar (whole view, previous / next view, move,
+zoom to a box, save the image); on Compare segments, **Ctrl + wheel** also
+zooms the vertical scale.
+
 <img src="screenshots/03_detection_zoom_bradycardia.png" width="800" alt="Signal &amp; Detection view zoomed on 32.8–36.8 s: an isolated premature beat at 34.8 s">
 
 The screenshot above is zoomed on 32.8–36.8 s of the same recording: an
@@ -289,7 +301,13 @@ axis: every beat as a thin line, its 9-beat running median thick, the
 annotations shaded and the flagged beats (sudden acceleration / deceleration)
 circled. Their scale leaves out the rare extreme beats (0.5th–99.5th
 percentile; the ones beyond are marked at the edge). Click a point and the
-Signal page shows that beat. **▲▼ Spike markers** shows or hides the flagged
+Signal page shows that beat; a right click goes to the next flagged beat.
+**Ctrl + wheel** zooms the time of both charts together (over the left axis:
+the vertical scale), a drag moves them, **Reset zoom** brings every chart of
+the page back to its whole view; Poincaré, entropy, spectrum and RR
+distribution zoom the same way (a plain wheel scrolls the page). The RR
+distribution carries the triangular-index fit (HTI and TINN, dashed), as the
+export does. **▲▼ Spike markers** shows or hides the flagged
 beats; **Review** centres the next one on the Signal page. On the right, the
 scatter of successive valid RR with its SD1 / SD2 ellipse, the three values,
 and the multiscale entropy curve. The exported figures (PDF, ZIP) keep their

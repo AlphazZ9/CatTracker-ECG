@@ -167,9 +167,11 @@ class RhythmCharts(QtCore.QObject):
     seconds is shown in Signal)."""
 
     def __init__(self, on_time_clicked: "Optional[Callable[[float], None]]" = None,
-                 parent: "Optional[QtCore.QObject]" = None) -> None:
+                 parent: "Optional[QtCore.QObject]" = None,
+                 on_next_flagged: "Optional[Callable[[], None]]" = None) -> None:
         super().__init__(parent)
         self._on_time = on_time_clicked
+        self._on_next = on_next_flagged          # right click on a tachogram (Tk)
         self.unit = "HR"                     # the tachogram shows "HR" or "RR"
         self._results: "Optional[dict]" = None
         self._spikes: "Optional[np.ndarray]" = None
@@ -249,6 +251,11 @@ class RhythmCharts(QtCore.QObject):
         self.hist.setLabel("left", "Beats")
         self.h_bars = pg.BarGraphItem(x=[], height=[], width=1.0)
         self.hist.addItem(self.h_bars)
+        # The triangular-index fit (HTI / TINN) over it, as Tk and the export.
+        self.h_tri = pg.PlotDataItem()
+        self.h_tri_label = pg.TextItem("", anchor=(1, 0))
+        self.hist.addItem(self.h_tri)
+        self.hist.addItem(self.h_tri_label, ignoreBounds=True)
 
         for chart in (self.tacho, self.tacho_rr):
             chart.enable_zoom(time_only=True)
@@ -443,6 +450,8 @@ class RhythmCharts(QtCore.QObject):
         s = self._series() if self._results is not None else None
         if s is None or not s[3].any():
             self.h_bars.setOpts(x=[], height=[], width=1.0)
+            self.h_tri.setData([], [])
+            self.h_tri_label.setText("")
             self.hist.say("Click Analyze to see the RR distribution.")
             return
         self.hist.say("")
@@ -460,11 +469,50 @@ class RhythmCharts(QtCore.QObject):
         self.h_bars.setOpts(x=centres, height=counts, width=width * 0.86)
         self.hist.setXRange(lo, hi, padding=0)
         self.hist.setYRange(0, max(1, int(counts.max())) * 1.08, padding=0)
+        self._draw_triangle(rr, float(counts.max()), lo, hi)
+
+    def _draw_triangle(self, rr: np.ndarray, y_top: float, lo: float, hi: float) -> None:
+        """PlotController.plot_rr's HTI / TINN overlay: a triangle on the
+        mode of NeuroKit2's 1/128 s bins, as wide as TINN, as tall as the
+        bars; the two values in the corner. Nothing without HTI."""
+        self.h_tri.setData([], [])
+        self.h_tri_label.setText("")
+        r = self._results or {}
+        rt = r.get("hrv_time")
+        hti = tinn = None
+        try:
+            hti = float(rt["HRV_HTI"].values[0])
+            tinn = float(rt["HRV_TINN"].values[0])
+        except Exception:
+            pass
+        if not (hti and np.isfinite(hti) and hti > 0 and len(rr) > 3):
+            return
+        binsize = 1000.0 / 128.0
+        edges = np.arange(0, np.nanmax(rr) + binsize, binsize)
+        c, edges = np.histogram(rr, bins=edges)
+        if not len(c) or c.max() <= 0:
+            return
+        x_mode = float(edges[int(np.argmax(c))]) + binsize / 2       # the bin's centre
+        half = tinn / 2.0 if (tinn and np.isfinite(tinn) and tinn > 0) else binsize
+        p = theme.current()
+        self.h_tri.setData([x_mode - half, x_mode, x_mode + half], [0, y_top, 0])
+        self.h_tri.setPen(pg.mkPen(p.TEXT, width=1, style=QtCore.Qt.PenStyle.DashLine))
+        text = f"HTI {hti:.2f}" + (f"  ·  TINN {tinn:.1f} ms"
+                                    if tinn and np.isfinite(tinn) else "")
+        self.h_tri_label.setText(text)
+        self.h_tri_label.setColor(p.TEXT)
+        self.h_tri_label.setPos(hi, y_top * 1.07)
 
     # ── interaction, look ───────────────────────────────────
     def _tacho_clicked(self, ev, chart: "Optional[_Chart]" = None) -> None:
         chart = chart or self.tacho
-        if self._on_time is None or self._results is None:
+        if self._results is None:
+            return
+        if ev.button() == QtCore.Qt.MouseButton.RightButton:
+            if self._on_next is not None:       # Tk: right click, the next flagged beat
+                self._on_next()
+            return
+        if self._on_time is None:
             return
         vb = chart.getPlotItem().getViewBox()
         if not vb.sceneBoundingRect().contains(ev.scenePos()):
