@@ -100,3 +100,38 @@ def test_an_edit_drops_the_analysis_results_and_undo_restores_the_peaks(qt_windo
     assert tab.btn_undo.isEnabled()
     tab.undo()
     assert np.array_equal(d.rpeaks_ok, before) and tab.btn_redo.isEnabled()
+
+
+def test_the_edit_preview_shows_what_a_right_click_does(qt_window):
+    """Tk's hover marker: where a right click would put the peak, cyan to
+    add one, orange to replace or remove one; only in edit mode."""
+    from ecg.core.peak_editing import edit_at_click
+    tab, rec = qt_window.detection, qt_window.recording
+    s, d = rec.signal, rec.detection
+    tab.plot.set_window(40, 42)
+    gap = float(d.rpeaks_ok[(d.rpeaks_ok / s.fs > 40.2)][0]) / s.fs - 0.06
+    tab._hovered(gap)
+    assert not tab.plot.pv_point.isVisible()                # not in edit mode
+    tab.btn_edit.setChecked(True)
+    for t in (gap, gap + 0.05, float(d.rpeaks_ok[300]) / s.fs):
+        tab._hovered(t)
+        want = edit_at_click(s.filtered, s.fs, t, "right", 2.0, d.rpeaks_ok,
+                             d.rpeaks_manual_excl, d.rpeaks_manual_added,
+                             d.manual_excluded, d.manual_added)
+        x, _y = tab.plot.pv_point.getData()
+        assert tab.plot.pv_point.isVisible() and abs(x[0] - want.peak / s.fs) < 1e-9
+    tab._hovered(float("nan"))                              # the pointer left the trace
+    assert not tab.plot.pv_point.isVisible()
+
+
+def test_zoom_tools_and_edit_mode_take_turns(qt_window):
+    tab = qt_window.detection
+    tab.btn_edit.setChecked(True)
+    tab.plot.act_zoom.trigger()
+    assert tab.plot.nav_mode() == "zoom" and not tab.btn_edit.isChecked()
+    tab.btn_edit.setChecked(True)
+    assert tab.plot.nav_mode() == "" and tab.btn_edit.isChecked()
+    tab.plot.act_pan.trigger()
+    assert not tab.btn_edit.isChecked()
+    tab.btn_mark_noise.setChecked(True)
+    assert tab.plot.nav_mode() == "" and tab.plot.span_mode
