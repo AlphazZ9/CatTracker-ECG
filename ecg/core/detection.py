@@ -147,6 +147,48 @@ def _upstroke_slope_at(pk: int, signal: np.ndarray, fs: float,
     return float(d.max()) if len(d) else 0.0
 
 
+def _upstroke_slopes(peaks: np.ndarray, signal: np.ndarray, fs: float,
+                     window_ms: float = 3.0) -> np.ndarray:
+    """_upstroke_slope_at(pk, signal, fs, window_ms) for every peak at once:
+    the same differences of the same samples, the same maxima."""
+    pk = np.asarray(peaks, dtype=np.int64)
+    out = np.zeros(len(pk), dtype=np.float64)
+    win = max(2, int(window_ms / 1000.0 * fs))
+    full = (pk >= win) & (pk < len(signal))      # the others one by one, as before
+    steps = np.arange(-win, 1)
+    rows = np.flatnonzero(full)
+    for lo in range(0, len(rows), _ROWS_PER_CHUNK):
+        r = rows[lo:lo + _ROWS_PER_CHUNK]
+        seg = signal[pk[r][:, None] + steps].astype(np.float64)
+        out[r] = np.diff(seg, axis=1).max(axis=1)
+    for j in np.flatnonzero(~full):
+        out[j] = _upstroke_slope_at(int(pk[j]), signal, fs, window_ms)
+    return out
+
+
+def _window_stds(signal: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
+    """float(np.std(signal[lo[k]:hi[k]])) for every k at once. The windows of
+    one length are gathered into rows (a contiguous copy, reduced along each
+    row as np.std reduces the 1-D slice: the same sums in the same order)."""
+    lo = np.asarray(lo, dtype=np.int64)
+    hi = np.asarray(hi, dtype=np.int64)
+    out = np.empty(len(lo), dtype=np.float64)
+    length = hi - lo
+    for L in np.unique(length).tolist():
+        rows = np.flatnonzero(length == L)
+        steps = np.arange(L)
+        per = max(1, _ROWS_PER_CHUNK * 8 // max(L, 1))
+        for a in range(0, len(rows), per):
+            r = rows[a:a + per]
+            seg = np.ascontiguousarray(signal[lo[r][:, None] + steps])
+            out[r] = np.std(seg, axis=1)
+    return out
+
+
+# Rows gathered at a time by the vectorised helpers (bounded memory).
+_ROWS_PER_CHUNK = 4096
+
+
 def _topographic_prominences(signal: np.ndarray, peaks: np.ndarray, fs: float) -> np.ndarray:
     """Genuine topographic prominence at each peak (height above the higher
     of its two neighbouring valleys), via ``scipy.signal.peak_prominences``.
@@ -220,7 +262,13 @@ def _snap_to_r(
         # fallback
         return int(np.clip(approx_i, 0, n - 1))
 
-    local_abs = local_rel + lo
+    return _pick_r(local_rel + lo, approx_i, signal, fs, deriv)
+
+
+def _pick_r(local_abs: np.ndarray, approx_i: int, signal: np.ndarray, fs: float,
+            deriv: Optional[np.ndarray] = None) -> int:
+    """_snap_to_r's choice among the local maxima *local_abs* of its window."""
+    n = len(signal)
     if len(local_abs) == 1:
         return int(local_abs[0])
 
@@ -259,6 +307,52 @@ def _snap_to_r(
             best, best_sl, best_amp = int(pk), sl, amp
 
     return int(np.clip(best if best is not None else approx_i, 0, n - 1))
+
+
+def _snap_to_r_many(
+    approx: "Iterable[int]",
+    signal: np.ndarray,
+    fs: float,
+    pre_snap: int,
+    post_snap: Optional[int] = None,
+    deriv: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """[_snap_to_r(a, signal, fs, pre_snap, post_snap, deriv) for a in approx]
+    with one find_peaks on the whole signal instead of one per window.
+
+    A window's local maxima (find_peaks on the slice; prominence=0 keeps
+    them all, a local maximum's prominence being >= 0) are exactly the
+    signal's local maxima whose plateau lies strictly inside the window
+    (one sample of the window on each side of it), at the same midpoints:
+    each is decided by the same comparisons of the same samples."""
+    n = len(signal)
+    approx_i = np.array([int(round(a)) for a in approx], dtype=np.int64)
+    out = np.empty(len(approx_i), dtype=np.int64)
+    if not len(approx_i):
+        return out
+    post = pre_snap if post_snap is None else int(post_snap)
+    lo = np.maximum(0, approx_i - int(pre_snap))
+    hi = np.minimum(n, approx_i + int(post) + 1)
+    pk, props = find_peaks(signal, plateau_size=1)
+    k0 = np.searchsorted(props["left_edges"], lo + 1, side="left")
+    k1 = np.searchsorted(props["right_edges"], hi - 2, side="right")
+    count = np.where(hi - lo >= 3, k1 - k0, 0)
+    one = count == 1
+    out[one] = pk[k0[one]]
+    for j in np.flatnonzero(~one).tolist():
+        a_i, l, h = int(approx_i[j]), int(lo[j]), int(hi[j])
+        if count[j] > 1:
+            out[j] = _pick_r(pk[k0[j]:k1[j]], a_i, signal, fs, deriv)
+        elif l >= h:
+            out[j] = int(np.clip(a_i, 0, n - 1))
+        else:
+            # The same fallback as _snap_to_r: the maximum of the left half.
+            left_hi = min(h, a_i + 1)
+            if left_hi > l:
+                out[j] = int(l + int(np.argmax(signal[l:left_hi])))
+            else:
+                out[j] = int(np.clip(a_i, 0, n - 1))
+    return out
 
 
 # ════════════════════════════════════════════════════════════
@@ -336,14 +430,12 @@ def _adaptive_j_upstroke_ratio(
     # ── 1. Upstrokes de tous les candidats ────────────────────────────────
     cache = _j_cache_for(signal, fs, slope_window_ms, snr_window_ms)
     slope_of = cache["slope"]
-    slopes_l = []
-    for p in peaks:
-        p = int(p)
-        v = slope_of.get(p)
-        if v is None:
-            v = slope_of[p] = _upstroke_slope_at(p, signal, fs, slope_window_ms)
-        slopes_l.append(v)
-    slopes = np.array(slopes_l, dtype=np.float64)
+    pk_list = [int(p) for p in peaks]
+    missing = sorted({p for p in pk_list if p not in slope_of})
+    if missing:
+        slope_of.update(zip(missing, _upstroke_slopes(
+            np.asarray(missing, dtype=np.int64), signal, fs, slope_window_ms).tolist()))
+    slopes = np.array([slope_of[p] for p in pk_list], dtype=np.float64)
     slopes = slopes[slopes > 1e-9]
     if len(slopes) < 3:
         return base_ratio
@@ -354,18 +446,18 @@ def _adaptive_j_upstroke_ratio(
     # ── 2. SNR : amplitude médiane des pics / bruit inter-pics ────────────
     amp_med = float(np.median(signal[peaks]))
     half_w  = max(1, int(snr_window_ms / 2.0 / 1000.0 * fs))
-    noise_segs: list[float] = []
     noise_of = cache["noise"]
-    for i in range(len(peaks) - 1):
-        a, b = int(peaks[i]), int(peaks[i + 1])
-        mid  = (a + b) // 2
-        lo   = max(0,          mid - half_w)
-        hi   = min(len(signal), mid + half_w)
-        if hi - lo > 4:
-            v = noise_of.get((lo, hi))
-            if v is None:
-                v = noise_of[(lo, hi)] = float(np.std(signal[lo:hi]))
-            noise_segs.append(v)
+    pk64 = np.asarray(peaks, dtype=np.int64)
+    mid = (pk64[:-1] + pk64[1:]) // 2
+    w_lo = np.maximum(0, mid - half_w)
+    w_hi = np.minimum(len(signal), mid + half_w)
+    keep = (w_hi - w_lo) > 4
+    wins = list(zip(w_lo[keep].tolist(), w_hi[keep].tolist()))
+    todo = sorted({w for w in wins if w not in noise_of})
+    if todo:
+        t_lo, t_hi = (np.asarray(v, dtype=np.int64) for v in zip(*todo))
+        noise_of.update(zip(todo, _window_stds(signal, t_lo, t_hi).tolist()))
+    noise_segs: list[float] = [noise_of[w] for w in wins]
     noise_std = float(np.median(noise_segs)) if noise_segs else (amp_med * 0.1)
     snr       = amp_med / (noise_std + 1e-9)
 
@@ -740,17 +832,24 @@ def _local_reference_proms(cands: np.ndarray, proms: np.ndarray, fs: float,
     # [center-half_win, center+half_win] only ever moves forward, never
     # backward — lo/hi need only advance, never reset. Same result,
     # linear instead of quadratic in the number of candidates.
-    lo = 0
-    hi = 0
-    for idx in range(n_c):
-        center = cands[idx]
-        while lo < n_c and cands[lo] < center - half_win_samples:
-            lo += 1
-        while hi < n_c and cands[hi] <= center + half_win_samples:
-            hi += 1
-        count = hi - lo
-        # Médiane locale — insensible aux outliers hauts (artefacts, R ectopiques)
-        refs[idx] = float(np.median(proms[lo:hi])) if count >= 4 else global_ref
+    # The same windows as advancing two pointers: lo the first candidate
+    # >= center - half_win, hi one past the last <= center + half_win.
+    c64 = np.asarray(cands, dtype=np.int64)
+    lo = np.searchsorted(c64, c64 - half_win_samples, side="left")
+    hi = np.searchsorted(c64, c64 + half_win_samples, side="right")
+    count = hi - lo
+    refs[:] = global_ref
+    # Médiane locale — insensible aux outliers hauts (artefacts, R ectopiques).
+    # The windows of one size at once (np.median of each row: the same
+    # values selected, the same mean of the two middle ones).
+    p_arr = np.asarray(proms)
+    for size in np.unique(count[count >= 4]).tolist():
+        rows = np.flatnonzero(count == size)
+        view = np.lib.stride_tricks.sliding_window_view(p_arr, size)
+        per = max(1, _ROWS_PER_CHUNK * 8 // size)
+        for a in range(0, len(rows), per):
+            r = rows[a:a + per]
+            refs[r] = np.median(view[lo[r]], axis=1)
     c.update(cands=cands, proms=proms, key=key, refs=refs)
     return refs
 
@@ -1700,7 +1799,7 @@ def detect_peaks_wavelet(
 
     # ── 7. Snap vers le maximum local du signal original ──────────────────
     half_snap = max(1, int(snap_max_ms / 1000.0 * fs))
-    peaks_out = np.array([_snap_to_r(int(p), signal, fs, half_snap) for p in peaks_e])
+    peaks_out = _snap_to_r_many([int(p) for p in peaks_e], signal, fs, half_snap)
     peaks_out = np.unique(peaks_out)
     if len(peaks_out) > 1:
         keep = [0]
@@ -1986,17 +2085,14 @@ def detect_peaks_sg_derivative(
     else:
         deriv_for_snap = deriv_arr  # identité si pas de downsampling
 
-    r_peaks = np.empty(len(anchors), dtype=int)
-    for i, anc in enumerate(anchors):
-        approx = int(round(anc * downsample_scale))
-        r_peaks[i] = _snap_to_r(
-            approx=approx,
-            signal=signal_orig,
-            fs=orig_fs,
-            pre_snap=pre_samp,
-            post_snap=post_samp,
-            deriv=deriv_for_snap,  # toujours fourni (orig ou réinterpolé)
-        )
+    r_peaks = _snap_to_r_many(
+        [int(round(anc * downsample_scale)) for anc in anchors],
+        signal=signal_orig,
+        fs=orig_fs,
+        pre_snap=pre_samp,
+        post_snap=post_samp,
+        deriv=deriv_for_snap,  # toujours fourni (orig ou réinterpolé)
+    ).astype(int)
 
     # ── 6. Nettoyage ──────────────────────────────────────────────────────
     r_peaks     = np.unique(r_peaks)
@@ -3189,6 +3285,36 @@ def arrhythmia_baseline_window(
     return info["t_start"], info["t_end"]
 
 
+def _centred_medians(rr: np.ndarray, half: int, exclude_centre: bool = False) -> np.ndarray:
+    """For each i, np.median(rr[i-half:i+half+1]) (the window truncated at
+    the ends), without rr[i] itself when *exclude_centre* (rr[i] when that
+    leaves nothing).
+
+    The full windows all at once: the rows of a sliding window (without its
+    middle column), which np.median partitions as it does the 1-D slice --
+    the same values selected, the same mean of the two middle ones."""
+    rr = np.asarray(rr, dtype=float)
+    n = len(rr)
+    out = np.empty(n, dtype=float)
+    width = 2 * half + 1
+    if n >= width:
+        rows = np.lib.stride_tricks.sliding_window_view(rr, width)
+        if exclude_centre:
+            rows = np.delete(rows, half, axis=1)
+        out[half:n - half] = np.median(rows, axis=1)
+        ends = list(range(half)) + list(range(n - half, n))
+    else:
+        ends = range(n)
+    for i in ends:
+        lo, hi = max(0, i - half), min(n, i + half + 1)
+        if exclude_centre:
+            window = np.concatenate([rr[lo:i], rr[i + 1:hi]])
+            out[i] = float(np.median(window)) if len(window) else float(rr[i])
+        else:
+            out[i] = float(np.median(rr[lo:hi]))
+    return out
+
+
 def classify_arrhythmias(
     rpeaks:          np.ndarray,
     fs:              float,
@@ -3307,10 +3433,7 @@ def classify_arrhythmias(
 
     # HR glissant (médiane symétrique sur 5 battements)
     ROLL_HALF  = 2
-    rolling_rr = np.array([
-        float(np.median(rr_ms[max(0, i - ROLL_HALF):min(n, i + ROLL_HALF + 1)]))
-        for i in range(n)
-    ])
+    rolling_rr = _centred_medians(rr_ms, ROLL_HALF)
     rolling_hr = 60_000.0 / np.maximum(rolling_rr, 1.0)
 
     _prog(10, "Baseline HR computed…")
@@ -3353,19 +3476,13 @@ def classify_arrhythmias(
 
     _prog(30, "Bradycardia/tachycardia runs found…")
 
+    # Exclude rr_ms[i] itself from its own reference window -- a centered
+    # slice rr_ms[i-half:i+half+1] always contains the tested interval,
+    # biasing the local reference toward the very value being judged
+    # against it (matches the self-excluding neighbor logic already used in
+    # detect_rr_artifacts's Pass 2 below).
     WIN = 11; half = WIN // 2
-
-    def _lmed(i: int) -> float:
-        # Exclude rr_ms[i] itself from its own reference window -- a
-        # centered slice rr_ms[i-half:i+half+1] always contains the tested
-        # interval, biasing the local reference toward the very value being
-        # judged against it (matches the self-excluding neighbor logic
-        # already used in detect_rr_artifacts's Pass 2 below).
-        lo, hi = max(0, i - half), min(n, i + half + 1)
-        window = np.concatenate([rr_ms[lo:i], rr_ms[i + 1:hi]])
-        return float(np.median(window)) if len(window) else float(rr_ms[i])
-
-    local_med  = np.array([_lmed(i) for i in range(n)])
+    local_med  = _centred_medians(rr_ms, half, exclude_centre=True)
     rr_hi_ctx  = 60_000.0 / _BRADY_RR_HI_HR_LO_BPM
 
     # Real beats removed by artifact correction, inside the analysed span.
@@ -3477,7 +3594,17 @@ def classify_arrhythmias(
         _prog(80, "AV conduction delay checked…")
 
     WIN_CV = 7; i = 0
+    # Every window's CV at once, only to skip the windows far below the
+    # threshold: a window near or above it is computed exactly as before.
+    if n >= WIN_CV:
+        cv_win = np.lib.stride_tricks.sliding_window_view(np.asarray(rr_ms, dtype=float), WIN_CV)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cv_all = cv_win.std(axis=1, ddof=1) / (cv_win.mean(axis=1) + 1e-6)
+        far_below = np.isfinite(cv_all) & (cv_all < 0.15 * (1.0 - 1e-6))
     while i <= n - WIN_CV:
+        if far_below[i]:
+            i += 1
+            continue
         seg = rr_ms[i:i + WIN_CV]
         cv  = seg.std(ddof=1) / (seg.mean() + 1e-6)
         if cv > 0.15:

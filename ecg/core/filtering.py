@@ -6,6 +6,7 @@ No UI imports — pure NumPy / SciPy.
 """
 from __future__ import annotations
 
+import functools
 import logging
 from typing import Optional
 
@@ -341,3 +342,46 @@ def sg_derivative_signal(
             delta=1.0 / fs,
             mode="interp",
         ), dtype=np.float64)
+
+
+# ── Savitzky-Golay smoothing of many short segments ──────────────────────
+@functools.lru_cache(maxsize=64)
+def _savgol_plan(window_length: int, polyorder: int) -> "tuple[np.ndarray, np.ndarray, np.ndarray]":
+    """What scipy.signal.savgol_filter(mode="interp") computes again on each
+    call, computed once per (window_length, polyorder): the convolution
+    coefficients, and the two linear maps of its edge fits (a polynomial
+    fitted to the first / last window_length samples, evaluated on the first
+    / last window_length // 2). The filter is linear, so the edge maps are
+    savgol_filter's own output on the identity matrix."""
+    from scipy.signal import savgol_coeffs, savgol_filter
+    coeffs = savgol_coeffs(window_length, polyorder)
+    m = savgol_filter(np.eye(window_length), window_length, polyorder, mode="interp", axis=0)
+    h = window_length // 2
+    return (coeffs, np.ascontiguousarray(m[:h]),
+            np.ascontiguousarray(m[window_length - h:]))
+
+
+def savgol_smooth(x: np.ndarray, window_length: int, polyorder: int,
+                  mode: str = "interp") -> np.ndarray:
+    """scipy.signal.savgol_filter(x, window_length, polyorder, mode="interp")
+    for a 1-D float signal, without recomputing the coefficients and the
+    two edge least-squares fits on every call: the interval delineation
+    smooths three short segments per beat (an hour of mouse ECG: ~105 000
+    calls, half of its time). Same interior (the same convolution), edges
+    equal to rounding (a matrix product instead of polyfit + polyval).
+    Other modes, shapes or lengths: savgol_filter itself."""
+    from scipy.ndimage import convolve1d
+    from scipy.signal import savgol_filter
+    x = np.asarray(x)
+    wl, po = int(window_length), int(polyorder)
+    if (mode != "interp" or x.ndim != 1 or x.dtype != np.float64 or x.shape[0] < wl
+            or wl % 2 == 0 or po >= wl):
+        return savgol_filter(x, wl, po, mode=mode)
+    coeffs, left, right = _savgol_plan(wl, po)
+    y = convolve1d(x, coeffs, mode="constant", cval=0.0)
+    h = wl // 2
+    if h:
+        n = x.shape[0]
+        y[:h] = left @ x[:wl]
+        y[n - h:] = right @ x[n - wl:]
+    return y

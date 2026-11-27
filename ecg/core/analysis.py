@@ -30,7 +30,7 @@ if trapz is None:
 from ecg.core.models import (
     AnalysisResults, MouseECG, QTC_FORMULA_LABELS, normalize_qtc_formula,
 )
-from ecg.core import fast_entropy
+from ecg.core import fast_dfa, fast_entropy
 from ecg.core.delineation_pool import (
     LANDMARKS, DelinCtx, delineate_all, ensemble_members,
     nan_median_rows as _nan_median_rows,
@@ -1944,6 +1944,8 @@ def analyse_hrv_nonlinear(
 
     # The same entropy values, counted without a KDTree per call (fast_entropy).
     fast_entropy.install()
+    # The same DFA fluctuations, without NeuroKit's window-by-window loop (fast_dfa).
+    fast_dfa.install()
     nk_failed_reason: "Optional[str]" = None
     poincare_cols = ("HRV_SD1", "HRV_SD2", "HRV_SD1SD2", "HRV_S",
                      "HRV_CSI", "HRV_CVI", "HRV_CSI_Modified")

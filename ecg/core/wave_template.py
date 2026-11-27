@@ -1812,7 +1812,11 @@ def detect_waves_on_beat(
     #     a find_peaks candidate -- and turned a T tail or noise into a P,
     #     hence a false PR (and AV-delay events) at high heart rates.
 
-    from scipy.signal import savgol_filter as _sg_filt, find_peaks as _fp
+    from scipy.signal import find_peaks as _fp
+
+    # savgol_filter(mode="interp") without recomputing its coefficients and
+    # edge fits on each of the three calls per beat (half of the time).
+    from ecg.core.filtering import savgol_smooth as _sg_filt
 
     # Peaks are picked on the whole stretch from the previous T peak (or the
     # beat-window start) to p_hi, then kept inside the P window: a P peak on
