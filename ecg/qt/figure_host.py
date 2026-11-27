@@ -155,8 +155,6 @@ class FigureSlot(MplCanvas):
     def _show_placeholder(self, force: bool = False) -> None:
         self.clear()
 
-    def enable_wheel_yzoom(self) -> None:                 # Qt: the toolbar-free canvas
-        pass
 
 
 class TextBox(QtWidgets.QPlainTextEdit):
@@ -673,9 +671,10 @@ def sync_figure_theme(is_dark: bool) -> None:
     # The surfaces and the text of the Qt palette: the Tk dark preset is
     # bluish (#1B1F26), the Qt one neutral (#1C1C1E), and the figures sat on
     # the cards as darker blue blocks. The data colours stay the preset's.
-    from ecg.qt import theme as qt_theme
-    p = qt_theme.DARK if is_dark else qt_theme.LIGHT
-    for key in ("BG", "PANEL", "CARD", "BORDER", "BORDER2", "TEXT", "MUTED", "LIGHT",
-                "HAIRLINE"):
-        tk_theme.THEME._colors[key] = getattr(p, key)
+    # Dark only: the light preset's surfaces are already the cards' white.
+    if is_dark:
+        from ecg.qt import theme as qt_theme
+        for key in ("BG", "PANEL", "CARD", "BORDER", "BORDER2", "TEXT", "MUTED", "LIGHT",
+                    "HAIRLINE"):
+            tk_theme.THEME._colors[key] = getattr(qt_theme.DARK, key)
     tk_theme.apply_theme_config(tk_theme.THEME)

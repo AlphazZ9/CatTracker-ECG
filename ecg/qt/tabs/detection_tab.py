@@ -13,6 +13,8 @@ the Tk interface). The tab writes the results into the window's Recording
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -162,6 +164,19 @@ class DetectionTab(QtWidgets.QWidget):
         self.lbl_view = QtWidgets.QLabel("")
         self.lbl_view.setProperty("muted", True)
         nav.addWidget(self.lbl_view)
+        # Tk's ⏮ ◀ ▶ ⏭: the start, one view back / on, the end (the keyboard's
+        # ← → move by part of a view).
+        for text, tip, fn in (
+                ("⏮", "The start of the recording", lambda: self.go_to(0.0)),
+                ("◀", "One view back (PgUp)", lambda: self.page(-1)),
+                ("▶", "One view on (PgDn)", lambda: self.page(+1)),
+                ("⏭", "The end of the recording", lambda: self.go_to(self._end()))):
+            b = QtWidgets.QPushButton(text)
+            b.setToolTip(tip)
+            b.setFixedWidth(30)
+            b.setStyleSheet("padding: 2px 0;")
+            b.clicked.connect(fn)
+            nav.addWidget(b)
         nav.addSpacing(10)
         self.legend = QtWidgets.QHBoxLayout()
         self.legend.setSpacing(12)
@@ -241,6 +256,11 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot = EcgPlot()
         self.plot.time_clicked.connect(self._clicked)
         self.plot.span_drawn.connect(self._noise_drawn)
+        # The readouts of the view (span, presets, heart rate in view) follow
+        # it at most every 80 ms: a label's new text re-lays the window out,
+        # and that on every step of a drag made moving the view jerky.
+        self._view_timer = QtCore.QTimer(self, singleShot=True, interval=80)
+        self._view_timer.timeout.connect(self._view_readouts)
         self.plot.window_changed.connect(self._view_moved)
         ecg_lay.addWidget(self.plot, 1)
         body = QtWidgets.QHBoxLayout()
@@ -304,8 +324,10 @@ class DetectionTab(QtWidgets.QWidget):
         # ── heart rate: the number, and the whole recording as navigator ──
         hr_card = QtWidgets.QFrame(objectName="Card")
         hr_lay = QtWidgets.QHBoxLayout(hr_card)
-        hr_lay.setContentsMargins(16, 10, 14, 8)
-        hr_lay.setSpacing(18)
+        # Compact: the trace above is what the page is for; the navigator
+        # takes the width, the number a narrow column.
+        hr_lay.setContentsMargins(14, 6, 12, 6)
+        hr_lay.setSpacing(12)
         figs = QtWidgets.QVBoxLayout()
         figs.setSpacing(2)
         head = QtWidgets.QLabel("Heart rate")
@@ -315,6 +337,7 @@ class DetectionTab(QtWidgets.QWidget):
         big.setSpacing(6)
         self.lbl_hr = QtWidgets.QLabel("—")
         self.lbl_hr.setProperty("role", "big")
+        self.lbl_hr.setStyleSheet("font-size: 26pt;")
         big.addWidget(self.lbl_hr, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         unit = QtWidgets.QLabel("bpm")
         unit.setProperty("role", "unit")
@@ -329,10 +352,23 @@ class DetectionTab(QtWidgets.QWidget):
         figs.addWidget(self.lbl_hr_whole)
         figs.addStretch(1)
         side = QtWidgets.QWidget()
-        side.setFixedWidth(190)
+        side.setFixedWidth(150)
         side.setLayout(figs)
         hr_lay.addWidget(side)
-        hr_lay.addWidget(self.plot.over_view, 1)
+        # The analysis window above the whole-recording navigator: the part
+        # of the recording Analyze uses (was in the context strip).
+        nav_col = QtWidgets.QVBoxLayout()
+        nav_col.setSpacing(4)
+        wrow = QtWidgets.QHBoxLayout()
+        wrow.setSpacing(6)
+        wl = QtWidgets.QLabel("Analysis window")
+        wl.setProperty("muted", True)
+        wrow.addWidget(wl)
+        self._window_row = wrow
+        wrow.addStretch(1)
+        nav_col.addLayout(wrow)
+        nav_col.addWidget(self.plot.over_view, 1)
+        hr_lay.addLayout(nav_col, 1)
         left.addWidget(hr_card)
         body.addWidget(self._build_quality_panel())
 
@@ -400,6 +436,25 @@ class DetectionTab(QtWidgets.QWidget):
         wa.setDefaultWidget(wbox)
         wmenu.addAction(wa)
         self.btn_window.hide()
+        row = self._window_row
+        for w in (self.ed_win0, self.ed_win1):
+            w.setMaximumWidth(70)
+        row.insertWidget(1, self.ed_win0)
+        row.insertWidget(2, QtWidgets.QLabel("–"))
+        row.insertWidget(3, self.ed_win1)
+        row.insertWidget(4, QtWidgets.QLabel("s"))
+        b_apply = QtWidgets.QPushButton("Apply")
+        b_apply.setToolTip("Analyze on this part of the recording only")
+        b_apply.clicked.connect(self.apply_analysis_window)
+        b_full = QtWidgets.QPushButton("Full")
+        b_full.setToolTip("The whole signal")
+        b_full.clicked.connect(self.reset_analysis_window)
+        for i, b in enumerate((b_apply, b_full)):
+            b.setStyleSheet("padding: 2px 10px;")
+            row.insertWidget(5 + i, b)
+        self.lbl_window.show()
+        self.lbl_window.setProperty("muted", True)
+        row.addWidget(self.lbl_window)
         lay.addLayout(status)
         self._update_undo_buttons()
         # The heart rate has its own card now: the strip is there on demand.
@@ -499,6 +554,41 @@ class DetectionTab(QtWidgets.QWidget):
         self.win.run_job("Detect Peaks", load_and_detect, path, self.params(),
                          on_done=self._detected, on_end=_end)
 
+    def load_raw(self) -> None:
+        """When a file is opened: its signal on the trace, as read from the
+        file (SignalController.load_raw_only; Detect Peaks filters and
+        detects). Nothing is replaced if a signal arrived meanwhile (a
+        restored session, a detection)."""
+        path = self.win.recording.signal.filepath
+        if not path:
+            return
+        from ecg.services.detection_service import load_raw
+        self.win.run_job("Loading the signal", load_raw, path, self.params(),
+                         on_done=self._raw_loaded)
+
+    def _raw_loaded(self, bundle: dict) -> None:
+        rec = self.win.recording
+        s = rec.signal
+        if s.filtered is not None or rec.detection.rpeaks_ok is not None:
+            return
+        fs = bundle["fs"]
+        s.fs = fs
+        s.raw = bundle["signal_raw"]
+        s.raw_norm = bundle["signal_raw_norm"]
+        s.time = np.arange(len(s.raw)) / fs
+        s.crop = bundle.get("signal_crop")
+        s.markers = bundle.get("markers") or {}
+        s.channel = bundle.get("detected_ch")
+        s.inverted = False
+        self.seg_trace.buttons[1].setChecked(True)      # what is shown: the raw signal
+        self.seg_trace.buttons[0].setChecked(False)
+        self.plot.set_signal(s.raw_norm, fs, s.time)
+        self.plot.set_noise_regions(rec.analysis.noise_regions)
+        self.plot.set_annotations(rec.analysis.annotations)
+        self.win.update_file_label()
+        self.win.set_status(f"{Path(s.filepath).name}: {bundle['dur_s']:,.0f} s at {fs:g} Hz "
+                            "(raw signal) — click Detect Peaks")
+
     def confirm_redetect(self) -> bool:
         """A new detection starts from the detector's peaks: the peaks
         excluded and added by hand, and the Undo history, are dropped. Asked
@@ -555,6 +645,8 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_mark_noise.setEnabled(True)
         self.btn_review.setEnabled(True)
         self._update_undo_buttons()
+        self.seg_trace.buttons[0].setChecked(True)      # the filtered signal now
+        self.seg_trace.buttons[1].setChecked(False)
         self.plot.set_signal(s.filtered, fs, s.time)
         self.plot.set_noise_regions(rec.analysis.noise_regions)
         self.plot.set_annotations(rec.analysis.annotations)
@@ -703,6 +795,8 @@ class DetectionTab(QtWidgets.QWidget):
         raw = self.seg_trace.buttons[1].isChecked()
         self.seg_trace.buttons[0].setChecked(not raw)
         sig = s.raw_norm if raw and s.raw_norm is not None else s.filtered
+        if sig is None:                       # before Detect Peaks: only the raw one
+            sig = s.raw_norm
         if sig is None or s.fs is None:
             return
         t0, t1 = self.plot.window()
@@ -750,9 +844,14 @@ class DetectionTab(QtWidgets.QWidget):
         start = max(0.0, min(self._end() - width, t0))
         self.plot.set_window(start, start + width)
 
-    def _view_moved(self, t0: float, t1: float) -> None:
+    def _view_moved(self, _t0: float = 0.0, _t1: float = 0.0) -> None:
+        if not self._view_timer.isActive():
+            self._view_timer.start()
+
+    def _view_readouts(self) -> None:
         """The view's time span, its length among the presets, and the heart
         rate of the beats in view."""
+        t0, t1 = self.plot.window()
         self.lbl_view.setText(f"{t0:.2f} – {t1:.2f} s")
         width = t1 - t0
         for b, w in zip(self.seg_window.buttons, WINDOW_PRESETS_S):
@@ -767,15 +866,15 @@ class DetectionTab(QtWidgets.QWidget):
         else:
             med, lo, hi = stats
             self.lbl_hr.setText(f"{med:.0f}")
-            self.lbl_hr_range.setText(f"in view · {lo:.0f} – {hi:.0f} bpm")
+            self.lbl_hr_range.setText(f"in view {lo:.0f}–{hi:.0f}")
         hr = (self.win.recording.analysis.results or {}).get("hr") or {}
         mean = hr.get("mean")
         if mean is not None and np.isfinite(mean):
-            self.lbl_hr_whole.setText(f"Recording: {mean:.0f} bpm")
+            self.lbl_hr_whole.setText(f"Recording {mean:.0f}")
             self.lbl_hr_whole.setToolTip("Mean heart rate of the analysis window (Analyze)")
         else:
             m = self.plot.mean_hr()
-            self.lbl_hr_whole.setText(f"Recording: ≈ {m:.0f} bpm" if m else "")
+            self.lbl_hr_whole.setText(f"Recording ≈ {m:.0f}" if m else "")
             self.lbl_hr_whole.setToolTip("Mean of the beat-to-beat heart rate; Analyze gives "
                                          "the value on the valid intervals")
 
@@ -979,6 +1078,11 @@ class DetectionTab(QtWidgets.QWidget):
     def _end(self) -> float:
         time = self.win.recording.signal.time
         return float(time[-1]) if time is not None and len(time) else 0.0
+
+    def page(self, direction: int) -> None:
+        """One view width back (-1) or on (+1)."""
+        t0, t1 = self.plot.window()
+        self.go_to(t0 + direction * (t1 - t0))
 
     def go_to(self, t: float) -> None:
         """NavigationController.nav_goto: the view starts at *t* (kept inside

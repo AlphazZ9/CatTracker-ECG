@@ -59,31 +59,31 @@ date, an empty ring not computed; hover it for the reason. A result that is
 out of date says so in an amber banner above it (Time course, Morphology,
 Events), with **Recompute** where it applies.
 
-The **analysis window** is set at the foot of the Signal page (**Analysis
-window: … · Change**: start and end, **Apply** or **Whole signal**): the part
-of the recording Analyze uses, with the number of peaks inside it. Opening a
-file or detecting the peaks again sets it back to the whole signal.
+The **analysis window** is set on the Signal page, above the heart-rate
+navigator (**Analysis window**: start and end in seconds, **Apply** or
+**Full**), with what it holds on the right (peaks, duration). It is the part
+of the recording Analyze uses. Opening a file or detecting the peaks again
+sets it back to the whole signal.
 
-The window opens on the **Signal** page with no file loaded. The header
-along the top stays visible whatever the page:
+The window opens on the **Signal & Detection** page. Along the top, whatever
+the page:
 - the recording as a chip (file, channel, rate, subject, project): click it
   for the Recording sheet (Subject ID, sex, project, notes, the file's
   channels);
-- **Search** (Ctrl+K, ⌘K on a Mac): every page and command by name;
-- whether the session is saved ("Saved 14:02" / "Not saved"), **Open…**,
-  **Save**, **Settings…** (channel, rate, crop, filters, RR bounds, artifact
-  correction, reset to mouse defaults);
-- one red button that follows the step: **Open…**, then **Detect peaks**,
-  then **Analyze**.
+- whether the session is saved, **Open** and **▾** (recent recordings),
+  **Detect Peaks**, **Analyze all** (red), **Save Session**, **Export…**,
+  **Undo** / **Redo**;
+- **⋯**: Recording…, Settings… (channel, rate, crop, filters, RR bounds,
+  artifact correction, reset to mouse defaults), ML detector…, search
+  (Ctrl+K, ⌘K on a Mac: every page and command by name), light / dark mode
+  and text size (kept for the next runs), recent recordings (with Cohort
+  Trends), clear session cache, keyboard shortcuts (F1), the log folder,
+  About.
 
-Running computations show in the status bar at the bottom, with **Cancel**;
-a warning also rises as a short notice over the page. The menus hold the
-rest:
-- **File**: Open Recent, Recent recordings (with Cohort Trends), Clear session cache;
-- **View**: light / dark mode, text size, both kept for the next runs (light
-  / dark is also at the foot of the left column);
-- **Tools**: Settings…, ML detector…;
-- **Help**: keyboard shortcuts (F1), the log folder.
+Then the page tabs, each with its state (up to date, out of date, not
+computed). There is no menu bar: everything is in the header. Running
+computations show in the status bar at the bottom, with **Cancel**; a
+warning also rises as a short notice over the page.
 
 ---
 
@@ -91,9 +91,11 @@ rest:
 
 Click **Open** and pick a MATLAB `.mat` file — legacy v5/v6 or v7.3/HDF5
 (Spike2 exports), both are handled automatically, including channel and
-sampling-rate detection. **Settings…** (header) holds the channel and the
+sampling-rate detection. The signal appears at once, as read from the file
+(**Raw** is selected above the trace); **Detect Peaks** then filters it and
+finds the beats. **Settings…** (header **⋯**) holds the channel and the
 sampling rate (editable if auto-detection guesses wrong), and the
-**Filtering** box of **Detection…** (Signal page) controls whether detection
+**Filtering** box of the detection bar (Signal page) controls whether detection
 runs on the raw signal or a bandpass/notch/cleaned version — see
 [Reading the Detection view](#reading-the-detection-view) for what that
 choice does to the display.
@@ -197,7 +199,7 @@ peaks.
 The ML Detector learns what an R-peak looks like from your own recordings:
 the **training examples** are recordings whose peaks you detected with
 another method and corrected. Everything about it is in the **ML
-detector…** dialog (**Tools** menu), whatever the Method — the examples are
+detector…** dialog (**⋯** menu of the header), whatever the Method — the examples are
 prepared with the other methods, before any model exists. The dialog
 repeats the steps below, gives the status ("No model yet · 2 examples",
 "Model ready · 7 examples", "Retrain suggested") and, once a model exists,
@@ -245,6 +247,18 @@ the raw signal otherwise (both normalised to the median R height, so the
 threshold reads the same). Green dots are accepted peaks; annotations are
 shaded in their colour with their label, noisy regions in grey.
 
+Moving along the recording: the wheel zooms the time around the pointer, a
+drag moves it, **1 s / 2 s / 5 s / 10 s** set the width; **⏮ ◀ ▶ ⏭** go to the
+start, one view back, one view on and the end (also **PgUp / PgDn**), **← / →**
+move by part of a view, and the heart-rate navigator under the trace shows
+the whole recording: drag its band to go anywhere. **More › Go to (s)** jumps
+to a time.
+
+The figures of Time course › Autonomic and Event-locked, and of Compare
+segments, have Matplotlib's toolbar (whole view, previous / next view, move,
+zoom to a box, save the image); on Compare segments, **Ctrl + wheel** also
+zooms the vertical scale.
+
 <img src="screenshots/03_detection_zoom_bradycardia.png" width="800" alt="Signal &amp; Detection view zoomed on 32.8–36.8 s: an isolated premature beat at 34.8 s">
 
 The screenshot above is zoomed on 32.8–36.8 s of the same recording: an
@@ -287,7 +301,13 @@ axis: every beat as a thin line, its 9-beat running median thick, the
 annotations shaded and the flagged beats (sudden acceleration / deceleration)
 circled. Their scale leaves out the rare extreme beats (0.5th–99.5th
 percentile; the ones beyond are marked at the edge). Click a point and the
-Signal page shows that beat. **▲▼ Spike markers** shows or hides the flagged
+Signal page shows that beat; a right click goes to the next flagged beat.
+**Ctrl + wheel** zooms the time of both charts together (over the left axis:
+the vertical scale), a drag moves them, **Reset zoom** brings every chart of
+the page back to its whole view; Poincaré, entropy, spectrum and RR
+distribution zoom the same way (a plain wheel scrolls the page). The RR
+distribution carries the triangular-index fit (HTI and TINN, dashed), as the
+export does. **▲▼ Spike markers** shows or hides the flagged
 beats; **Review** centres the next one on the Signal page. On the right, the
 scatter of successive valid RR with its SD1 / SD2 ellipse, the three values,
 and the multiscale entropy curve. The exported figures (PDF, ZIP) keep their
@@ -1463,7 +1483,7 @@ data for your strain and experimental conditions.
   each recording's per-event autonomic results in the local registry, for
   the cohort calibration of ks / kp.
 - If you're building a training set for the ML R-peak detector, **Add
-  open recording to training examples** (**Tools › ML detector…**)
+  open recording to training examples** (**⋯ › ML detector…**)
   caches this recording's corrected peaks without needing a full
   session save (see [ML R-peak detector](#ml-r-peak-detector)).
 - A saved session also restores the Recording sheet (Subject ID, sex,

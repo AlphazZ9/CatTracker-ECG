@@ -355,6 +355,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host.ent_auto_kp = Field(self.sp_kp)
         host.chk_auto_lfhf = Field(self.chk_lfhf, as_int=True)
         canvas = host.slot("autonomic", self, 12.0, 5.0)
+        canvas.add_toolbar()                       # as Tk: zoom, move, save
         canvas.setMinimumHeight(460)
         lay.addWidget(canvas, 3)
         lay.addSpacing(10)
@@ -412,6 +413,7 @@ class TimeCourseTab(QtWidgets.QTabWidget):
         host.chk_evt_z = Field(self.chk_evt_z, as_int=True)
         body = QtWidgets.QHBoxLayout()
         canvas = host.slot("event_locked", self, 8.0, 5.0)
+        canvas.add_toolbar()                       # as Tk: zoom, move, save
         canvas.setMinimumHeight(460)
         body.addWidget(canvas, 3)
         right = QtWidgets.QVBoxLayout()

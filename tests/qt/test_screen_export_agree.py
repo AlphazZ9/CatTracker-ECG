@@ -66,7 +66,7 @@ def test_heart_rate_and_rr_over_time(analysed):
         idx = np.searchsorted(e_t, s_t)
         _same(s_v, np.asarray(e_v)[idx], f"{name} of the valid beats")
     # What the screen draws as its line is that same HR.
-    _, line = _finite_pairs(*ch.t_line.getData())
+    _, line = _finite_pairs(*ch.t_line.getOriginalDataset())   # before downsampling
     _same(line, hr[valid & np.isfinite(hr)], "HR line on screen")
 
 
@@ -83,7 +83,7 @@ def test_poincare_and_multiscale_entropy(analysed):
     _jx, _jy, step = jitter_for_display(screen[:, 0], screen[:, 1])
     assert screen.shape == pts.shape
     assert np.max(np.abs(screen - pts)) <= step / 2 + 1e-9
-    sx, sy = ch.m_line.getData()
+    sx, sy = ch.m_line.getOriginalDataset()
     ex, ey = ax_mse.get_lines()[0].get_data()
     _same(sx, ex, "MSE scales")
     _same(sy, ey, "MSE values")

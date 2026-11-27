@@ -22,6 +22,34 @@ from ecg.core.pipeline import prepare_signal
 from ecg.io.loaders import load_mat_signal, read_spike2_markers
 
 
+def load_raw(path: str, params: dict,
+             progress_cb: "Optional[Callable[[int, str], None]]" = None) -> dict:
+    """The recording at *path* as read from the file, for display when it is
+    opened (SignalController.load_raw_worker without the app): the sampling
+    rate from the file when it has one (else params["fs"]), the time crop
+    params["t_start"] / ["t_end"], the Spike2 markers, and the samples
+    z-scored for the display scale only. No filtering, no polarity change,
+    no detection. Raises ValueError for a flat signal (wrong channel)."""
+    from ecg.core.filtering import normalize
+    if progress_cb is not None:
+        progress_cb(10, "Loading signal from file…")
+    sig, detected_ch, _, detected_fs = load_mat_signal(path, params["channel"])
+    fs = int(detected_fs) if detected_fs is not None else params["fs"]
+    t0, t1 = params["t_start"], params["t_end"]
+    i0 = int(t0 * fs) if t0 > 0 else 0
+    i1 = int(t1 * fs) if t1 > 0 else len(sig)
+    signal_crop = signal_crop_info(t0, t1, len(sig) / fs if fs else None)
+    sig = sig[i0:i1]
+    markers = read_spike2_markers(path, t0, t1)
+    if sig.std() < 1e-10:
+        raise ValueError("Signal is flat — wrong channel.")
+    if progress_cb is not None:
+        progress_cb(80, f"Signal loaded — {len(sig) / fs:.0f} s")
+    return {"fs": fs, "signal_raw": sig, "signal_raw_norm": normalize(sig),
+            "dur_s": len(sig) / fs, "signal_crop": signal_crop, "markers": markers,
+            "detected_ch": detected_ch, "fs_from_file": detected_fs is not None}
+
+
 def load_and_detect(path: str, params: dict,
                     progress_cb: "Optional[Callable[[int, str], None]]" = None) -> dict:
     """Detect Peaks on the recording at *path* with the parameter snapshot

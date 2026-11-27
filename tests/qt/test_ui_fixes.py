@@ -185,3 +185,73 @@ def test_no_controller_call_falls_into_the_void(window, qtbot, caplog):
     assert window.figures.lbl_arr_baseline.text().startswith("Baseline")
     void = [r.getMessage() for r in caplog.records if "is not provided in Qt" in r.getMessage()]
     assert void == []
+
+
+def test_the_signal_is_on_screen_as_soon_as_the_file_is_opened(window, qtbot):
+    """Opening a file shows its raw signal (Tk's load_raw_only) before any
+    Detect Peaks; Detect then shows the filtered one."""
+    window.open_path(str(FIXTURE), check_session=False)
+    qtbot.waitUntil(lambda: window.recording.signal.raw is not None, timeout=30000)
+    det = window.detection
+    x, _y = det.plot.trace.getOriginalDataset()
+    assert x is not None and len(x) == len(window.recording.signal.raw)
+    assert det.seg_trace.buttons[1].isChecked()              # "Raw" is what is shown
+    assert window.recording.detection.rpeaks_ok is None
+    det.detect()
+    qtbot.waitUntil(lambda: window.recording.detection.rpeaks_ok is not None, timeout=60000)
+    assert det.seg_trace.buttons[0].isChecked()
+
+
+def test_the_trace_draws_what_is_in_view_only(window, qtbot):
+    """Clip-to-view and downsampling hold on the plots (PlotItem.addItem used
+    to switch them off): a 2 s view draws a few thousand points, not the
+    whole recording (an hour at 2 kHz froze every move for ~1 s)."""
+    _detect(qtbot, window)
+    plot = window.detection.plot
+    plot.set_window(10.0, 12.0)
+    qtbot.wait(100)
+    x, _y = plot.trace.getData()
+    assert len(x) < 0.05 * len(window.recording.signal.filtered)
+    assert plot.trace.opts["clipToView"] and plot.trace.opts["autoDownsample"]
+    assert plot.rr_curve.opts["clipToView"]
+
+
+def test_no_menu_bar_and_no_context_strip(window):
+    """More room for the charts: the commands are in the header (Open, ▾,
+    Save, Export, ⋯) and Ctrl+K; the analysis window is on the Signal page."""
+    assert not window.menuBar().isVisible()
+    assert not hasattr(window, "strip")
+    more = [a.text() for a in window.btn_more.menu().actions() if a.text()]
+    for name in ("Settings…", "ML detector…", "Light / dark mode", "About"):
+        assert name in more
+    assert window.detection.ed_win0.isVisibleTo(window.detection)
+
+
+def test_figures_scroll_the_page_and_keep_tk_toolbars(window):
+    """A plain wheel over a Matplotlib figure goes to the page (it used to
+    stop there); Autonomic, Event-locked and Compare have Tk's toolbar."""
+    from PySide6 import QtCore, QtGui
+    for name in ("autonomic", "event_locked", "compare"):
+        assert window.figures.slot(name).toolbar is not None, name
+    canvas = window.figures.slot("epochs").canvas
+    pos = QtCore.QPointF(10, 10)
+    ev = QtGui.QWheelEvent(pos, pos, QtCore.QPoint(0, 0), QtCore.QPoint(0, 120),
+                           QtCore.Qt.MouseButton.NoButton,
+                           QtCore.Qt.KeyboardModifier.NoModifier,
+                           QtCore.Qt.ScrollPhase.NoScrollPhase, False)
+    ev.accept()
+    canvas.wheelEvent(ev)
+    assert not ev.isAccepted()
+
+
+def test_signal_page_navigation_buttons(window, qtbot):
+    """⏮ ◀ ▶ ⏭ (Tk's): start, one view back / on, end."""
+    _detect(qtbot, window)
+    det = window.detection
+    det.plot.set_window(20.0, 22.0)
+    det.page(+1)
+    assert abs(det.plot.window()[0] - 22.0) < 1e-6
+    det.page(-1)
+    assert abs(det.plot.window()[0] - 20.0) < 1e-6
+    det.go_to(det._end())
+    assert abs(det.plot.window()[1] - det._end()) < 1e-6
