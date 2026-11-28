@@ -151,10 +151,14 @@ replaces them with the detector's peaks and clears Undo.
 The ECG opens on **2 s** (about 16 beats of a mouse at 500 bpm);
 **1 s / 2 s / 5 s / 10 s** at the top right change the length of the view,
 and **Filtered / Raw** the trace shown (display only: the peaks are those
-found on the filtered signal). R peaks are red dots; the legend of the ECG
-card names the other marks (a peak excluded by hand, one to check, a noisy
-stretch). Drag the trace to move along the recording, or use ← / → on the
-keyboard; **More › Go to (s)** jumps to a time.
+found on the filtered signal). R peaks are red dots, paler when the detector
+was less sure of them; the legend under the ECG names the other marks, as in
+the Tk version: a rejected candidate (grey dot), a peak excluded by hand (red
+cross), one added by hand (cyan star), one to check (amber ring), a beat
+removed by the artifact review (a down triangle in its type's colour), a noisy
+stretch; the dashed line is the detection threshold. Drag the trace to move
+along the recording, or use ← / → on the keyboard; **More › Go to (s)** jumps
+to a time.
 
 Under the ECG, the **Heart rate** card gives the heart rate of the beats in
 view in large figures, with its range and the recording's mean, beside the
@@ -169,12 +173,15 @@ good"), the agreement of the other detectors after **Check agreement**, the
 **Beats to check** flagged on the tachogram after Analyze (‹ / › centre the
 previous / next one), **Review artifacts** and the analysis window.
 
-The tools of the ECG card work one at a time: **Move** (drag to pan),
-**Edit peaks** and **Mark noise**. With **Edit peaks**, left click near a
-peak to exclude / include it, right click to add one at the local maximum or
-to remove one added by hand (with **Free placement** on, a right click adds a
-peak exactly where you click), with **Undo** / **Redo** (Ctrl+Z / Ctrl+Y, on
-the Signal and Events pages). **More › Clear edits** re-includes every peak.
+**Edit peaks** and **Mark noise** work one at a time (and not while a zoom
+tool is on). With **Edit peaks**, left click near a peak to exclude / restore
+it, right click to add one at the local maximum (replacing a peak too close)
+or to remove one added by hand (with **Free placement** on, a right click adds
+a peak exactly where you click). As in the Tk version, a diamond follows the
+pointer where a right click would put the peak, with its time: cyan, it adds
+one; orange, it replaces or removes one. **Undo** / **Redo** (Ctrl+Z / Ctrl+Y,
+on the Signal and Events pages); **More › Clear edits** re-includes every
+peak.
 
 **Noisy stretches.** Where the trace is too noisy to trust (movement,
 electrode contact), choose **Mark noise** and drag over the stretch: it is
@@ -247,8 +254,15 @@ the raw signal otherwise (both normalised to the median R height, so the
 threshold reads the same). Green dots are accepted peaks; annotations are
 shaded in their colour with their label, noisy regions in grey.
 
-Moving along the recording: the wheel zooms the time around the pointer, a
-drag moves it, **1 s / 2 s / 5 s / 10 s** set the width; **⏮ ◀ ▶ ⏭** go to the
+Moving along the recording: the wheel zooms the time around the pointer (0.8
+or 1.25 times the view per notch, as Tk), a drag moves it, **1 s / 2 s / 5 s /
+10 s** set the width. Under the trace, the toolbar of the Tk view: **Home**
+(back to the time window, its height fitted), **Back / Forward** (the previous
+/ next view of the tools), **Pan** (a drag moves both axes, a right drag
+stretches them), **Zoom** (drag a box to zoom in, with the right button to
+zoom out; a flat box zooms the time only, a narrow one the height only),
+**Save** (the view as a PNG or SVG image), and the pointer's time and
+amplitude; **⏮ ◀ ▶ ⏭** go to the
 start, one view back, one view on and the end (also **PgUp / PgDn**), **← / →**
 move by part of a view, and the heart-rate navigator under the trace shows
 the whole recording: drag its band to go anywhere. **More › Go to (s)** jumps
@@ -1226,8 +1240,9 @@ list on the left is one episode (start, end, beats, heart rate). Select a row
 (or click the ribbon) to show the ECG around that episode on the right, with
 its peaks — in the screenshot above, the first of the four events of the
 recording, the isolated premature beat at 34.75 s. **◀ Previous** / **Next ▶**
-step through the events, ← / → pan the trace, **Window (s)** sets its width,
-and **Edit peaks here** corrects a peak on that trace (left click: exclude /
+step through the events, ← / → pan the trace, **Window (s)** sets its width
+(the wheel over the trace zooms it around the pointer, as Tk), and **Edit
+peaks here** corrects a peak on that trace (left click: exclude /
 restore, right click: add or remove one added by hand; Ctrl+Z undoes it).
 **Copy for Excel** copies the list as tab-separated text.
 

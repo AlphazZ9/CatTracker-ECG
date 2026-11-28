@@ -70,4 +70,20 @@ def test_classification_list_and_event_view(qtbot):
     assert w.detection.btn_undo.isEnabled()
     w.detection.undo()
     assert peak not in d.manual_excluded and len(d.rpeaks_ok) == n
+    # Tk's wheel zoom on the event trace: 0.8 times the window per notch,
+    # one redraw after the burst, the window box following.
+    from matplotlib.backend_bases import MouseEvent
+    ev.btn_edit.setChecked(False)
+    slot = w.figures.slot("arr_detail")
+    assert slot.canvas.wheel_always
+    ax = slot.figure.axes[0]
+    x0, x1 = ax.get_xlim()
+    px, py = ax.transData.transform(((x0 + x1) / 2, 0.0))
+    for _ in range(2):
+        slot.canvas.callbacks.process("scroll_event", MouseEvent(
+            "scroll_event", slot.canvas, px, py, button="up", step=1))
+    qtbot.wait(400)
+    y0, y1 = slot.figure.axes[0].get_xlim()
+    assert abs((y1 - y0) - (x1 - x0) * 0.64) < 0.02 * (x1 - x0)
+    assert abs(ev.sp_win.value() - a.arr_win) < 0.01
     w.jobs.wait(5000)

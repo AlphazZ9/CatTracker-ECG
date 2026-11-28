@@ -31,6 +31,26 @@ READY = ("Click Classify events to find the bradycardia and tachycardia episodes
 COLUMNS = ("#", "Event", "Start (s)", "End (s)", "Beats", "HR (bpm)", "Δ baseline", "Severity")
 
 
+class _WindowEntry:
+    """The trace's window (s) as the controllers read and write it (Tk's
+    entry: get, delete(0, "end") / insert(0, v)): the spin box, set without
+    re-centring the trace (a wheel zoom keeps its own position)."""
+
+    def __init__(self, spin: QtWidgets.QDoubleSpinBox) -> None:
+        self._spin = spin
+
+    def get(self) -> float:
+        return self._spin.value()
+
+    def delete(self, *_a) -> None:
+        pass
+
+    def insert(self, _index, value) -> None:
+        self._spin.blockSignals(True)
+        self._spin.setValue(float(value))
+        self._spin.blockSignals(False)
+
+
 class EventsTab(QtWidgets.QWidget):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
@@ -162,7 +182,7 @@ class EventsTab(QtWidgets.QWidget):
         head.addStretch(1)
         head.addWidget(QtWidgets.QLabel("Window (s)"))
         self.sp_win = QtWidgets.QDoubleSpinBox()
-        self.sp_win.setRange(0.1, 30.0)
+        self.sp_win.setRange(0.1, 120.0)
         self.sp_win.setValue(3.0)
         self.sp_win.valueChanged.connect(self._window_changed)
         head.addWidget(self.sp_win)
@@ -172,10 +192,15 @@ class EventsTab(QtWidgets.QWidget):
             b.setMaximumWidth(36)
             b.clicked.connect(lambda _c=False, d=step: nav.arr_navigate(d))
             head.addWidget(b)
-        host.ent_arr_win = Value(self.sp_win.value)
+        host.ent_arr_win = _WindowEntry(self.sp_win)
         detail = host.slot("arr_detail", right, 9.0, 4.0)
         detail.setMinimumHeight(240)          # the page does not scroll: it must fit 900 px
         detail.canvas.mpl_connect("button_press_event", host.analysis_ctrl.on_arr_detail_click)
+        # Tk's wheel zoom on this trace: the window 0.8 / 1.25 times as long
+        # per notch around the pointer (AnalysisController.on_arr_scroll).
+        detail.canvas.wheel_always = True
+        detail.canvas.mpl_connect("scroll_event", host.analysis_ctrl.on_arr_scroll)
+        detail.setToolTip("Wheel: zoom the time around the pointer")
         rl.addWidget(detail, 1)
         rl.addLayout(head)
         split.addWidget(right)

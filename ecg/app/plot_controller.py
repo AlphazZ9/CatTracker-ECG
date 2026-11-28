@@ -892,6 +892,11 @@ class PlotController:
         # correlation data actually appears once it lands.
         self.draw_detail_rrhr()
 
+    def accepted_peak_alpha(self) -> "Optional[np.ndarray]":
+        """The opacity of each accepted peak on the trace (0.35 to 0.95:
+        paler, the detector was less sure of it), cached for the peaks."""
+        return self._ensure_alpha_cache()
+
     def _ensure_alpha_cache(self) -> "Optional[np.ndarray]":
         """Lazily compute+cache draw_detail()'s per-accepted-peak confidence
         alpha (rp_ok_alpha), same identity-cache pattern as

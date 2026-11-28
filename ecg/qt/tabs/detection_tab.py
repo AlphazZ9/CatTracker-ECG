@@ -23,6 +23,7 @@ from PySide6 import QtCore, QtWidgets
 from ecg.core.models import FilterParams, MouseECG
 from ecg.core.peak_editing import (apply_click_edit, apply_peak_edits, edit_at_click,
                                    push_undo, signal_quality_score, undo_redo)
+from ecg.qt import theme
 from ecg.qt.widgets.ecg_plot import EcgPlot
 from ecg.services.detection_service import load_and_detect
 
@@ -181,8 +182,8 @@ class DetectionTab(QtWidgets.QWidget):
         self.legend = QtWidgets.QHBoxLayout()
         self.legend.setSpacing(12)
         self._legend_icons = []
-        for kind, text in (("peak", "R peak"), ("excluded", "Excluded"), ("check", "To check"),
-                           ("noise", "Noisy")):
+        for kind, text in (("peak", "R peak"), ("rejected", "Rejected"), ("excluded", "Excluded"),
+                           ("added", "Added"), ("check", "To check"), ("noise", "Noisy")):
             item = QtWidgets.QHBoxLayout()
             item.setSpacing(5)
             icon = QtWidgets.QLabel()
@@ -196,12 +197,10 @@ class DetectionTab(QtWidgets.QWidget):
         nav.addWidget(self.seg_trace)
         nav.addWidget(self.seg_window)
         self._nav_row = nav
-        # Move / Edit peaks / Mark noise: one mode at a time.
+        # Edit peaks / Mark noise (Tk's two toggles): one at a time, and none
+        # while a zoom tool of the trace (Pan, Zoom) is on. Without any, a
+        # drag moves the time window and the wheel zooms it.
         self.seg_tools = Segmented([], exclusive=False)
-        self.btn_move = QtWidgets.QPushButton("Move")
-        self.btn_move.setCheckable(True)
-        self.btn_move.setChecked(True)
-        self.btn_move.setToolTip("Drag to pan, wheel to zoom the time axis")
         self.btn_edit = QtWidgets.QPushButton("Edit peaks")
         self.btn_edit.setCheckable(True)
         self.btn_edit.setEnabled(False)
@@ -213,9 +212,8 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_mark_noise.setEnabled(False)
         self.btn_mark_noise.setToolTip("Drag over a noisy stretch to leave its RR intervals out "
                                        "of HR / HRV; right click a noisy region to remove it")
-        for b in (self.btn_move, self.btn_edit, self.btn_mark_noise):
+        for b in (self.btn_edit, self.btn_mark_noise):
             self.seg_tools.add_button(b, tool=True)
-        self.btn_move.clicked.connect(self._move_mode)
         self.btn_edit.toggled.connect(self._edit_toggled)
         self.btn_mark_noise.toggled.connect(self._mark_noise_toggled)
         tools.addWidget(self.seg_tools)
@@ -246,7 +244,6 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_more.setMenu(more)
         tools.addWidget(self.btn_more)
         tools.addStretch(1)
-        tools.addLayout(self.legend)
         ecg_lay.addLayout(nav)
         ecg_lay.addLayout(tools)
         self.lbl_edit = QtWidgets.QLabel("")
@@ -256,6 +253,14 @@ class DetectionTab(QtWidgets.QWidget):
         self.plot = EcgPlot()
         self.plot.time_clicked.connect(self._clicked)
         self.plot.span_drawn.connect(self._noise_drawn)
+        self.plot.hovered.connect(self._hovered)
+        # The legend of the marks on the bar under the trace (Tk's was in the
+        # plot): the tools row above keeps its width for the buttons.
+        legend_box = QtWidgets.QWidget()
+        legend_box.setLayout(self.legend)
+        self.legend.setContentsMargins(12, 0, 12, 0)
+        self.plot.add_to_navbar(legend_box)
+        self.plot.nav_mode_changed.connect(self._nav_mode_changed)
         # The readouts of the view (span, presets, heart rate in view) follow
         # it at most every 80 ms: a label's new text re-lays the window out,
         # and that on every step of a drag made moving the view jerky.
@@ -683,26 +688,55 @@ class DetectionTab(QtWidgets.QWidget):
     def _edit_toggled(self, on: bool) -> None:
         if on and self.btn_mark_noise.isChecked():
             self.btn_mark_noise.setChecked(False)
+        if on:
+            self.plot.set_nav_mode("")
         self._sync_tools()
 
-    def _move_mode(self) -> None:
-        """Move: neither peak editing nor noise marking (a drag pans)."""
-        self.btn_mark_noise.setChecked(False)
-        self.btn_edit.setChecked(False)
-        self._sync_tools()
+    def _nav_mode_changed(self, mode: str) -> None:
+        """A zoom tool of the trace (Pan, Zoom) was chosen: its drags and
+        clicks are the tool's, peak editing and noise marking stop."""
+        if mode:
+            self.btn_edit.setChecked(False)
+            self.btn_mark_noise.setChecked(False)
 
     def _sync_tools(self) -> None:
-        """One tool at a time (Move, Edit peaks, Mark noise), its hint, and
-        Free placement while editing peaks."""
+        """One tool at a time (Edit peaks, Mark noise), its hint (orange, as
+        the Tk title in edit mode), Free placement while editing peaks, and
+        the edit preview only then."""
         noise, edit = self.btn_mark_noise.isChecked(), self.btn_edit.isChecked()
-        self.btn_move.setChecked(not (noise or edit))
         self.chk_free.setVisible(edit)
-        hint = ("Drag over a noisy stretch to mark it · right click a noisy region to remove it"
-                if noise else
-                "Left click a peak: exclude / include · right click: add / remove · "
-                "Ctrl+Z / Ctrl+Y" if edit else "")
+        hint = ("Mark noise — drag over a noisy stretch to mark it · right click a noisy region "
+                "to remove it" if noise else
+                "EDIT — left click a peak: exclude / restore · right click: add / replace "
+                "(the diamond shows where) · Ctrl+Z / Ctrl+Y" if edit else "")
         self.lbl_edit.setText(hint)
         self.lbl_edit.setVisible(bool(hint))
+        self.lbl_edit.setStyleSheet(f"color: {theme.current().ORANGE};" if hint else "")
+        if not edit:
+            self.plot.show_edit_preview(None)
+
+    def _hovered(self, t: float) -> None:
+        """Tk's edit preview: where a right click at the pointer would put a
+        peak (the rules of the click itself, edit_at_click): cyan to add one,
+        orange to replace or remove one."""
+        if (not self.btn_edit.isChecked() or self.btn_mark_noise.isChecked()
+                or not np.isfinite(t)):
+            self.plot.show_edit_preview(None)
+            return
+        rec = self.win.recording
+        s, d = rec.signal, rec.detection
+        if s.filtered is None or d.rpeaks_ok is None or s.fs is None:
+            self.plot.show_edit_preview(None)
+            return
+        t0, t1 = self.plot.window()
+        edit = edit_at_click(s.filtered, s.fs, t, "right", t1 - t0, d.rpeaks_ok,
+                             d.rpeaks_manual_excl, d.rpeaks_manual_added,
+                             d.manual_excluded, d.manual_added,
+                             free_placement=self.chk_free.isChecked())
+        if edit.peak is None:
+            self.plot.show_edit_preview(None)
+        else:
+            self.plot.show_edit_preview(edit.peak, edit.action)
 
     def _build_quality_panel(self) -> QtWidgets.QFrame:
         """The Signal quality sheet: four values (filled by the shared figure
@@ -819,10 +853,26 @@ class DetectionTab(QtWidgets.QWidget):
                 painter.setBrush(QtGui.QColor(p.plot_rpeak))
                 painter.setPen(QtCore.Qt.PenStyle.NoPen)
                 painter.drawEllipse(QtCore.QRectF(3, 3, 8, 8))
+            elif kind == "rejected":
+                c = QtGui.QColor(p.LIGHT)
+                c.setAlpha(128)
+                painter.setBrush(c)
+                painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                painter.drawEllipse(QtCore.QRectF(4, 4, 6, 6))
             elif kind == "excluded":
-                painter.setPen(QtGui.QPen(QtGui.QColor(p.TEXT), 1.8))
+                painter.setPen(QtGui.QPen(QtGui.QColor(p.RED), 2.2))
                 painter.drawLine(QtCore.QPointF(3, 3), QtCore.QPointF(11, 11))
                 painter.drawLine(QtCore.QPointF(11, 3), QtCore.QPointF(3, 11))
+            elif kind == "added":
+                from ecg.qt.widgets.ecg_plot import ADD_COLOR, ADD_EDGE
+                import math
+                pts = [QtCore.QPointF(7 + (6.5 if i % 2 == 0 else 2.7)
+                                      * math.sin(i * math.pi / 5),
+                                      7.5 - (6.5 if i % 2 == 0 else 2.7)
+                                      * math.cos(i * math.pi / 5)) for i in range(10)]
+                painter.setBrush(QtGui.QColor(ADD_COLOR))
+                painter.setPen(QtGui.QPen(QtGui.QColor(ADD_EDGE), 1.0))
+                painter.drawPolygon(QtGui.QPolygonF(pts))
             elif kind == "check":
                 pen = QtGui.QPen(QtGui.QColor("#FF9800"), 1.6)
                 painter.setPen(pen)
@@ -895,6 +945,7 @@ class DetectionTab(QtWidgets.QWidget):
         if on:
             if self.btn_edit.isChecked():
                 self.btn_edit.setChecked(False)
+            self.plot.set_nav_mode("")
             self.win.set_status("Mark noise: drag over a noisy stretch to leave its RR "
                                 "intervals out of HR / HRV; right click a noisy region to "
                                 "remove it.")
@@ -953,6 +1004,7 @@ class DetectionTab(QtWidgets.QWidget):
         apply_click_edit(edit, d.manual_excluded, d.manual_added)
         self.apply_threshold()
         self._update_undo_buttons()
+        self._hovered(t)                     # the preview for the peaks as they are now
         fs, n_ok = s.fs, len(d.rpeaks_ok)
         text = {
             "add_free": f"[Free] Added peak at {(edit.peak or 0) / fs:.3f} s",
@@ -1263,7 +1315,20 @@ class DetectionTab(QtWidgets.QWidget):
     def _show_peaks(self) -> None:
         rec = self.win.recording
         s, d = rec.signal, rec.detection
-        self.plot.set_peaks(d.rpeaks_ok, d.rpeaks_rej, d.rpeaks_manual_excl, d.rpeaks_manual_added)
+        # As the Tk detail view: the accepted peaks paler when the detection
+        # was less sure of them, the beats the artifact review removed, the
+        # threshold line.
+        alpha = (self.win.figures.plot_ctrl.accepted_peak_alpha()
+                 if d.rpeaks_ok is not None and len(d.rpeaks_ok) else None)
+        self.plot.set_peaks(d.rpeaks_ok, d.rpeaks_rej, d.rpeaks_manual_excl, d.rpeaks_manual_added,
+                            accepted_alpha=alpha)
+        removed: dict = {}
+        for c in rec.analysis.artifact_candidates or []:
+            if c.get("decision") == "remove" and c.get("type") in ("nonphysio", "ectopic",
+                                                                   "duplicate"):
+                removed.setdefault(c["type"], []).append(int(c["sample"]))
+        self.plot.set_artifacts({k: np.asarray(v, dtype=np.int64) for k, v in removed.items()})
+        self.plot.set_threshold(d.thresh_amp if d.rpeaks_ok is not None else None)
         self.plot.set_beats(d.rpeaks_ok,
                             d.beat_corr_peaks / s.fs if (d.beat_corr_peaks is not None
                                                          and d._beat_corr_for is d.rpeaks_ok)
