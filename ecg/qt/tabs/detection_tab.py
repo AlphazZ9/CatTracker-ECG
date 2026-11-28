@@ -745,7 +745,7 @@ class DetectionTab(QtWidgets.QWidget):
         from ecg.qt.figure_host import StatusLabel
         host = self.win.figures
         sheet = QtWidgets.QFrame(objectName="Card")
-        sheet.setFixedWidth(346)          # its two buttons, with their emoji, side by side
+        sheet.setFixedWidth(330)
         lay = QtWidgets.QVBoxLayout(sheet)
         lay.setContentsMargins(16, 12, 16, 12)
         lay.setSpacing(8)
