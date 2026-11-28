@@ -643,8 +643,12 @@ class GroupTab(QtWidgets.QScrollArea):
             self.lbl_notes.setText(error or "No result")
             self.cb_fm.setVisible(False)
             msg = error or "No result"
-            self.slot.update(lambda fig: fig.text(0.5, 0.5, msg, ha="center", va="center",
-                                                  color="#888"))
+            # The empty state of the figures (a faint chart, the sentence, and
+            # Open Excel… while no table is open).
+            self.slot.set_placeholder(msg)
+            self.slot.set_placeholder_action("Open Excel…", self.open_dialog
+                                             if msg == "Open a group table" else None)
+            self.slot.clear()
             return
         d = res.display
         cols = [c for c in d.columns if not str(c).startswith("_")]

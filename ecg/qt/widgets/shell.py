@@ -244,14 +244,26 @@ class Toast(QtWidgets.QFrame):
         lay.addWidget(close)
         self._timer = QtCore.QTimer(self, singleShot=True)
         self._timer.timeout.connect(self.hide)
+        self._on_hide: "Optional[object]" = None
         self.hide()
 
-    def show_text(self, text: str, msecs: int = 6000) -> None:
+    def show_text(self, text: str, msecs: int = 6000, on_hide=None) -> None:
+        """Show *text*; *on_hide()* once it goes (timed out or closed)."""
+        if self.isVisible() and self._on_hide is not None:
+            self._on_hide, previous = None, self._on_hide
+            previous()                              # the one it replaces settles
         self.label.setText(text)
+        self._on_hide = on_hide
         self._place()
         self.show()
         self.raise_()
         self._timer.start(msecs)
+
+    def hideEvent(self, ev: QtGui.QHideEvent) -> None:  # noqa: N802 (Qt name)
+        super().hideEvent(ev)
+        fn, self._on_hide = self._on_hide, None
+        if fn is not None:
+            fn()
 
     def _place(self) -> None:
         win = self.parentWidget()
@@ -386,6 +398,74 @@ def fit_table_height(table: QtWidgets.QTableWidget, min_rows: int = 1,
     if max_px is not None:
         h = min(h, max_px)
     table.setFixedHeight(h)
+
+
+class ElidedLabel(QtWidgets.QLabel):
+    """A one-line label that, short of room, shows its text cut with "…"
+    (in the middle, or where *mode* says) instead of clipping it mid-letter;
+    text() is still the whole text, and the tooltip too while it is cut."""
+
+    def __init__(self, text: str = "", parent: "Optional[QtWidgets.QWidget]" = None,
+                 mode: QtCore.Qt.TextElideMode = QtCore.Qt.TextElideMode.ElideMiddle) -> None:
+        super().__init__(text, parent)
+        self._mode = mode
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                           QtWidgets.QSizePolicy.Policy.Preferred)
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt name)
+        s = super().minimumSizeHint()
+        return QtCore.QSize(min(s.width(), 80), s.height())
+
+    def paintEvent(self, ev: QtGui.QPaintEvent) -> None:  # noqa: N802 (Qt name)
+        painter = QtGui.QPainter(self)
+        rect = self.contentsRect()
+        full = self.text()
+        shown = self.fontMetrics().elidedText(full, self._mode, rect.width())
+        self.style().drawItemText(painter, rect, int(self.alignment()), self.palette(),
+                                  self.isEnabled(), shown, self.foregroundRole())
+        painter.end()
+        cut = shown != full
+        if cut != bool(getattr(self, "_cut", False)):
+            self._cut = cut
+            if cut:
+                self._tip = self.toolTip()
+                self.setToolTip(full + (f"\n{self._tip}" if self._tip else ""))
+            else:
+                self.setToolTip(getattr(self, "_tip", ""))
+
+
+def help_badge(text: str) -> QtWidgets.QLabel:
+    """A small "?" whose tooltip holds *text*: how to use a chart, kept out of
+    the page (a long grey line under the chart) until asked for."""
+    badge = QtWidgets.QLabel("?")
+    badge.setObjectName("HelpBadge")
+    badge.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    badge.setFixedSize(18, 18)
+    badge.setToolTip(text)
+    badge.setCursor(QtCore.Qt.CursorShape.WhatsThisCursor)
+    return badge
+
+
+def chart_pictogram(color: str, size: "tuple[int, int]" = (56, 36)) -> QtGui.QPixmap:
+    """A faint drawing of a chart (axes and a line) for an empty figure."""
+    w, h = size
+    dpr = 2.0
+    pm = QtGui.QPixmap(int(w * dpr), int(h * dpr))
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(QtCore.Qt.GlobalColor.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    pen = QtGui.QPen(QtGui.QColor(color), 2.0)
+    pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.drawLine(QtCore.QPointF(4, 3), QtCore.QPointF(4, h - 4))
+    p.drawLine(QtCore.QPointF(4, h - 4), QtCore.QPointF(w - 3, h - 4))
+    pts = [(9, h - 12), (17, h - 18), (24, h - 14), (31, h - 26), (38, h - 20), (45, h - 29),
+           (w - 5, h - 23)]
+    p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in pts]))
+    p.end()
+    return pm
 
 
 def autohide(label: QtWidgets.QLabel) -> QtWidgets.QLabel:

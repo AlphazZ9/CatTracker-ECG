@@ -79,13 +79,32 @@ class MplCanvas(QtWidgets.QWidget):
         dpi = screen.logicalDotsPerInch() if screen is not None else 96.0
         self._figure = Figure(figsize=(width_in, height_in), dpi=dpi, layout="constrained")
         self.canvas = _Canvas(self._figure)
-        # An empty figure shows what to do instead (set_placeholder): a blank
-        # frame told nothing.
+        # An empty figure shows what to do instead (set_placeholder): a faint
+        # chart, the sentence, and the button that fills it when the page
+        # gives one (set_placeholder_action); a blank frame told nothing.
+        self._empty = QtWidgets.QWidget(objectName="EmptyState")
+        el = QtWidgets.QVBoxLayout(self._empty)
+        el.setContentsMargins(24, 16, 24, 16)
+        el.setSpacing(10)
+        el.addStretch(1)
+        self._picto = QtWidgets.QLabel()
+        self._picto.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        el.addWidget(self._picto)
         self._placeholder = QtWidgets.QLabel("")
         self._placeholder.setProperty("muted", True)
         self._placeholder.setWordWrap(True)
         self._placeholder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setObjectName("Placeholder")
+        # The whole width (centred text): a wrapped label given an alignment
+        # in the layout lost its height and showed half a line.
+        el.addWidget(self._placeholder)
+        self._empty_btn = QtWidgets.QPushButton("")
+        self._empty_btn.setProperty("action", True)
+        self._empty_btn.hide()
+        el.addWidget(self._empty_btn, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
+        el.addStretch(1)
+        self._empty_action: "Optional[Callable[[], None]]" = None
+        self._empty_btn.clicked.connect(lambda: self._empty_action and self._empty_action())
         # The canvas (and its toolbar, add_toolbar) or the placeholder.
         self._page = QtWidgets.QWidget()
         self._page_lay = QtWidgets.QVBoxLayout(self._page)
@@ -96,7 +115,7 @@ class MplCanvas(QtWidgets.QWidget):
         self._stack = QtWidgets.QStackedLayout(self)
         self._stack.setContentsMargins(0, 0, 0, 0)
         self._stack.addWidget(self._page)
-        self._stack.addWidget(self._placeholder)
+        self._stack.addWidget(self._empty)
         self._draw_fn: "Optional[Callable[[Figure], None]]" = None
 
     def add_toolbar(self) -> None:
@@ -141,9 +160,33 @@ class MplCanvas(QtWidgets.QWidget):
         self._placeholder.setText(text)
         self._sync_placeholder()
 
+    def set_placeholder_action(self, label: str, action: "Optional[Callable[[], None]]",
+                               source: "Optional[QtWidgets.QAbstractButton]" = None) -> None:
+        """The button under the empty figure's sentence (*label*, running
+        *action*: the page's own command that fills the figure); None: none.
+        *source*: the page's button for that command, whose enabled state it
+        follows (no button offered that would do nothing)."""
+        self._empty_action = action
+        self._empty_btn.setText(label)
+        self._empty_btn.setVisible(action is not None)
+        if source is not None:
+            self._empty_source = source
+            source.installEventFilter(self)
+            self._empty_btn.setEnabled(source.isEnabled())
+
+    def eventFilter(self, obj: QtCore.QObject, ev: QtCore.QEvent) -> bool:  # noqa: N802
+        if ev.type() == QtCore.QEvent.Type.EnabledChange \
+                and obj is getattr(self, "_empty_source", None):
+            self._empty_btn.setEnabled(obj.isEnabled())
+        return False
+
     def _sync_placeholder(self) -> None:
         empty = self._draw_fn is None and bool(self._placeholder.text())
-        self._stack.setCurrentWidget(self._placeholder if empty else self._page)
+        if empty:
+            from ecg.qt import theme
+            from ecg.qt.widgets.shell import chart_pictogram
+            self._picto.setPixmap(chart_pictogram(theme.current().BORDER2))
+        self._stack.setCurrentWidget(self._empty if empty else self._page)
 
     def update_figure(self, draw_fn: "Callable[[Figure], None]") -> None:
         """Replace the figure's content by what *draw_fn(fig)* draws."""

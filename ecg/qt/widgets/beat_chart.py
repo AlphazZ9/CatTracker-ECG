@@ -5,7 +5,7 @@ ecg.qt.widgets.beat_chart
 Morphology's mean beat on screen (PyQtGraph): a few individual beats in
 light grey, the ±1 SD band, the mean beat in red, the R peak, and the wave
 landmarks of the template as dotted lines with their names in rows above
-the beat, so no two overlap (their search windows are shown in the wave
+the beat, so no two overlap (measured in pixels at the chart's width) (their search windows are shown in the wave
 editor). The view spans the landmarks and the beat, a few ms around.
 
 Display only: the Matplotlib figure of the same beat stays what the
@@ -23,23 +23,25 @@ from ecg.qt import theme
 from ecg.qt.widgets.rhythm_charts import _Chart, _alpha
 
 GHOSTS = 30                 # individual beats drawn under the mean
-LABEL_GAP_MS = 9.0          # two names closer than this go on different rows
+LABEL_PAD_PX = 10           # room left between two landmark names on one row
 
 
-def label_rows(centers: "list[float]", gap: float = LABEL_GAP_MS) -> "list[int]":
-    """A row for each landmark name, left to right: the lowest row whose
-    last name is at least *gap* ms away."""
-    order = sorted(range(len(centers)), key=lambda i: centers[i])
-    last: "list[float]" = []
-    rows = [0] * len(centers)
+def label_rows(spans: "list[tuple[float, float]]") -> "list[int]":
+    """A row for each landmark name given its extent (left, right) on the
+    time axis, left to right: the lowest row where it starts after the
+    previous name of that row ends, so no two names overlap."""
+    order = sorted(range(len(spans)), key=lambda i: spans[i][0])
+    ends: "list[float]" = []
+    rows = [0] * len(spans)
     for i in order:
-        for r, x in enumerate(last):
-            if centers[i] - x >= gap:
-                rows[i], last[r] = r, centers[i]
+        left, right = spans[i]
+        for r, end in enumerate(ends):
+            if left >= end:
+                rows[i], ends[r] = r, right
                 break
         else:
-            rows[i] = len(last)
-            last.append(centers[i])
+            rows[i] = len(ends)
+            ends.append(right)
     return rows
 
 
@@ -98,30 +100,51 @@ class BeatChart(_Chart):
                                                        style=QtCore.Qt.PenStyle.DashLine)))
         lm = self._data["landmarks"]
         centers = [float(v[0]) for v in lm.values()]
-        rows = label_rows(centers)
+        names = [self._data["labels"].get(k, k.replace("_", " ")) for k in lm]
+        font = QtGui.QFont()
+        font.setBold(True)
+        fm = QtGui.QFontMetrics(font)
+        widths = [fm.horizontalAdvance(n) + LABEL_PAD_PX for n in names]
+        # The beat and the landmarks themselves (their search windows are the
+        # wave editor's business), widened so each name fits inside; the
+        # names' extent in ms follows the chart's width in pixels.
+        xs = [float(t[0]), float(t[-1])] + centers
+        x0, x1 = min(xs) - 6, max(xs) + 6
+        px = max(float(self.getPlotItem().getViewBox().width()), 200.0)
+        spans: "list[tuple[float, float]]" = []
+        for _ in range(3):
+            ms_px = (x1 - x0) / px
+            spans = [(c - w / 2 * ms_px, c + w / 2 * ms_px) for c, w in zip(centers, widths)]
+            x0 = min([x0] + [a for a, _b in spans])
+            x1 = max([x1] + [b for _a, b in spans])
+        rows = label_rows(spans)
         y_lo = float(np.nanmin(mean - (sd if sd is not None else 0)))
         y_hi = float(np.nanmax(mean + (sd if sd is not None else 0)))
         span = (y_hi - y_lo) or 1.0
         n_rows = (max(rows) + 1) if rows else 0
         row_h = 0.11 * span
-        for (key, (c, half)), row in zip(lm.items(), rows):
+        for (key, (c, half)), name, row in zip(lm.items(), names, rows):
             col = self._data["colors"].get(key, p.MUTED)
             add(pg.InfiniteLine(c, angle=90, pen=pg.mkPen(_alpha(col, 200), width=1.2,
                                                           style=QtCore.Qt.PenStyle.DotLine)),
                 bounds=False)
-            name = self._data["labels"].get(key, key.replace("_", " "))
             label = pg.TextItem(name, color=col, anchor=(0.5, 1))
-            font = QtGui.QFont()
-            font.setBold(True)
             label.setFont(font)
             label.setPos(c, y_hi + 0.06 * span + (n_rows - row) * row_h)
             add(label, bounds=False)
-        # The beat and the landmarks themselves (their search windows are the
-        # wave editor's business): no wide empty margins.
-        xs = [float(t[0]), float(t[-1])] + centers
-        self.setXRange(min(xs) - 6, max(xs) + 6, padding=0)
+        self.setXRange(x0, x1, padding=0)
         self.setYRange(y_lo - 0.08 * span, y_hi + 0.1 * span + (n_rows + 1) * row_h,
                        padding=0)
+
+    def resizeEvent(self, ev) -> None:  # noqa: N802 (Qt name)
+        super().resizeEvent(ev)
+        # The names' rows depend on the width: placed again once it settles
+        # (pyqtgraph also calls this while building the chart).
+        if getattr(self, "_data", None) is not None:
+            if not hasattr(self, "_relayout"):
+                self._relayout = QtCore.QTimer(self, singleShot=True, interval=80)
+                self._relayout.timeout.connect(self._draw)
+            self._relayout.start()
 
     def style(self, p) -> None:
         super().style(p)

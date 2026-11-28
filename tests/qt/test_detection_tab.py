@@ -147,3 +147,11 @@ def test_analysis_window(qtbot, window):
     det.apply_analysis_window()
     det.detect()                                     # Detect Peaks: the full signal again
     qtbot.waitUntil(lambda: a.t_start == 0.0, timeout=60000)
+
+
+def test_quality_score_takes_the_colour_of_its_grade(qtbot, window):
+    _detect(qtbot, window)
+    lbl = window.detection.lbl_quality_score
+    q = int(lbl.text())
+    want = "good" if q >= 85 else "fair" if q >= 60 else "poor"
+    assert lbl.property("grade") == want

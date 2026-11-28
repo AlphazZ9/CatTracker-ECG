@@ -93,10 +93,16 @@ class MorphologyTab(QtWidgets.QScrollArea):
         from ecg.qt.widgets.beat_chart import BeatChart
         self.beat_chart = BeatChart()
         host.slot("beat", page, 12.0, 4.6).hide()
-        left, ll = card("Mean beat ± SD · landmarks", None, 0, self.btn_template)
-        hint = QtWidgets.QLabel("Landmarks…: move a search window on this mean beat")
-        hint.setProperty("muted", True)
-        ll.addWidget(hint)
+        from ecg.qt.widgets.shell import help_badge
+        tools = QtWidgets.QWidget()
+        tl = QtWidgets.QHBoxLayout(tools)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.setSpacing(8)
+        tl.addWidget(help_badge("Landmarks…: move the search window of a landmark (P, Q, S, "
+                                "J, T) on this mean beat; every beat is then measured with "
+                                "those windows"))
+        tl.addWidget(self.btn_template)
+        left, ll = card("Mean beat ± SD · landmarks", None, 0, tools)
         self.beat_chart.setMinimumHeight(380)
         ll.addWidget(self.beat_chart, 1)
         body.addWidget(left, 1)

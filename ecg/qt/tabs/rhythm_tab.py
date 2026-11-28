@@ -109,6 +109,14 @@ class RhythmTab(QtWidgets.QScrollArea):
         tools = QtWidgets.QWidget()
         trow = QtWidgets.QHBoxLayout(tools)
         trow.setContentsMargins(0, 0, 0, 0)
+        from ecg.qt.widgets.shell import help_badge
+        # How to use the charts: behind a "?", not a long grey line under them.
+        trow.addWidget(help_badge(
+            "Click: that beat in Signal\n"
+            "Right click: the next flagged beat\n"
+            "Ctrl + wheel: zoom the time (over the left axis: the vertical scale)\n"
+            "Drag: move · Reset zoom: the whole charts"))
+        trow.addSpacing(6)
         self.lbl_flagged = QtWidgets.QLabel("")
         self.lbl_flagged.setProperty("muted", True)
         trow.addWidget(self.lbl_flagged)
@@ -137,12 +145,10 @@ class RhythmTab(QtWidgets.QScrollArea):
         left.setSpacing(4)
         left.addWidget(self.charts.tacho_rr, 1)
         left.addWidget(self.charts.tacho, 1)
-        hint = QtWidgets.QLabel("Click: that beat in Signal  ·  right click: the next flagged "
-                                "beat  ·  Ctrl + wheel: zoom time "
-                                "(over the axis: vertical)  ·  drag: move  ·  ▲ / ▼ beyond "
-                                "the scale  ·  hollow: excluded  ·  thick: 9-beat median")
+        # The legend of the marks only (the interactions are behind the "?").
+        hint = QtWidgets.QLabel("▲ / ▼ beyond the scale  ·  ○ excluded  ·  bold line: "
+                                "9-beat median")
         hint.setProperty("muted", True)
-        hint.setWordWrap(True)
         left.addWidget(hint)
         s1.addLayout(left, 3)
         right = QtWidgets.QVBoxLayout()

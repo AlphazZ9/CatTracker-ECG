@@ -259,7 +259,7 @@ class MainWindow(QtWidgets.QMainWindow):
         title = QtWidgets.QLabel("ECG Analysis")
         title.setStyleSheet("font-weight: 600;")
         row.addWidget(title)
-        version = QtWidgets.QLabel(ecg.__version__)
+        version = self.lbl_version = QtWidgets.QLabel(ecg.__version__)
         version.setProperty("muted", True)
         version.setToolTip(f"ECG Analysis {ecg.__version__}")
         version.setMinimumWidth(60)
@@ -271,7 +271,10 @@ class MainWindow(QtWidgets.QMainWindow):
         chip = QtWidgets.QHBoxLayout(self.chip_file)
         chip.setContentsMargins(12, 6, 10, 6)
         chip.setSpacing(8)
-        self.lbl_file = QtWidgets.QLabel("No recording")
+        # Cut with "…" when the header is short of room: the file name first,
+        # the whole text in the tooltip.
+        from ecg.qt.widgets.shell import ElidedLabel
+        self.lbl_file = ElidedLabel("No recording", mode=QtCore.Qt.TextElideMode.ElideRight)
         self.lbl_file.setStyleSheet("font-weight: 600;")
         chip.addWidget(self.lbl_file)
         self.lbl_chip_arrow = QtWidgets.QLabel()
@@ -290,7 +293,9 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addWidget(self.btn_open)
         self.btn_recent = QtWidgets.QToolButton()
         self.btn_recent.setText("▾")
-        self.btn_recent.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
+        # A narrow arrow button (it held the room of a menu indicator).
+        self.btn_recent.setStyleSheet("QToolButton { padding: 5px 9px; } "
+                                      "QToolButton::menu-indicator { image: none; width: 0; }")
         self.btn_recent.setToolTip("Recent recordings")
         self.btn_recent.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         row.addWidget(self.btn_recent)
@@ -972,14 +977,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self.jobs.cancel_all()
 
     # ── status, theme ───────────────────────────────────────
-    def set_status(self, text: str, warn: bool = False) -> None:
+    def resizeEvent(self, ev: QtGui.QResizeEvent) -> None:  # noqa: N802 (Qt name)
+        """A narrow window: the header drops its version and "Not saved"
+        (both in the tooltip of the file chip then) rather than cutting its
+        buttons."""
+        super().resizeEvent(ev)
+        narrow = ev.size().width() < 1300
+        if hasattr(self, "lbl_version"):
+            self.lbl_version.setVisible(not narrow)
+            self.lbl_saved.setVisible(not narrow)
+        if hasattr(self, "_legend"):
+            # The tab legend ran into the last tabs: it gives way (the dots'
+            # meaning is in each tab's tooltip).
+            self._legend.setVisible(ev.size().width() >= 1250)
+
+    def set_status(self, text: str, warn: bool = False,
+                   notice: "Optional[bool]" = None) -> None:
         """The status bar's message; a warning also rises as a notice over
-        the page, where it is seen (the status bar alone was missed)."""
+        the page, where it is seen (the status bar alone was missed). While
+        the notice shows, the status bar does not repeat it: the message
+        goes there when the notice goes. *notice*: False keeps a warning in
+        the status bar only (a routine note, e.g. a peak edited)."""
         p = theme.current()
-        self.statusBar().setStyleSheet(f"color: {p.WARN_TEXT if warn else p.MUTED};")
-        self.statusBar().showMessage(text)
-        if warn and text:
-            self.toast.show_text(text)
+        bar = self.statusBar()
+        self._status_seq = getattr(self, "_status_seq", 0) + 1
+        bar.showMessage(text)
+        if warn and text and notice is not False:
+            # The message is the status bar's, shown there once the notice
+            # goes (written in the background colour meanwhile).
+            bar.setStyleSheet("color: transparent;")
+            seq = self._status_seq
+
+            def settle() -> None:
+                if self._status_seq == seq:          # nothing newer meanwhile
+                    bar.setStyleSheet(f"color: {theme.current().WARN_TEXT};")
+            self.toast.show_text(text, on_hide=settle)
+        else:
+            bar.setStyleSheet(f"color: {p.WARN_TEXT if warn else p.MUTED};")
 
     def _shortcut_detect(self) -> None:
         if self.detection.btn_detect.isEnabled() and not self._typing():

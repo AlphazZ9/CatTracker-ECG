@@ -70,6 +70,10 @@ class TimeCourseTab(QtWidgets.QTabWidget):
             host.ui, "time_course_mode", ("Epochs", "Sliding", "Autonomic", "Autonomic")[i]))
         self.btn_epochs.clicked.connect(ctl.compute_epochs)
         self.btn_sliding.clicked.connect(ctl.compute_rolling_hrv)
+        # An empty figure offers the command that fills it (as its sentence says).
+        for slot, btn in (("epochs", self.btn_epochs), ("rolling_hrv", self.btn_sliding),
+                          ("autonomic", self.btn_auto), ("event_locked", self.btn_evt)):
+            host.slot(slot).set_placeholder_action(btn.text(), btn.click, btn)
         self.btn_auto.clicked.connect(lambda: ctl.compute_autonomic())
         # The out-of-date banner of the page shown (TimeCourseMixin
         # _refresh_time_banner), above the pages, with its Recompute.
