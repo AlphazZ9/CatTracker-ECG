@@ -188,6 +188,11 @@ own numbers.
 - The window (`ecg/qt/main_window.py`) and its tabs delegate the work to the
   controllers of `ecg/app/*_controller.py` — see each controller's docstring
   for its area of responsibility.
+- The emoji beside a button's label comes from its label: the `EMOJI` table
+  of `ecg/qt/widgets/emoji.py` (label without its "…" → emoji). A new button
+  with a label of the table gets its emoji when first shown; to add or change
+  one, edit the table; `button.setProperty("emoji", False)` leaves a button
+  without. Without a colour emoji font, the labels stay plain.
 - Interpret measurements using reference data appropriate to the animal
   strain and experimental protocol; the application does not currently grade
   metrics against protocol-specific reference ranges.

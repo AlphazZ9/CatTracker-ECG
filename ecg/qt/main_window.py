@@ -76,6 +76,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
+        # An emoji beside the label of each button (ecg.qt.widgets.emoji):
+        # given as each one is first shown, the dialogs' included.
+        from ecg.qt.widgets import emoji
+        emoji.install()
         self.setWindowTitle(f"ECG Analysis {ecg.__version__}")
         self.resize(1400, 860)
         self.setMinimumSize(1100, 640)
@@ -1030,6 +1034,8 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         self.btn_theme.setText("Light mode" if p.is_dark else "Dark mode")
+        from ecg.qt.widgets import emoji
+        emoji.decorate(self.btn_theme)              # 🌙 / ☀️ with its new label
         sync_figure_theme(p.is_dark)
         self.apply_shell_palette(p)
         self.detection.apply_palette(p)

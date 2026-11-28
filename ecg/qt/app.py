@@ -56,6 +56,8 @@ def main(argv: "Optional[list[str]]" = None) -> int:
     import logging
     logging.getLogger("ecg").info("Qt interface started (log: %s)", log_path)
     win.btn_theme.setText("Light mode" if theme.current().is_dark else "Dark mode")
+    from ecg.qt.widgets import emoji
+    emoji.decorate(win.btn_theme)
     win.show()
     if self_test is not None:
         return _self_test(app, win, self_test, argv[1] if len(argv) > 1 else None)
