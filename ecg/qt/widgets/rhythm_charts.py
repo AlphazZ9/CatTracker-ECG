@@ -320,7 +320,12 @@ class RhythmCharts(QtCore.QObject):
         chart.say("")
         t, rr, hr, valid = s
         y = hr if unit == "HR" else rr
-        line = np.where(valid, y, np.nan)          # the line breaks around excluded ones
+        rng = robust_range(y[valid], min_span=20.0 if unit == "HR" else 4.0)
+        # The line breaks around excluded beats, and around the beats beyond
+        # the scale (their triangles at the edge mark them): their long
+        # strokes across the whole chart hid the rhythm.
+        shown = valid if rng is None else valid & (y >= rng[0]) & (y <= rng[1])
+        line = np.where(shown, y, np.nan)
         line_i.setData(t, line)
         from ecg.qt.widgets.ecg_plot import _running_median
         trend = np.full(len(y), np.nan)
@@ -328,7 +333,6 @@ class RhythmCharts(QtCore.QObject):
             trend[valid] = _running_median(y[valid], 9)
         trend_i.setData(t, trend)
         excl_i.setData(t[~valid], y[~valid])
-        rng = robust_range(y[valid], min_span=20.0 if unit == "HR" else 4.0)
         if rng is not None:
             lo, hi = rng
             chart.setYRange(lo, hi, padding=0)
@@ -520,7 +524,7 @@ class RhythmCharts(QtCore.QObject):
     def apply_palette(self, p: "theme.Palette") -> None:
         for chart in (self.tacho, self.tacho_rr, self.poincare, self.mse, self.psd, self.hist):
             chart.style(p)
-        self.r_line.setPen(pg.mkPen(_alpha(p.TEXT, 60), width=1))
+        self.r_line.setPen(pg.mkPen(_alpha(p.TEXT, 50), width=1))
         # 1 px pens and no grid on the tachograms: a wider pen is drawn segment
         # by segment and a translucent grid on every frame -- with ~72 000
         # beats (2 h) each step of a zoom took ~110 ms.
@@ -532,7 +536,7 @@ class RhythmCharts(QtCore.QObject):
         for item in (self.r_over, self.r_under):
             item.setPen(pg.mkPen(None))
             item.setBrush(pg.mkBrush(p.MUTED))
-        self.t_line.setPen(pg.mkPen(_alpha(p.ACCENT, 70), width=1))
+        self.t_line.setPen(pg.mkPen(_alpha(p.ACCENT, 55), width=1))
         self.t_trend.setPen(pg.mkPen(p.ACCENT, width=1))
         self.t_excl.setPen(pg.mkPen(p.MUTED, width=1.2))
         self.t_excl.setBrush(pg.mkBrush(None))

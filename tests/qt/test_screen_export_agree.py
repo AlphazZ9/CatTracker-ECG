@@ -65,9 +65,14 @@ def test_heart_rate_and_rr_over_time(analysed):
         assert set(np.round(s_t, 9)) <= set(np.round(e_t, 9)), name
         idx = np.searchsorted(e_t, s_t)
         _same(s_v, np.asarray(e_v)[idx], f"{name} of the valid beats")
-    # What the screen draws as its line is that same HR.
-    _, line = _finite_pairs(*ch.t_line.getOriginalDataset())   # before downsampling
-    _same(line, hr[valid & np.isfinite(hr)], "HR line on screen")
+    # What the screen draws is that same HR: on its line, or (beyond the
+    # scale) as a triangle at the edge.
+    lt, line = _finite_pairs(*ch.t_line.getOriginalDataset())  # before downsampling
+    edge_t = np.concatenate([ch.t_over.getData()[0], ch.t_under.getData()[0]])
+    want = valid & np.isfinite(hr)
+    shown = set(np.round(lt, 9)) | set(np.round(edge_t, 9))
+    assert set(np.round(t[want], 9)) <= shown and set(np.round(lt, 9)) <= set(np.round(t[want], 9))
+    _same(line, hr[want][np.isin(t[want], lt)], "HR line on screen")
 
 
 def test_poincare_and_multiscale_entropy(analysed):

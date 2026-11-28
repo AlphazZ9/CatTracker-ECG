@@ -699,3 +699,35 @@ def sync_figure_theme(is_dark: bool) -> None:
                     "HAIRLINE"):
             tk_theme.THEME._colors[key] = getattr(qt_theme.DARK, key)
     tk_theme.apply_theme_config(tk_theme.THEME)
+    _figures_in_app_font()
+
+
+_APP_FONT_IN_FIGURES: "dict[str, bool]" = {}
+
+
+def _figures_in_app_font() -> None:
+    """The Matplotlib figures in the app's own font (the shipped Inter), as
+    the PyQtGraph charts beside them: they were in DejaVu Sans. Glyphs Inter
+    lacks fall back to Matplotlib's defaults. Once."""
+    if _APP_FONT_IN_FIGURES:
+        return
+    _APP_FONT_IN_FIGURES["done"] = True
+    try:
+        import matplotlib
+        from matplotlib import font_manager
+        from ecg.qt import theme as qt_theme
+        family = qt_theme.load_font()
+        if not family:
+            return
+        for name in qt_theme.FONT_FILES:
+            path = qt_theme.ASSETS / "fonts" / name
+            if path.exists():
+                font_manager.fontManager.addfont(str(path))
+        names = {f.name for f in font_manager.fontManager.ttflist}
+        if family not in names:
+            return
+        rest = [f for f in matplotlib.rcParams["font.sans-serif"] if f != family]
+        matplotlib.rcParams["font.family"] = "sans-serif"
+        matplotlib.rcParams["font.sans-serif"] = [family] + rest
+    except Exception:                       # the default font then: never an error
+        log.debug("figures keep Matplotlib's font", exc_info=True)
