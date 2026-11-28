@@ -193,6 +193,7 @@ class CompareTab(CompareMoreMixin, QtWidgets.QScrollArea):
         # card (they were stacked: two 420 px blocks, mostly empty).
         self.table.setMinimumHeight(360)
         self.plot = host.slot("compare", page, 8.0, 4.4)
+        self.plot.set_placeholder_action("Compare", self.btn_run.click, self.btn_run)
         # Tk: Y min / max and the wheel zoom on this figure; here its toolbar
         # (zoom to a box, move, back to the whole view, save) and Ctrl + wheel.
         self.plot.add_toolbar()

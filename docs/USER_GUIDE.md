@@ -168,10 +168,21 @@ narrow the view. **RR · HR · Quality** (ECG card) shows or hides the RR,
 heart-rate and beat-quality lanes under the trace (beat quality: correlation
 with the recording's beat template, 0.90 dashed).
 
-The row at the foot of the page reads the signal quality ("Quality 100/100 ·
-good"), the agreement of the other detectors after **Check agreement**, the
-**Beats to check** flagged on the tachogram after Analyze (‹ / › centre the
-previous / next one), **Review artifacts** and the analysis window.
+The **Signal quality** panel at the right gives the score out of 100 in the
+colour of its grade (green from 85, orange from 60, red below), the template
+correlation and the beats and time below 0.90, then each beat's correlation
+over time and its histogram. Both charts start a little under the bulk of the
+beats, so the band near 1 where most of them lie is readable: the few beats
+below show at the edge (a red triangle over time, one red bar at the left of
+the histogram). Beats are green from 0.95, amber between 0.90 and 0.95, red
+below; the dashed line is 0.90. Under it, **Review artifacts…** and **Check
+agreement** (the agreement of the other detectors shows at the foot of the
+page). **Beats to check** (‹ / ›) centres the beats flagged on the tachogram
+after Analyze.
+
+In a narrow window, the bars give way rather than cut their buttons:
+**Annotations** and **Noisy regions** are then in **More**, and the header
+drops the version and "Not saved".
 
 **Edit peaks** and **Mark noise** work one at a time (and not while a zoom
 tool is on). With **Edit peaks**, left click near a peak to exclude / restore

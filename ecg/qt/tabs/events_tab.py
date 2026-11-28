@@ -17,9 +17,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from ecg.core.models import event_kind_label
+from ecg.qt import theme
 from ecg.qt.figure_host import StatusLabel, Value
 
 if TYPE_CHECKING:
@@ -28,7 +29,12 @@ if TYPE_CHECKING:
 NEEDS_PEAKS = "Detect the peaks, then classify."
 READY = ("Click Classify events to find the bradycardia and tachycardia episodes, pauses "
          "and premature beats.")
-COLUMNS = ("#", "Event", "Start (s)", "End (s)", "Beats", "HR (bpm)", "Δ baseline", "Severity")
+COLUMNS = ("#", "Event", "Start", "End", "Beats", "HR", "Δ base", "Severity")
+# Short headers (every column in view); their tooltips say the rest.
+COLUMN_TIPS = {"Start": "Start of the episode (s)", "End": "End of the episode (s)",
+               "HR": "Mean heart rate of the episode (bpm)",
+               "Δ base": "Heart rate change against the baseline (%)",
+               "Event": "The episode's kind (the whole name in the tooltip of its cell)"}
 
 
 class _WindowEntry:
@@ -119,6 +125,8 @@ class EventsTab(QtWidgets.QWidget):
         lay.addWidget(self.banner)
 
         ribbon = host.slot("arr_ribbon", self, 12.0, 2.0)
+        ribbon.set_placeholder_action("Classify events", self.btn_classify.click,
+                                      self.btn_classify)
         ribbon.setMinimumHeight(190)
         bar_lay.addWidget(ribbon)
 
@@ -130,9 +138,17 @@ class EventsTab(QtWidgets.QWidget):
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self._selected)
-        header = self.table.horizontalHeader()      # every column readable, no side scroll
+        # Every column in view, no side scroll: the numbers at their width,
+        # the event's name taking the rest (cut with "…", whole in its tooltip).
+        header = self.table.horizontalHeader()
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setStretchLastSection(True)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setStretchLastSection(False)
+        self.table.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
+        self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        for c, name in enumerate(COLUMNS):
+            if name in COLUMN_TIPS:
+                self.table.horizontalHeaderItem(c).setToolTip(COLUMN_TIPS[name])
         left = QtWidgets.QFrame(objectName="Card")
         ll = QtWidgets.QVBoxLayout(left)
         ll.setContentsMargins(14, 12, 14, 12)
@@ -204,11 +220,11 @@ class EventsTab(QtWidgets.QWidget):
         rl.addWidget(detail, 1)
         rl.addLayout(head)
         split.addWidget(right)
-        split.setSizes([480, 900])
-        # The list keeps ~a third of the width when the window is laid out
-        # (the sizes above alone left it ~340 px, its Start column cut).
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 2)
+        split.setSizes([560, 820])
+        # The list keeps ~two fifths of the width when the window is laid
+        # out: its columns all in view.
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 3)
         lay.addWidget(split, 1)
         host.on_events_list = self.show_events
         # What AnalysisController.on_arr_detail_click calls on the app (Tk's
@@ -265,6 +281,8 @@ class EventsTab(QtWidgets.QWidget):
     def show_events(self, events: list) -> None:
         """The event list (AnalysisController.build_event_cards, as a table)."""
         self.table.setRowCount(len(events))
+        p = theme.current()
+        sev_colors = {"alert": p.RED, "warning": p.ORANGE, "info": p.BLUE}
         for i, ev in enumerate(events):
             delta = f"{ev.delta_pct:+.0f} %" if ev.baseline_hr else ""
             values = (str(i + 1), event_kind_label(ev.kind), f"{ev.t_start:.2f}",
@@ -275,8 +293,11 @@ class EventsTab(QtWidgets.QWidget):
                 if c in (0, 2, 3, 4, 5, 6):
                     item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight
                                           | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                if c == 1:
+                    item.setToolTip(text)
+                if c == 7 and text in sev_colors:      # the severity in its colour
+                    item.setForeground(QtGui.QBrush(QtGui.QColor(sev_colors[text])))
                 self.table.setItem(i, c, item)
-        self.table.resizeColumnsToContents()
 
     def _selected(self) -> None:
         rows = self.table.selectionModel().selectedRows()
