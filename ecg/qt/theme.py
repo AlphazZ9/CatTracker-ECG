@@ -195,7 +195,13 @@ def style_sheet(p: Palette, scale: float = 1.0) -> str:
     QLabel[role="big"] {{ font-size: {pt * 3.6:.1f}pt; font-weight: 700; color: {p.ACCENT}; }}
     QLabel[role="unit"] {{ font-size: {pt * 1.3:.1f}pt; font-weight: 600; color: {p.ACCENT}; }}
     QLabel[role="value"] {{ font-size: {pt * 1.9:.1f}pt; font-weight: 700; }}
-    QLabel#Placeholder {{ color: {p.MUTED}; padding: 24px; }}
+    QLabel#Placeholder {{ color: {p.MUTED}; font-size: {pt * 1.08:.1f}pt; padding: 0 12px; }}
+    QLabel#HelpBadge {{ color: {p.MUTED}; background: {p.CARD}; border: 1px solid {p.BORDER2};
+        border-radius: 9px; font-size: {pt * 0.85:.1f}pt; font-weight: 700; }}
+    QLabel#HelpBadge:hover {{ color: {p.TEXT}; border-color: {p.MUTED}; }}
+    QLabel[grade="good"] {{ color: {p.GREEN}; }}
+    QLabel[grade="fair"] {{ color: {p.ORANGE}; }}
+    QLabel[grade="poor"] {{ color: {p.RED}; }}
 
     QPushButton, QToolButton {{ background: {p.CARD}; color: {p.TEXT};
         border: 1px solid {p.BORDER2}; border-radius: 8px; padding: 5px 12px; }}
@@ -204,7 +210,10 @@ def style_sheet(p: Palette, scale: float = 1.0) -> str:
     QPushButton:checked {{ background: {p.ACCENT_SOFT}; color: {p.ACCENT_TEXT};
         border-color: {p.ACCENT}; }}
     QToolBar {{ border: none; background: transparent; spacing: 4px; }}
-    QToolBar QToolButton {{ padding: 3px 6px; border-radius: 6px; }}
+    QToolBar QToolButton {{ padding: 3px 6px; border-radius: 6px;
+        border: 1px solid transparent; background: transparent; }}
+    QToolBar QToolButton:hover {{ background: {p.HAIRLINE}; }}
+    QToolBar QToolButton:disabled {{ border-color: transparent; }}
     QToolButton:checked {{ background: {p.ACCENT_SOFT}; border-color: {p.ACCENT}; }}
     QPushButton:disabled, QToolButton:disabled {{ color: {p.LIGHT}; border-color: {p.BORDER}; }}
     QPushButton[primary="true"] {{ background: {p.ACCENT}; color: white; border: none;
@@ -263,6 +272,7 @@ def style_sheet(p: Palette, scale: float = 1.0) -> str:
         background: {p.CARD}; border: 1px solid {p.BORDER2}; border-radius: 7px;
         padding: 3px 8px; selection-background-color: {p.ACCENT_SOFT};
         selection-color: {p.TEXT}; }}
+    QComboBox, QLineEdit, QDoubleSpinBox, QSpinBox {{ min-height: 20px; }}
     QComboBox:focus, QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus {{
         border-color: {p.ACCENT}; }}
     QPlainTextEdit, QTextEdit {{ border-color: {p.BORDER}; }}

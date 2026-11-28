@@ -131,6 +131,7 @@ class EcgPlot(QtWidgets.QWidget):
         lay.addWidget(self.view, 1)
         self._build_navbar()
         lay.addWidget(self.navbar)
+        self.view.ci.setContentsMargins(6, 8, 10, 2)
         self.detail = self.view.addPlot(row=0, col=0)
         self.view.ci.layout.setRowStretchFactor(0, 5)
         # The whole recording, in its own view (a page may place it apart,
@@ -381,6 +382,12 @@ class EcgPlot(QtWidgets.QWidget):
             p.setMinimumHeight(STRIP_MIN_PX if vis else 0)
             p.setMaximumHeight(STRIP_MAX_PX if vis else 0)
             p.hideAxis("bottom")
+        # No room between hidden lanes either (each kept its spacing: an empty
+        # band under the trace), and only a thin margin under the stack.
+        grid = self.view.ci.layout
+        for r, vis in enumerate(shown):
+            grid.setRowSpacing(r, 6 if vis else 0)
+        grid.setRowSpacing(len(shown), 0)
         lanes = [p for p, vis in zip(self.strip, shown) if vis]
         if lanes:
             self.detail.hideAxis("bottom")

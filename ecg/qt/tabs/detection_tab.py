@@ -40,7 +40,7 @@ THRESH_MIN, THRESH_MAX, THRESH_DEFAULT = 0.01, 2.0, 0.50   # Tk slider range and
 THRESH_DEBOUNCE_MS = 150
 BREAK_REDETECT_TOL_MS = 5.0     # AnalysisController.BREAK_REDETECT_TOL_MS
 WINDOW_PRESETS_S = (1.0, 2.0, 5.0, 10.0)   # the view's lengths offered as one click
-NARROW_PX = 1000                            # below this page width, a more compact bar
+NARROW_PX = 1300                            # below this page width, a more compact bar
 
 
 class DetectionTab(QtWidgets.QWidget):
@@ -89,9 +89,11 @@ class DetectionTab(QtWidgets.QWidget):
         self.lbl_method = QtWidgets.QLabel("Method")
         row.addWidget(self.lbl_method)
         self.cb_method = QtWidgets.QComboBox()
+        # As wide as its longest method ("SG + Derivative (10 kHz)" was cut).
         self.cb_method.setSizeAdjustPolicy(
-            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.cb_method.setMinimumContentsLength(14)
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.cb_method.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed,
+                                     QtWidgets.QSizePolicy.Policy.Fixed)
         for label, key in METHODS:
             self.cb_method.addItem(label, key)
         self.cb_method.setCurrentIndex([k for _l, k in METHODS].index(DEFAULT_METHOD))
@@ -148,7 +150,10 @@ class DetectionTab(QtWidgets.QWidget):
         # Read in the summary line and the status row rather than on the bar.
         self.lbl_peaks = QtWidgets.QLabel("Peaks: —")
         self.lbl_quality = QtWidgets.QLabel("Quality: —")
-        self.lbl_agreement = QtWidgets.QLabel("")
+        from ecg.qt.widgets.shell import autohide
+        # Shown only with something to say: empty, its line left a gap under
+        # the cards at the foot of the page.
+        self.lbl_agreement = autohide(QtWidgets.QLabel(""))
 
         # ── the ECG, with its tools ──
         ecg_card = QtWidgets.QFrame(objectName="Card")
@@ -230,6 +235,10 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_redo.clicked.connect(self.redo)
         tools.addWidget(self.btn_undo)
         tools.addWidget(self.btn_redo)
+        # Undo / Redo are the header's (on every page, Ctrl+Z / Ctrl+Y): these
+        # two only keep the state (enabled or not) the header follows.
+        self.btn_undo.hide()
+        self.btn_redo.hide()
         self.btn_strip = QtWidgets.QPushButton("RR · HR · Quality")
         self.btn_strip.setCheckable(True)
         self.btn_strip.setToolTip("The RR, heart rate and beat quality (template correlation, "
@@ -455,8 +464,7 @@ class DetectionTab(QtWidgets.QWidget):
         b_full.setToolTip("The whole signal")
         b_full.clicked.connect(self.reset_analysis_window)
         for i, b in enumerate((b_apply, b_full)):
-            b.setStyleSheet("padding: 2px 10px;")
-            row.insertWidget(5 + i, b)
+            row.insertWidget(5 + i, b)                # the height of every button
         self.lbl_window.show()
         self.lbl_window.setProperty("muted", True)
         row.addWidget(self.lbl_window)
@@ -481,13 +489,22 @@ class DetectionTab(QtWidgets.QWidget):
         self.sp_thr.valueChanged.connect(lambda v: self._set_threshold(v, from_slider=False))
 
     def resizeEvent(self, ev) -> None:
-        """A narrow window: the bar drops its two quiet labels and shortens
-        the slider rather than cutting its buttons."""
+        """A narrow window: the bar drops its two quiet labels, shortens the
+        slider and leaves Annotations / Noisy regions to the More menu (which
+        lists them too) rather than cutting its buttons."""
         super().resizeEvent(ev)
         narrow = ev.size().width() < NARROW_PX
         self.lbl_thr.setVisible(not narrow)
         self.lbl_method.setVisible(not narrow)
-        self.sl_thr.setMinimumWidth(70 if narrow else 140)
+        self.sl_thr.setMinimumWidth(80 if narrow else 140)
+        for b in (getattr(self, "btn_annotations", None), getattr(self, "btn_noise", None)):
+            if b is not None:
+                b.setVisible(not narrow)
+        # The ECG's navigation row: the span shown and "Beats to check" give
+        # way (in the overview and the ‹ › tooltips) so its buttons stay whole.
+        for lbl in (getattr(self, "lbl_view", None), getattr(self, "lbl_to_check", None)):
+            if lbl is not None:
+                lbl.setVisible(not narrow)
 
     # ── parameters ──────────────────────────────────────────
     def threshold(self) -> float:
@@ -1014,7 +1031,7 @@ class DetectionTab(QtWidgets.QWidget):
             "add": f"Added peak at {(edit.peak or 0) / fs:.3f} s (snapped to local max)",
         }.get(edit.action, f"Manual exclusions: {len(d.manual_excluded)}")
         self.win.set_status(f"{text}  |  Accepted: {n_ok}  — click Analyze to refresh HRV.",
-                            warn=True)
+                            warn=True, notice=False)        # a routine note: no notice
 
     def mark_peaks_edited(self) -> None:
         """DetectionController.mark_peaks_edited: the time of a hand change."""
@@ -1041,7 +1058,7 @@ class DetectionTab(QtWidgets.QWidget):
         self._update_undo_buttons()
         self.win.set_status(f"Redone ({len(d.edit_redo)} remaining)" if redo else
                             f"Undone ({len(d.edit_undo) or 'none'} left) — Ctrl+Y to redo",
-                            warn=True)
+                            warn=True, notice=False)
 
     def _update_undo_buttons(self) -> None:
         d = self.win.recording.detection
@@ -1348,6 +1365,12 @@ class DetectionTab(QtWidgets.QWidget):
         self.btn_quality.setText(self.lbl_quality.text() + "  ▾")
         self.lbl_quality_score.setText(f"{q}" if q is not None else "—")
         self.lbl_quality_score.setToolTip(f"{q} / 100{word}" if q is not None else "")
+        # Its colour says the grade (red was the alarm colour for 100 / 100).
+        grade = "" if q is None else "good" if q >= 85 else "fair" if q >= 60 else "poor"
+        if self.lbl_quality_score.property("grade") != grade:
+            self.lbl_quality_score.setProperty("grade", grade)
+            self.lbl_quality_score.style().unpolish(self.lbl_quality_score)
+            self.lbl_quality_score.style().polish(self.lbl_quality_score)
         self.btn_review_link.setEnabled(self.btn_review.isEnabled())
         self.refresh_to_check()
         self._show_summary(n, q)
